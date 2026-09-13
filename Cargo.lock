@@ -3054,6 +3054,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "orvek-executor"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "orvek-harness"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "fs2",
+ "futures-util",
+ "memchr",
+ "orvek-executor",
+ "reqwest",
+ "rusqlite",
+ "rustix 1.1.4",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "url",
+ "uuid",
+ "zeroize",
+ "zstd",
+]
+
+[[package]]
 name = "orvek-memory"
 version = "0.1.0"
 dependencies = [

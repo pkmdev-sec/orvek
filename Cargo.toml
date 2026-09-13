@@ -63,6 +63,8 @@ syntect = { version = "5.3.0", default-features = false, features = ["default-sy
 tar = "0.4.44"
 orvek-memory = { version = "0.1.0", path = "crates/memory", default-features = false }
 orvek-subagents = { version = "0.1.0", path = "crates/subagents" }
+orvek-harness = { version = "0.1.0", path = "crates/harness" }
+uuid = { version = "1.24.0", features = ["v4", "v5", "serde"] }
 tempfile = "3.27.0"
 thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }

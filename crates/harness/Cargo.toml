@@ -1,0 +1,42 @@
+[package]
+name = "orvek-harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Orvek's authoritative task, execution, and verification runtime"
+
+[lints]
+workspace = true
+
+[dependencies]
+orvek-executor = { path = "../executor", default-features = false }
+base64.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
+fs2.workspace = true
+memchr = "2.8.3"
+reqwest.workspace = true
+rusqlite = { workspace = true, features = ["backup", "limits", "hooks"] }
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sha1 = "0.11.0"
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net"] }
+tokio-util.workspace = true
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
+url.workspace = true
+uuid = { version = "1.24.0", features = ["v4", "v5", "serde"] }
+zeroize.workspace = true
+zstd.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["fs", "process"] }
+
+[dev-dependencies]
+tempfile.workspace = true
