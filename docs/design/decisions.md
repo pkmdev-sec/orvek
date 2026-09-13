@@ -4,8 +4,8 @@ Review one component at a time. Open its HTML proposal with macOS `open`, then w
 explicit approval. Feedback revises that component only. An approval locks the named version and
 scope; changes to it need another review. Design approval does not authorize native implementation.
 
-Components through the review download dialog are approved. The current review is
-**Notifications and review status, proposal 1**.
+Components through notifications and review status are approved. The current review is
+**Recent prompt picker, proposal 1**.
 
 Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
 colors. The HTML uses approximate samples; those values are not a proposed replacement palette.
@@ -27,8 +27,8 @@ welcome-logo colors stay fixed.
 | 11 | Message queue | Approved and locked | [Proposal 1](components/queue-v1.html) |
 | 12 | Child-agent view | Approved and locked | [Proposal 1](components/agents-v1.html) |
 | 13 | Review download dialog | Approved and locked | [Proposal 1](components/review-v1.html) |
-| 14 | Notifications and review status | Awaiting approval | [Proposal 1](components/notifications-v1.html) |
-| 15 | Recent prompt picker | Not started | Preserve prompt history and draft handling. |
+| 14 | Notifications and review status | Approved and locked | [Proposal 1](components/notifications-v1.html) |
+| 15 | Recent prompt picker | Awaiting approval | [Proposal 1](components/prompts-v1.html) |
 | 16 | Memory browser | Not started | Preserve existing data and actions. |
 | 17 | Context diagnostics | Not started | Preserve measured values and recovery details. |
 | 18 | Theme selector | Not started | Preserve theme roles and overrides. |
@@ -474,7 +474,7 @@ Its pending-review label is historical; this registry records approval.
 ## Notifications and review status, proposal 1
 
 The [HTML](components/notifications-v1.html) retains the small rounded notices and review status in
-composer chrome. No approval recorded yet. Sources: `Notification`, `render_notification`,
+composer chrome. Approved by the user. Sources: `Notification`, `render_notification`,
 `update_review_input`, `update_key_confirmation`, and review event handlers in `components/root.rs`;
 `AppNode::update` in `components/app.rs`; `ComposerEvent::ReviewWaiting` and `render_chrome` in
 `components/composer.rs`; `components/waved_text.rs`; review routing in `tui/mod.rs`; and
@@ -570,3 +570,82 @@ The preview uses fictional messages and a text-only draft. It never opens a brow
 to the system clipboard, downloads, calls a model, or submits a prompt. Its pure layout/state checks
 do not prove native input handling, rendering, clipboard behavior, or performance. Recent prompt
 history is the next component after approval.
+
+Locked artifact: `notifications-v1.html` at `f034c85`, SHA-256
+`d26dd98d54b38fee7beade48c7a2a4f7b391126b914586b7be30a95ce819836c`.
+Its pending-review label is historical; this registry records approval.
+
+## Recent prompt picker, proposal 1
+
+The [HTML](components/prompts-v1.html) keeps the 82 × 22 rounded picker, numbered list, search,
+scope switch, and scrollable preview. No approval recorded yet. Sources:
+`components/recent_prompt_picker.rs`; Root's `load_recent_prompts`, `recent_prompts_loaded`, and
+`update_recent_prompt_picker`; `Composer::replace_draft`; `RecentPrompt` and
+`load_recent_prompts_async` in `sessions/checkpoint.rs`; `SessionStorage::recent_prompts` in
+`sessions/storage.rs`; and `merge_recent_prompts` / `RecentPromptRequest` in `tui/mod.rs`.
+
+- Lead with prompt text in the list. Keep one-line whitespace flattening for list labels only,
+  numbered positions, and the accent selection marker. Ellipses affect presentation, not selection.
+- Show a Sent age column on wide screens, derived from `recorded_at_unix_ms`, not session start
+  time. Reuse `format_age` and compute display ages at opening. No recurring timer is needed.
+- Label Global as `All sessions`. This includes other workspaces. Current session filters by exact
+  session ID, not workspace, parent session, or text. Preserve the global default and Ctrl+F toggle.
+- Move full workspace and session metadata out of each list row. The preview starts with the full
+  prompt, followed by a muted Source section containing full workspace, full session ID, and age.
+  A short From line identifies the selected source above the scrolling text; it may be shortened
+  because the full source remains reachable below. Source metadata is never inserted into the draft.
+- Keep indentation, blank lines, and trailing spaces in the full preview. Wrap at the measured
+  terminal width and sanitize display controls separately from the selected raw text. Keep the
+  native grapheme-aware query tail/deletion and paste control filtering.
+- Preserve the existing fuzzy scorer over prompt text only: ASCII case folding, descending score,
+  then original input index for ties. Do not add workspace, session-ID, or description search.
+  Repeated identical text remains separate entries. Preserve loader order with an empty query.
+- Query/scope changes reset selection and preview scroll. Arrows clamp selection and reset the
+  preview. Page Up/Down still move the preview by one row. Clamp scroll to the last wrapped line;
+  current code can increment its offset beyond the end and show a blank preview.
+- Keep seven list rows at normal size and reduce the list on short terminals to leave a readable
+  preview and fixed help. The study covers at least 32 columns and 16 rows. Smaller rectangles need
+  a bounded native fallback. Resize must clamp scroll and keep the selection visible.
+- Click selects, double-click uses, and wheel behavior follows the region: selection over the list,
+  scrolling over the preview. These are proposed mouse additions. Use stable hit targets and the
+  same selection effect as Enter/Tab. Do not let wheel or mouse events reach the underlying pane.
+- Use a fixed footer: `Use replaces your draft.` When the draft has images, show
+  `Replaces draft + images.` Enter/Tab closes the picker and replaces the complete draft. It never
+  appends at the cursor, sends a message, switches workspace, or resumes the source session.
+  Escape or Backspace on an empty query closes without replacement.
+
+The existing type stores text, occurrence time, session ID, and workspace; it has no image payload.
+The Insert effect carries the original String, and Root passes it to `ComposerEvent::ReplaceDraft`.
+The event handler detaches composer history. Replacement normalizes CR/CRLF line endings, clears
+current image attachments, and resets the cursor to end. Do not promise restoration of old
+images or byte-identical CRLF drafts. The preview's text-only samples prove neither image handling
+nor a new draft-undo mechanism.
+
+Loading remains local. Reuse the startup warmup, cache, read-only storage load, and in-memory current
+session merge. Storage retrieves up to 100 persisted prompts by occurrence time, with event ID as
+a tie-breaker. Merge replaces persisted entries for the current session with its in-memory records
+and sorts by occurrence time. It can exceed 100 after merging; do not silently impose a new limit
+or deduplicate repeated prompt text in this UI work. Do not rescan storage on each keystroke.
+
+Cold-load usability change for implementation: the current miss path sets `input = None` and Root
+becomes noninteractive until the task finishes. Keep the existing loading status in the composer,
+but retain input dispatch for Escape cancellation. Restore the draft/input state on cancellation
+or failure. Add a request generation and originating pane/session identity to `RecentPromptRequest`
+and validate them before opening the picker or reporting a failure. A late result can update the
+shared cache but must not reopen a dismissed picker or enter a replacement session. There is no
+new loading window or background service. These interactions are not simulated by the static
+history fixtures; they require native runtime tests.
+
+Keep the renderer and query in `recent_prompt_picker.rs`, storage/merge in their existing modules,
+and replacement/loading ownership in Root/runtime. Pass only whether the draft has images for the
+footer; the picker does not need attachment bytes. Reuse Floating, the shared fuzzy scorer,
+formatting utilities, and existing async task machinery. Cache flattened labels and selected
+preview wrapping by text/width; an idle picker needs no animation deadline or provider call.
+
+Native checks must cover global/current scope, other workspaces, duplicate prompts and tie order,
+exact replacement and line-ending normalization, cancellation/failure with draft and attachments
+unchanged, intentional attachment removal on use, search/paste/grapheme behavior, no-match/empty
+views, preview scroll bounds, resize and mouse regions. Preserve the existing occurrence-time and
+in-memory merge tests. Add cold-load cancellation and stale-result/pane-generation tests. Run the
+project checks only during later authorized implementation; browser fixture checks are not native
+rendering, async-loading, persistence, or performance proof. Memory browser is next after approval.
