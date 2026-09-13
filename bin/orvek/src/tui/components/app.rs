@@ -124,13 +124,20 @@ pub(crate) enum AppEvent {
         pane: PaneId,
         sessions: Vec<SessionSummary>,
     },
+    FilesLoaded {
+        pane: PaneId,
+        request: u64,
+        result: Result<Vec<String>, String>,
+    },
     RecentPromptsLoaded {
         pane: PaneId,
+        request: u64,
         session_id: String,
         prompts: Vec<RecentPrompt>,
     },
     RecentPromptLoadFailed {
         pane: PaneId,
+        request: u64,
         error: String,
     },
     SessionLoadFailed {
@@ -361,20 +368,29 @@ impl AppNode {
             AppEvent::SessionsLoaded { pane, sessions } => {
                 self.update_root(pane, RootEvent::SessionsLoaded(sessions))
             }
+            AppEvent::FilesLoaded {
+                pane,
+                request,
+                result,
+            } => self.update_root(pane, RootEvent::FilesLoaded { request, result }),
             AppEvent::RecentPromptsLoaded {
                 pane,
+                request,
                 session_id,
                 prompts,
             } => self.update_root(
                 pane,
                 RootEvent::RecentPromptsLoaded {
+                    request,
                     session_id,
                     prompts,
                 },
             ),
-            AppEvent::RecentPromptLoadFailed { pane, error } => {
-                self.update_root(pane, RootEvent::RecentPromptLoadFailed(error))
-            }
+            AppEvent::RecentPromptLoadFailed {
+                pane,
+                request,
+                error,
+            } => self.update_root(pane, RootEvent::RecentPromptLoadFailed { request, error }),
             AppEvent::SessionLoadFailed { pane, error } => {
                 self.update_root(pane, RootEvent::SessionLoadFailed(error))
             }

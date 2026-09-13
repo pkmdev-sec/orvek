@@ -701,6 +701,10 @@ impl Composer {
         &self.draft
     }
 
+    pub(super) fn has_images(&self) -> bool {
+        !self.images.is_empty()
+    }
+
     pub(crate) fn input_mode(&self) -> Option<&str> {
         self.input_mode.as_deref()
     }

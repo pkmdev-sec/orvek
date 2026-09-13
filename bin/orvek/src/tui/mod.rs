@@ -102,6 +102,14 @@ type SessionListTask = JoinHandle<(PaneId, Result<Vec<SessionSummary>>)>;
 
 type RecentPromptTask = JoinHandle<Result<Vec<RecentPrompt>>>;
 
+struct FileCompletion {
+    pane: PaneId,
+    pane_generation: u64,
+    session_id: String,
+    request: u64,
+    result: std::result::Result<Vec<String>, String>,
+}
+
 type ResumeSessionTask = JoinHandle<(
     PaneId,
     ReasoningEffort,
@@ -282,6 +290,8 @@ struct WriterCompletion {
 
 struct RecentPromptRequest {
     pane: PaneId,
+    request: u64,
+    pane_generation: u64,
     session_id: String,
     workspace: PathBuf,
     current_prompts: Vec<RecentPromptDraft>,
@@ -585,7 +595,7 @@ pub(crate) async fn run(
             .map_err(Into::into)
     }));
     let mut recent_prompt_cache = None::<Vec<RecentPrompt>>;
-    let mut recent_prompt_request = None::<RecentPromptRequest>;
+    let mut recent_prompt_requests = HashMap::<PaneId, RecentPromptRequest>::new();
     let mut update_check_task = spawn_update_check();
     let (system_theme_sender, mut system_theme_updates) = mpsc::unbounded_channel();
     theme::watch_system_scheme(system_theme_sender, shutdown.clone());
@@ -609,6 +619,7 @@ pub(crate) async fn run(
     let mut writers_open = 1_usize;
     let mut shell_tasks = JoinSet::<(PaneId, ShellExecution)>::new();
     let mut memory_tasks = JoinSet::<MemoryCompletion>::new();
+    let mut file_tasks = JoinSet::<FileCompletion>::new();
     let mut memory_generations = HashMap::<PaneId, u64>::new();
     let mut subagent_shutdowns = JoinSet::<()>::new();
     let mut subagents_stopping = false;
@@ -631,7 +642,7 @@ pub(crate) async fn run(
                     session_list_task: &mut session_list_task,
                     recent_prompt_task: &mut recent_prompt_task,
                     recent_prompt_cache: &mut recent_prompt_cache,
-                    recent_prompt_request: &mut recent_prompt_request,
+                    recent_prompt_requests: &mut recent_prompt_requests,
                     handoff_controller: &mut handoff_controller,
                     review_controller: &mut review_controller,
                     auxiliary_sender: &auxiliary_sender,
@@ -643,6 +654,7 @@ pub(crate) async fn run(
                     shell_tasks: &mut shell_tasks,
                     memory_store: &mut memory_store,
                     memory_tasks: &mut memory_tasks,
+                    file_tasks: &mut file_tasks,
                     memory_generations: &mut memory_generations,
                     subagent_shutdowns: &mut subagent_shutdowns,
                 },
@@ -664,6 +676,7 @@ pub(crate) async fn run(
             review_controller.cancel();
             handoff_controller.cancel();
             memory_tasks.abort_all();
+            file_tasks.abort_all();
         }
         if stopping && !subagents_stopping {
             for runtime in panes.values() {
@@ -1191,6 +1204,11 @@ pub(crate) async fn run(
                     )?;
                 }
             }
+            result = file_tasks.join_next(), if !file_tasks.is_empty() && !stopping => {
+                let Some(Ok(completion)) = result else { continue; };
+                if !panes.get(&completion.pane).is_some_and(|runtime| runtime.generation == completion.pane_generation && runtime.session_id == completion.session_id) { continue; }
+                schedule(app.update(AppEvent::FilesLoaded { pane: completion.pane, request: completion.request, result: completion.result }), &mut scheduler);
+            }
             result = memory_tasks.join_next(), if !memory_tasks.is_empty() && !stopping => {
                 let Some(Ok(completion)) = result else {
                     continue;
@@ -1401,28 +1419,26 @@ pub(crate) async fn run(
                     .await
             }, if recent_prompt_task.is_some() && !stopping => {
                 recent_prompt_task = None;
-                let prompts = result.map_err(RuntimeError::SessionTask)?;
-                match (prompts, recent_prompt_request.take()) {
-                    (Ok(prompts), Some(request)) => {
-                        recent_prompt_cache = Some(prompts.clone());
-                        input = Some(EventStream::new());
-                        schedule(
-                            app.update(recent_prompts_loaded_event(prompts, request)),
-                            &mut scheduler,
-                        );
+                let prompts = match result {
+                    Ok(result) => result.map_err(|error| error.to_string()),
+                    Err(error) => Err(error.to_string()),
+                };
+                if let Ok(prompts) = &prompts {
+                    recent_prompt_cache = Some(prompts.clone());
+                }
+                for request in std::mem::take(&mut recent_prompt_requests).into_values() {
+                    if !panes.get(&request.pane).is_some_and(|runtime| runtime.generation == request.pane_generation && runtime.session_id == request.session_id) {
+                        continue;
                     }
-                    (Ok(prompts), None) => recent_prompt_cache = Some(prompts),
-                    (Err(error), Some(request)) => {
-                        input = Some(EventStream::new());
-                        schedule(
-                            app.update(AppEvent::RecentPromptLoadFailed {
-                                pane: request.pane,
-                                error: format!("Could not load recent prompts: {error}"),
-                            }),
-                            &mut scheduler,
-                        );
-                    }
-                    (Err(_), None) => {}
+                    let event = match &prompts {
+                        Ok(prompts) => recent_prompts_loaded_event(prompts.clone(), request),
+                        Err(error) => AppEvent::RecentPromptLoadFailed {
+                            pane: request.pane,
+                            request: request.request,
+                            error: format!("Could not load recent prompts: {error}"),
+                        },
+                    };
+                    schedule(app.update(event), &mut scheduler);
                 }
                 scheduler.request_immediate(Instant::now());
             }
@@ -1851,6 +1867,7 @@ fn recent_prompts_loaded_event(
     );
     AppEvent::RecentPromptsLoaded {
         pane: request.pane,
+        request: request.request,
         session_id: request.session_id,
         prompts,
     }
@@ -1870,7 +1887,7 @@ struct EffectContext<'a> {
     session_list_task: &'a mut Option<SessionListTask>,
     recent_prompt_task: &'a mut Option<RecentPromptTask>,
     recent_prompt_cache: &'a mut Option<Vec<RecentPrompt>>,
-    recent_prompt_request: &'a mut Option<RecentPromptRequest>,
+    recent_prompt_requests: &'a mut HashMap<PaneId, RecentPromptRequest>,
     handoff_controller: &'a mut HandoffController,
     review_controller: &'a mut ReviewController,
     auxiliary_sender: &'a mpsc::UnboundedSender<AuxiliaryJobRequest>,
@@ -1882,6 +1899,7 @@ struct EffectContext<'a> {
     shell_tasks: &'a mut JoinSet<(PaneId, ShellExecution)>,
     memory_store: &'a mut Option<SelectedMemoryStore>,
     memory_tasks: &'a mut JoinSet<MemoryCompletion>,
+    file_tasks: &'a mut JoinSet<FileCompletion>,
     memory_generations: &'a mut HashMap<PaneId, u64>,
     subagent_shutdowns: &'a mut JoinSet<()>,
 }
@@ -2177,6 +2195,36 @@ fn apply_pane_effect(
                 runtime.subagent_control.set_max_concurrency(limit);
             }
         }
+        components::RootEffect::DiscoverFiles(request) => {
+            let Some(cancellation) = context
+                .app
+                .root(pane)
+                .and_then(|root| root.file_request_token(request))
+            else {
+                return Ok(());
+            };
+            let runtime = context
+                .panes
+                .get(&pane)
+                .expect("file discovery pane must exist");
+            let pane_generation = runtime.generation;
+            let session_id = runtime.session_id.clone();
+            let workspace = context.workspace.to_path_buf();
+            context.file_tasks.spawn(async move {
+                let result = tokio::task::spawn_blocking(move || {
+                    components::discover_paths_cancellable(&workspace, &cancellation)
+                })
+                .await
+                .map_err(|error| format!("Could not search workspace paths: {error}"));
+                FileCompletion {
+                    pane,
+                    pane_generation,
+                    session_id,
+                    request,
+                    result,
+                }
+            });
+        }
         components::RootEffect::LoadMemories => {
             let Some(store) = context.memory_store.clone() else {
                 schedule(
@@ -2312,7 +2360,10 @@ fn apply_pane_effect(
                 (pane, sessions.map_err(Into::into))
             }));
         }
-        components::RootEffect::LoadRecentPrompts(current_prompts) => {
+        components::RootEffect::LoadRecentPrompts {
+            request: request_id,
+            current_prompts,
+        } => {
             let session_id = context
                 .panes
                 .get(&pane)
@@ -2321,6 +2372,12 @@ fn apply_pane_effect(
                 .clone();
             let request = RecentPromptRequest {
                 pane,
+                request: request_id,
+                pane_generation: context
+                    .panes
+                    .get(&pane)
+                    .expect("recent-prompt pane must exist")
+                    .generation,
                 session_id,
                 workspace: context.workspace.to_path_buf(),
                 current_prompts,
@@ -2335,8 +2392,7 @@ fn apply_pane_effect(
                 return Ok(());
             }
 
-            *context.input = None;
-            *context.recent_prompt_request = Some(request);
+            context.recent_prompt_requests.insert(pane, request);
             if context.recent_prompt_task.is_none() {
                 let config_path = context.config.path().to_path_buf();
                 *context.recent_prompt_task = Some(tokio::spawn(async move {
@@ -2344,6 +2400,15 @@ fn apply_pane_effect(
                         .await
                         .map_err(Into::into)
                 }));
+            }
+        }
+        components::RootEffect::CancelRecentPrompts(request) => {
+            if context
+                .recent_prompt_requests
+                .get(&pane)
+                .is_some_and(|pending| pending.request == request)
+            {
+                context.recent_prompt_requests.remove(&pane);
             }
         }
         components::RootEffect::Handoff => start_handoff(context, pane),

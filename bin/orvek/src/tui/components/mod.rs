@@ -26,6 +26,7 @@ mod transcript;
 mod waved_text;
 
 pub(crate) use app::{AppEffect, AppEvent, AppNode};
+pub(crate) use file_finder::discover_paths_cancellable;
 pub(crate) use node::{ComponentUpdate, RenderRequest};
 pub(crate) use queue::QueueId;
 pub(crate) use root::{

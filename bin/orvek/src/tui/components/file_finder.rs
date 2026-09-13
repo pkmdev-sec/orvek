@@ -21,6 +21,7 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
+use tokio_util::sync::CancellationToken;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -52,6 +53,7 @@ pub(super) struct FileFinder {
 }
 
 impl FileFinder {
+    #[cfg(test)]
     pub(super) fn new(workspace: &Path) -> Self {
         Self::from_paths(discover_paths(workspace))
     }
@@ -387,21 +389,40 @@ fn compact_path(path: &str, width: usize) -> String {
     format!("{left}…{}", visible_query_tail(&path, right_width))
 }
 
+#[cfg(test)]
 pub(crate) fn discover_paths(workspace: &Path) -> Vec<String> {
+    discover_paths_cancellable(workspace, &CancellationToken::new())
+}
+
+pub(crate) fn discover_paths_cancellable(
+    workspace: &Path,
+    cancellation: &CancellationToken,
+) -> Vec<String> {
     let mut paths = Vec::new();
-    visit_directory(workspace, workspace, &mut paths);
+    visit_directory(workspace, workspace, &mut paths, cancellation);
+    if cancellation.is_cancelled() {
+        return Vec::new();
+    }
     paths.sort_unstable();
     paths
 }
 
-fn visit_directory(workspace: &Path, directory: &Path, paths: &mut Vec<String>) {
+fn visit_directory(
+    workspace: &Path,
+    directory: &Path,
+    paths: &mut Vec<String>,
+    cancellation: &CancellationToken,
+) {
+    if cancellation.is_cancelled() {
+        return;
+    }
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
-    let mut entries = entries.flatten().collect::<Vec<_>>();
-    entries.sort_unstable_by_key(|entry| entry.file_name());
-
-    for entry in entries {
+    for entry in entries.flatten() {
+        if cancellation.is_cancelled() {
+            return;
+        }
         let path = entry.path();
         let Ok(file_type) = entry.file_type() else {
             continue;
@@ -414,7 +435,7 @@ fn visit_directory(workspace: &Path, directory: &Path, paths: &mut Vec<String>) 
             if let Some(relative) = relative_path(workspace, &path) {
                 paths.push(format!("{relative}/"));
             }
-            visit_directory(workspace, &path, paths);
+            visit_directory(workspace, &path, paths, cancellation);
         } else if file_type.is_file()
             && let Some(relative) = relative_path(workspace, &path)
         {

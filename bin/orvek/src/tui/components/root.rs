@@ -56,6 +56,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tokio_util::sync::CancellationToken;
 
 const KEY_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(2);
 const SELECTION_SCROLL_INTERVAL: Duration = Duration::from_millis(60);
@@ -164,11 +165,19 @@ pub(crate) enum RootEvent {
     ForkReady,
     NewSessionFailed(String),
     SessionsLoaded(Vec<SessionSummary>),
+    FilesLoaded {
+        request: u64,
+        result: Result<Vec<String>, String>,
+    },
     RecentPromptsLoaded {
+        request: u64,
         session_id: String,
         prompts: Vec<RecentPrompt>,
     },
-    RecentPromptLoadFailed(String),
+    RecentPromptLoadFailed {
+        request: u64,
+        error: String,
+    },
     SessionLoadFailed(String),
     MemoriesLoaded {
         access: MemoryAccess,
@@ -240,7 +249,12 @@ pub(crate) enum RootEffect {
     ReloadConfig,
     NewSession(Model),
     LoadSessions(SessionListKind),
-    LoadRecentPrompts(Vec<RecentPromptDraft>),
+    DiscoverFiles(u64),
+    LoadRecentPrompts {
+        request: u64,
+        current_prompts: Vec<RecentPromptDraft>,
+    },
+    CancelRecentPrompts(u64),
     LoadMemories,
     DeleteMemory(MemoryKey),
     ResumeSession(String),
@@ -295,6 +309,14 @@ enum BlockingTask {
 struct FileMention {
     finder: Node<FileFinder>,
     start: usize,
+    request: u64,
+    cancellation: CancellationToken,
+}
+
+impl Drop for FileMention {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
 }
 
 struct SkillMention {
@@ -358,6 +380,9 @@ pub(crate) struct RootNode {
     context_diagnostics: ContextDiagnostics,
     recent_prompts: Vec<RecentPromptDraft>,
     pending_session_mention: Option<usize>,
+    next_file_request: u64,
+    next_recent_request: u64,
+    pending_recent_request: Option<u64>,
     reflection_input: bool,
 }
 
@@ -404,6 +429,9 @@ impl RootNode {
             context_diagnostics: ContextDiagnostics::default(),
             recent_prompts: Vec::new(),
             pending_session_mention: None,
+            next_file_request: 0,
+            next_recent_request: 0,
+            pending_recent_request: None,
             reflection_input: false,
         }
     }
@@ -546,6 +574,8 @@ impl RootNode {
         let motion_enabled = self.motion_enabled;
         let ascii_art = self.ascii_art;
         let max_subagents = self.subagents.max_subagents();
+        let next_file_request = self.next_file_request;
+        let next_recent_request = self.next_recent_request;
         *self = Self::new(workspace, thinking);
         self.set_reasoning_modes(reasoning_mode, preferred_reasoning_mode);
         self.discarded_draft = discarded_draft;
@@ -554,6 +584,8 @@ impl RootNode {
         self.theme_mode = theme_mode;
         self.set_render_preferences(motion_enabled, ascii_art);
         self.set_max_subagents(max_subagents);
+        self.next_file_request = next_file_request;
+        self.next_recent_request = next_recent_request;
         if let Some(draft) = preserved_draft {
             self.composer.component_mut().restore_draft(draft);
         }
@@ -650,6 +682,15 @@ impl RootNode {
 
     pub(crate) const fn composer(&self) -> &Composer {
         self.composer.component()
+    }
+
+    pub(crate) fn file_request_token(&self, request: u64) -> Option<CancellationToken> {
+        match &self.overlay {
+            Some(Overlay::FileFinder(mention)) if mention.request == request => {
+                Some(mention.cancellation.clone())
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn render_focused(
@@ -840,6 +881,29 @@ impl RootNode {
             return ComponentUpdate::render(RenderRequest::Immediate);
         }
         if is_confirmation_key_repeat(&event) {
+            return ComponentUpdate::none();
+        }
+        if let Some(request) = self.pending_recent_request {
+            if is_control_c(&event) {
+                return self.update_key_confirmation(ConfirmationAction::Exit, Instant::now());
+            }
+            if is_escape(&event) {
+                self.pending_recent_request = None;
+                self.interactive = true;
+                self.key_confirmation = None;
+                let mut update = self.update_composer(
+                    ComposerEvent::Activity {
+                        active: false,
+                        status: None,
+                        now: Instant::now(),
+                    },
+                    RenderRequest::Immediate,
+                );
+                update
+                    .effects
+                    .push(RootEffect::CancelRecentPrompts(request));
+                return update;
+            }
             return ComponentUpdate::none();
         }
         if self.reflection_input && is_escape(&event) {
@@ -1049,12 +1113,17 @@ impl RootNode {
         if is_file_finder_trigger(&event) && self.composer.component().cursor_is_at_token_boundary()
         {
             let start = self.composer.component().cursor();
-            let update =
+            let mut update =
                 self.update_composer(ComposerEvent::Terminal(event), RenderRequest::Immediate);
+            let request = self.next_file_request;
+            self.next_file_request = self.next_file_request.saturating_add(1);
             self.overlay = Some(Overlay::FileFinder(FileMention {
-                finder: Node::new(FileFinder::new(&self.workspace)),
+                finder: Node::new(FileFinder::loading()),
                 start,
+                request,
+                cancellation: CancellationToken::new(),
             }));
+            update.effects.push(RootEffect::DiscoverFiles(request));
             return update;
         }
         if !self.reflection_input
@@ -1841,6 +1910,9 @@ impl RootNode {
 
     fn load_recent_prompts(&mut self) -> ComponentUpdate<RootEffect> {
         self.overlay = None;
+        let request = self.next_recent_request;
+        self.next_recent_request = self.next_recent_request.saturating_add(1);
+        self.pending_recent_request = Some(request);
         self.interactive = false;
         let _ = self
             .composer
@@ -1851,16 +1923,24 @@ impl RootNode {
                 now: Instant::now(),
             });
         ComponentUpdate {
-            effects: vec![RootEffect::LoadRecentPrompts(self.recent_prompts.clone())],
+            effects: vec![RootEffect::LoadRecentPrompts {
+                request,
+                current_prompts: self.recent_prompts.clone(),
+            }],
             render: RenderRequest::Immediate,
         }
     }
 
     fn recent_prompts_loaded(
         &mut self,
+        request: u64,
         session_id: String,
         prompts: Vec<RecentPrompt>,
     ) -> ComponentUpdate<RootEffect> {
+        if self.pending_recent_request != Some(request) {
+            return ComponentUpdate::none();
+        }
+        self.pending_recent_request = None;
         self.interactive = true;
         let _ = self
             .composer
@@ -1870,9 +1950,9 @@ impl RootNode {
                 status: None,
                 now: Instant::now(),
             });
-        self.overlay = Some(Overlay::RecentPrompts(Node::new(RecentPromptPicker::new(
-            prompts, session_id,
-        ))));
+        let mut picker = RecentPromptPicker::new(prompts, session_id);
+        picker.set_has_draft_images(self.composer.component().has_images());
+        self.overlay = Some(Overlay::RecentPrompts(Node::new(picker)));
         ComponentUpdate::render(RenderRequest::Immediate)
     }
 
@@ -1900,7 +1980,15 @@ impl RootNode {
         }
     }
 
-    fn recent_prompt_load_failed(&mut self, message: String) -> ComponentUpdate<RootEffect> {
+    fn recent_prompt_load_failed(
+        &mut self,
+        request: u64,
+        message: String,
+    ) -> ComponentUpdate<RootEffect> {
+        if self.pending_recent_request != Some(request) {
+            return ComponentUpdate::none();
+        }
+        self.pending_recent_request = None;
         self.interactive = true;
         self.notification = Some(Notification::plain(message, Color::Red));
         self.update_composer(
@@ -2863,11 +2951,33 @@ impl Component for RootNode {
             RootEvent::ForkReady => self.fork_ready(),
             RootEvent::NewSessionFailed(message) => self.new_session_failed(message),
             RootEvent::SessionsLoaded(sessions) => self.sessions_loaded(sessions),
+            RootEvent::FilesLoaded { request, result } => {
+                let Some(Overlay::FileFinder(mention)) = &mut self.overlay else {
+                    return ComponentUpdate::none();
+                };
+                if mention.request != request {
+                    return ComponentUpdate::none();
+                }
+                match result {
+                    Ok(paths) => {
+                        mention.finder.component_mut().set_paths(paths);
+                        ComponentUpdate::render(RenderRequest::Immediate)
+                    }
+                    Err(message) => {
+                        self.overlay = None;
+                        self.notification = Some(Notification::plain(message, Color::Red));
+                        ComponentUpdate::render(RenderRequest::Immediate)
+                    }
+                }
+            }
             RootEvent::RecentPromptsLoaded {
+                request,
                 session_id,
                 prompts,
-            } => self.recent_prompts_loaded(session_id, prompts),
-            RootEvent::RecentPromptLoadFailed(message) => self.recent_prompt_load_failed(message),
+            } => self.recent_prompts_loaded(request, session_id, prompts),
+            RootEvent::RecentPromptLoadFailed { request, error } => {
+                self.recent_prompt_load_failed(request, error)
+            }
             RootEvent::SessionLoadFailed(message) => self.session_load_failed(message),
             RootEvent::MemoriesLoaded { access, records } => {
                 self.update_memory(MemoryBrowserEvent::Loaded { access, records })
@@ -3301,7 +3411,10 @@ mod tests {
             checkpoint::{RecentPrompt, SessionSummary},
             record::{LocalEvent, ShellId, TranscriptRecord, TurnId},
         },
-        tui::theme::{Theme, ThemeMode},
+        tui::{
+            prompt::Submission,
+            theme::{Theme, ThemeMode},
+        },
     };
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
@@ -4487,7 +4600,12 @@ mod tests {
         let mut root = RootNode::new(workspace.path(), ReasoningEffort::Medium);
         for character in "@someone@".chars() {
             let update = root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
-            assert!(update.effects.is_empty());
+            assert!(
+                update
+                    .effects
+                    .iter()
+                    .all(|effect| matches!(effect, RootEffect::DiscoverFiles(_)))
+            );
         }
 
         assert!(root.overlay.is_none());
@@ -4506,6 +4624,72 @@ mod tests {
         assert_eq!(root.composer().draft(), "name@example.com");
     }
 
+    fn complete_file_discovery(root: &mut RootNode) {
+        let Some(Overlay::FileFinder(mention)) = &root.overlay else {
+            panic!("file picker must be open");
+        };
+        let request = mention.request;
+        let paths = super::super::file_finder::discover_paths(&root.workspace);
+        root.update(RootEvent::FilesLoaded {
+            request,
+            result: Ok(paths),
+        });
+    }
+
+    #[test]
+    fn file_discovery_is_cancelled_and_late_results_cannot_reopen_the_picker() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        let opened = root.update(key(KeyCode::Char('@'), KeyModifiers::NONE));
+        let [RootEffect::DiscoverFiles(request)] = opened.effects.as_slice() else {
+            panic!("opening must start one discovery");
+        };
+        let request = *request;
+        let token = root.file_request_token(request).unwrap();
+        root.update(key(KeyCode::Char('a'), KeyModifiers::NONE));
+        assert!(
+            root.update(key(KeyCode::Enter, KeyModifiers::NONE))
+                .effects
+                .is_empty()
+        );
+        root.update(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(token.is_cancelled());
+        root.update(RootEvent::FilesLoaded {
+            request,
+            result: Ok(vec!["alpha.rs".to_owned()]),
+        });
+        assert!(root.overlay.is_none());
+        assert_eq!(root.composer().draft(), "@a");
+    }
+
+    #[test]
+    fn file_discovery_keeps_the_latest_query_and_rejects_a_different_request() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        let opened = root.update(key(KeyCode::Char('@'), KeyModifiers::NONE));
+        let [RootEffect::DiscoverFiles(request)] = opened.effects.as_slice() else {
+            panic!("discovery");
+        };
+        let request = *request;
+        for character in "alpha".chars() {
+            root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        root.update(RootEvent::FilesLoaded {
+            request: request + 1,
+            result: Ok(vec!["wrong.rs".to_owned()]),
+        });
+        assert!(
+            root.update(key(KeyCode::Enter, KeyModifiers::NONE))
+                .effects
+                .is_empty()
+        );
+        root.update(RootEvent::FilesLoaded {
+            request,
+            result: Ok(vec!["beta.rs".to_owned(), "alpha.rs".to_owned()]),
+        });
+        root.update(key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(root.overlay.is_none());
+        assert_eq!(root.composer().draft(), "@alpha.rs ");
+    }
+
     fn assert_file_selection(key_code: KeyCode) {
         let workspace = tempfile::tempdir().unwrap();
         fs::write(workspace.path().join("notes.md"), "remember this").unwrap();
@@ -4518,6 +4702,7 @@ mod tests {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
         }
 
+        complete_file_discovery(&mut root);
         root.update(key(key_code, KeyModifiers::NONE));
 
         assert!(root.overlay.is_none());
@@ -4549,6 +4734,7 @@ mod tests {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
         }
 
+        complete_file_discovery(&mut root);
         root.update(key(KeyCode::Enter, KeyModifiers::NONE));
 
         assert!(root.overlay.is_none());
@@ -6269,17 +6455,84 @@ mod tests {
     }
 
     #[test]
+    fn cancelling_recent_prompt_loading_preserves_images_and_rejects_late_results() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(RootEvent::PasteImage(
+            "data:image/png;base64,fixture".to_owned(),
+        ));
+        root.update(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        let request = root.pending_recent_request.unwrap();
+        let cancelled = root.update(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(
+            cancelled.effects,
+            [RootEffect::CancelRecentPrompts(request)]
+        );
+        assert!(root.interactive);
+        root.update(RootEvent::RecentPromptsLoaded {
+            request,
+            session_id: "old".to_owned(),
+            prompts: Vec::new(),
+        });
+        assert!(root.overlay.is_none());
+        assert_eq!(
+            root.composer.component_mut().take_submission(),
+            Some(Submission::multimodal(
+                "[Image #1]".to_owned(),
+                [(0..10, "data:image/png;base64,fixture".to_owned())],
+            ))
+        );
+    }
+
+    #[test]
+    fn replacement_session_ignores_the_previous_prompt_request() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        let old = root.pending_recent_request.unwrap();
+        root.reset_session(
+            Path::new("/work"),
+            ReasoningEffort::Medium,
+            ReasoningMode::Standard,
+            ReasoningMode::Standard,
+            super::DraftReset::Preserve,
+        );
+        root.update(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        let current = root.pending_recent_request.unwrap();
+        assert_ne!(current, old);
+        root.update(RootEvent::RecentPromptsLoaded {
+            request: old,
+            session_id: "old".to_owned(),
+            prompts: Vec::new(),
+        });
+        assert!(root.overlay.is_none());
+        assert_eq!(root.pending_recent_request, Some(current));
+        root.update(RootEvent::RecentPromptsLoaded {
+            request: current,
+            session_id: "current".to_owned(),
+            prompts: Vec::new(),
+        });
+        assert!(matches!(&root.overlay, Some(Overlay::RecentPrompts(_))));
+        assert!(root.interactive);
+    }
+
+    #[test]
     fn control_r_loads_recent_prompts_and_inserts_from_the_current_session() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         root.update(RootEvent::ReplaceDraft("keep while loading".to_owned()));
 
         let loading = root.update(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
 
-        assert_eq!(loading.effects, [RootEffect::LoadRecentPrompts(Vec::new())]);
+        assert_eq!(
+            loading.effects,
+            [RootEffect::LoadRecentPrompts {
+                request: 0,
+                current_prompts: Vec::new()
+            }]
+        );
         assert_eq!(root.composer().draft(), "keep while loading");
         assert!(!root.interactive);
 
         root.update(RootEvent::RecentPromptsLoaded {
+            request: 0,
             session_id: "current".to_owned(),
             prompts: vec![
                 RecentPrompt {
@@ -6314,7 +6567,10 @@ mod tests {
         root.update(RootEvent::ReplaceDraft("keep me".to_owned()));
         root.update(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
 
-        root.update(RootEvent::RecentPromptLoadFailed("load failed".to_owned()));
+        root.update(RootEvent::RecentPromptLoadFailed {
+            request: 0,
+            error: "load failed".to_owned(),
+        });
 
         assert!(root.interactive);
         assert_eq!(root.composer().draft(), "keep me");
@@ -6339,12 +6595,13 @@ mod tests {
 
         assert_eq!(
             loading.effects,
-            [RootEffect::LoadRecentPrompts(vec![
-                super::RecentPromptDraft {
+            [RootEffect::LoadRecentPrompts {
+                request: 0,
+                current_prompts: vec![super::RecentPromptDraft {
                     text: "just submitted".to_owned(),
                     recorded_at_unix_ms: 42,
-                },
-            ])]
+                },]
+            }]
         );
     }
 
