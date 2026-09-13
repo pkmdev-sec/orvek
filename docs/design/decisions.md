@@ -4,7 +4,7 @@ Review one component at a time. Open its HTML proposal with macOS `open`, then w
 explicit approval. Feedback revises that component only. An approval locks the named version and
 scope; changes to it need another review. Design approval does not authorize native implementation.
 
-The welcome logo and chat bar are approved. The current review is **Conversation and execution,
+The welcome logo, chat bar, and execution view are approved. The current review is **Actions menu,
 proposal 1**.
 
 Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
@@ -16,8 +16,8 @@ welcome-logo colors stay fixed.
 | --- | --- | --- | --- |
 | 1 | Welcome logo | Approved: glyphs and colors only | [Logo](tui-motion-preview.html) |
 | 2 | Chat bar | Approved and locked | [Proposal 1](components/composer-v1.html) |
-| 3 | Conversation and execution rows | Awaiting approval | [Proposal 1](components/transcript-v1.html) |
-| 4 | Actions menu | Not started | Current native popup is the baseline. |
+| 3 | Conversation and execution rows | Approved and locked | [Proposal 1](components/transcript-v1.html) |
+| 4 | Actions menu | Awaiting approval | [Proposal 1](components/actions-v1.html) |
 | 5 | Persistent activity indicator | Not started | Shape and placement need approval. |
 | 6 | Model and effort selectors | Not started | Review each selector separately. |
 | 7 | Session, file, and skill pickers | Not started | Review each picker separately. |
@@ -55,7 +55,7 @@ file bytes so later components cannot silently revise the approved design.
 ## Conversation and execution, proposal 1
 
 The [HTML](components/transcript-v1.html) keeps the native structure: colored user-message rail,
-plain assistant text, compact tool summaries, and indented expanded output. No approval recorded yet.
+plain assistant text, compact tool summaries, and indented expanded output. Approved by the user.
 
 - Keep existing theme colors and user overrides. HTML colors are approximate samples.
 - Keep one blank line between conversation sections and compact adjacent tool summaries.
@@ -73,5 +73,33 @@ actual cancellation should read; it does not introduce a new persisted tool-stat
 Native source-to-selection mapping, event ordering, output streaming, and performance still require
 the existing Rust behavioral tests. Browser layout checks are not native runtime proof.
 
-The approved chat-bar artifact is not embedded or edited during this review. Future components
-have no approved design and should not receive speculative preview changes.
+Locked artifact: `transcript-v1.html` at `bcac24a`, SHA-256
+`bd87d124c3839e73a86334cac689c12500edafe96bdad2027768afe6a7c1f2d5`.
+Its pending-review label is historical; this registry records approval.
+
+Approved preview files remain unchanged. Future components have no approved design and should not
+receive speculative preview changes.
+
+## Actions menu, proposal 1
+
+The [HTML](components/actions-v1.html) retains the rounded 58 × 19 popup, title, search row, native
+action order, selection marker, and Enter/Tab/Escape behavior. No approval recorded yet.
+
+- Align existing aliases on the right. At narrow widths, show the selected alias below the list.
+- Keep all actions in their current order. Disabled actions remain selectable for explanation,
+  but cannot execute. Show the selected action's full reason below the list instead of crowding
+  its label. This takes one or two rows from the list; navigation keeps the selected row visible.
+- Show `No matching actions` for an empty result.
+- Search the visible state-dependent label, the original label, and aliases with the existing
+  case-insensitive substring policy. This fixes `Disable fast mode` without losing old matches.
+- Keep typing/search selection reset, clamped arrow navigation, grapheme-aware deletion, paste
+  sanitization, and Backspace-to-dismiss when the search is empty.
+- Click activation and wheel navigation are proposed additions. The native menu currently handles
+  keyboard/paste events; mouse handlers must use the same availability checks.
+- Use existing theme roles and overrides. No animation, new dependency, category system, or
+  background work is needed.
+
+The HTML only reports sample selections. It never executes actions. Sample session presets are
+illustrations; native availability remains owned by `RootNode` and `ActionAvailability`, including
+independent fork availability. Model selection remains restricted to a new session and compaction
+requires conversation content. Preserve existing keys and guards in implementation.

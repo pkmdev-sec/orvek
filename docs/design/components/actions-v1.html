@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Actions menu · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:740px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.toggle{display:flex;gap:8px;align-items:center;min-height:36px}.toggle input{accent-color:#aebfcb}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--border:#59646e;--accent:#76a9df;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 22px 22px;overflow:auto}.canvas.light{--base:#f7f8f9;--text:#283441;--muted:#627180;--border:#909ba5;--accent:#265f99}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:26px;gap:12px}.stage{min-height:455px;display:grid;place-items:start center}.frame{position:relative;font:15px/23px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.grid{font:inherit;white-space:pre;user-select:none;margin:0}.cell{display:inline-block;width:1ch;height:23px;vertical-align:top}.border{color:var(--border)}.muted{color:var(--muted)}.accent{color:var(--accent);font-weight:600}.title{font-weight:600}.search{position:absolute;top:23px;left:11ch;font:inherit;line-height:23px;padding:0;border:0;outline:0;background:var(--base);color:var(--text);height:23px;min-width:0;border-radius:0;caret-color:var(--text)}.hit{position:absolute;left:1ch;min-height:0;height:23px;background:transparent;border:0;border-radius:0;padding:0;margin:0;outline:none}.hit:hover{background:#7a89990b}.note{font-size:11px;color:var(--muted);margin:24px 0 0}.notice{min-height:21px;color:var(--muted);font-size:12px;margin-top:18px}.closed{font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);padding-top:120px}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:16px 8px}.explanation{grid-template-columns:1fr;gap:16px}.frame{font-size:13px}h1{font-size:27px}}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>The Actions menu</h1>
+<p class="intro">One proposal: the current popup, with aligned aliases, clearer selection, and useful feedback when an action is unavailable.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Session state<select id="mode"><option value="ready">Idle session</option><option value="fresh">New session</option><option value="busy">Work running</option><option value="memoryOff">Memory disabled</option><option value="fastOn">Fast mode on</option></select></label>
+<label>Popup width<select id="width"><option value="58">Normal · 58 columns</option><option value="40">Narrow · 40 columns</option><option value="32">Small · 32 columns</option></select></label>
+<button id="reopen" type="button">Reopen menu</button>
+<button id="clear" type="button">Clear search</button>
+<label class="toggle"><input id="light" type="checkbox">Light</label>
+</div>
+<section class="canvas" id="canvas" aria-label="Actions menu preview">
+<div class="caption"><span>ACTIONS / INTERACTIVE PREVIEW</span><span id="dimensions"></span></div>
+<div class="stage" id="stage"><div class="frame" id="frame"><pre class="grid" id="grid" aria-hidden="true"></pre><div id="hits"></div><input class="search" id="search" type="text" aria-label="Search actions by name or alias" autocomplete="off" spellcheck="false"></div><div class="closed" id="closed" hidden></div></div>
+<div class="notice" id="notice" role="status" aria-live="polite"></div>
+<p class="note">Type to filter. ↑/↓ select; Enter or Tab opens; Esc closes. Try “restore”, “disable” with fast mode on, or a query with no matches. All actions are simulated. Native colors will be preserved.</p>
+</section>
+<div class="explanation">
+<div><h2>The same compact menu</h2><p>The rounded frame, title, action order, aliases, and keyboard shortcuts stay familiar. No categories or extra panels.</p></div>
+<div><h2>Cleaner information placement</h2><p>Aliases align on the right when space allows. At narrow widths, the selected alias appears below the list.</p></div>
+<div><h2>Useful empty and disabled states</h2><p>No-match searches say so. Unavailable actions stay visible, with their full reason shown when selected.</p></div>
+</div>
+<div class="foot"><span>Review this component only. Approved components remain unchanged.</span><a href="../decisions.md">Review order and approvals</a></div>
+</main>
+<script>
+const actionsStudy=(()=>{
+ const actions=[
+  ['Effort','Change effort','thinking'],['FastMode','Enable fast mode','priority'],['Theme','Select theme','appearance'],
+  ['NewSession','New session','clear'],['ResumeSession','Resume session','restore'],['Fork','Fork session','btw'],
+  ['Keybindings','Keyboard shortcuts',''],['ReloadConfig','Reload config','refresh'],['EditConfig','Edit config',''],
+  ['Memory','Memory','remember/forget'],['Subagents','Subagents','agents'],['DebugContext','Debug context',''],
+  ['Reflection','Reflect on session','reflection'],['Handoff','Prepare handoff','handoff'],['Review','Review changes','review'],
+  ['Model','Select model','intelligence'],['Compact','Compact context','compress']
+ ].map(([id,label,alias])=>({id,label,alias}));
+ function present(action,mode){
+  let label=action.id==='FastMode'&&mode==='fastOn'?'Disable fast mode':action.label,reason='';
+  if(mode==='busy'&&['NewSession','ResumeSession','Reflection','Handoff','Review'].includes(action.id))reason='Finish active work first.';
+  if(mode==='busy'&&action.id==='Compact')reason='Finish a conversation turn first.';
+  if(mode==='fresh'&&action.id==='Compact')reason='Finish a conversation turn first.';
+  if(mode!=='fresh'&&action.id==='Model')reason='Start a new session first.';
+  if(mode==='memoryOff'&&action.id==='Memory')reason='Enable in config: memory.enabled = true';
+  return {...action,label,reason,enabled:!reason};
+ }
+ function filter(query='',mode='ready'){const needle=query.toLowerCase();return actions.map(a=>present(a,mode)).filter(a=>[a.label,actions.find(b=>b.id===a.id).label,a.alias].some(value=>value.toLowerCase().includes(needle)));}
+ function wrap(value,width){const rows=[];let rest=value;while(rest.length>width){let end=rest.lastIndexOf(' ',width);if(end<1)end=width;rows.push(rest.slice(0,end));rest=rest.slice(end).replace(/^ /,'');}rows.push(rest);return rows;}
+ function cut(value,width){return value.length<=width?value:value.slice(0,width-1)+'…';}
+ function layout({columns=58,query='',mode='ready',selected=0,offset=0}={}){
+  if(columns<32)throw new Error('Preview minimum width is 32 columns.');
+  const height=19,matches=filter(query,mode);selected=matches.length?Math.max(0,Math.min(matches.length-1,selected)):0;
+  const chosen=matches[selected],wide=columns>=54;
+  const detail=chosen?.reason||(!wide&&chosen?.alias?'Alias: '+chosen.alias:'');
+  const detailRows=detail?wrap(detail,columns-6):[''];
+  const listTop=2,listHeight=height-4-detailRows.length,detailY=listTop+listHeight;
+  offset=Math.max(0,Math.min(offset,Math.max(0,matches.length-listHeight)));
+  if(selected<offset)offset=selected;if(selected>=offset+listHeight)offset=selected-listHeight+1;
+  const grid=Array.from({length:height},()=>Array.from({length:columns},()=>({ch:' ',role:'text'})));
+  const hitRows=[];
+  function write(text,x,y,role='text'){[...text].forEach((ch,i)=>{if(x+i>=columns-1)throw new Error('Row overflow.');grid[y][x+i]={ch,role};});}
+  for(let x=1;x<columns-1;x++){grid[0][x]={ch:'─',role:'border'};grid[height-1][x]={ch:'─',role:'border'};}
+  for(let y=1;y<height-1;y++){grid[y][0]={ch:'│',role:'border'};grid[y][columns-1]={ch:'│',role:'border'};}
+  [['╭',0,0],['╮',columns-1,0],['╰',0,height-1],['╯',columns-1,height-1]].forEach(([ch,x,y])=>{grid[y][x]={ch,role:'border'};});
+  write(' Actions ',Math.floor((columns-9)/2),0,'title');write('Search:',3,1,'muted');
+  const tail=[...query].slice(-(columns-13)).join('');write(tail,11,1);
+  const visible=matches.slice(offset,offset+listHeight);
+  visible.forEach((action,index)=>{
+   const y=listTop+index,isSelected=offset+index===selected,role=!action.enabled?'muted':isSelected?'accent':'text';
+   if(isSelected)write('›',1,y,action.enabled?'accent':'muted');
+   const alias=wide&&action.alias&&!(action.id==='Memory'&&!action.enabled)?`(alias: ${action.alias})`:'';
+   const aliasX=columns-3-alias.length,labelWidth=alias?aliasX-5:columns-6;
+   write(cut(action.label,labelWidth),3,y,role);if(alias)write(alias,aliasX,y,'muted');
+   hitRows.push({y,index:offset+index,id:action.id,label:action.label,enabled:action.enabled,reason:action.reason,selected:isSelected});
+  });
+  if(!matches.length)write('No matching actions',3,listTop+1,'muted');
+  detailRows.forEach((line,index)=>write(line,3,detailY+index,'muted'));
+  const help=columns>=44?'↑↓ move · enter/tab open · esc close':'↑↓ · enter/tab · esc';write(help,Math.floor((columns-help.length)/2),height-2,'muted');
+  return {grid,columns,height,hitRows,matches,selected,offset,chosen,listHeight,detail,detailRows,detailY};
+ }
+ function activate(query,mode,selected){const choice=filter(query,mode)[selected];return choice?.enabled?choice.id:null;}
+ return {actions,present,filter,layout,activate};
+})();
+if(typeof document!=='undefined'){
+ const id=x=>document.getElementById(x),frame=id('frame'),grid=id('grid'),input=id('search'),hits=id('hits'),canvas=id('canvas');
+ let selected=0,offset=0,columns=58,open=true,lastLayout;
+ function render(){
+  lastLayout=actionsStudy.layout({columns,query:input.value,mode:id('mode').value,selected,offset});selected=lastLayout.selected;offset=lastLayout.offset;
+  grid.replaceChildren();lastLayout.grid.forEach((row,y)=>{row.forEach(cell=>{const span=document.createElement('span');span.className=`cell ${cell.role}`;span.textContent=cell.ch;grid.append(span);});if(y<18)grid.append(document.createTextNode('\n'));});
+  hits.replaceChildren();lastLayout.hitRows.forEach(row=>{const button=document.createElement('button');button.className='hit';button.type='button';button.tabIndex=-1;button.style.top=`${row.y*23}px`;button.style.width=`${columns-2}ch`;button.setAttribute('aria-label',row.label+(row.enabled?'':'. Unavailable: '+row.reason));button.setAttribute('aria-disabled',String(!row.enabled));button.addEventListener('click',()=>{selected=row.index;render();activate();});hits.append(button);});
+  input.style.width=`${columns-13}ch`;frame.style.width=`${columns}ch`;frame.hidden=!open;id('closed').hidden=open;
+ }
+ function activate(){const choice=lastLayout.chosen;if(!choice?.enabled){input.focus();return;}close(`Selected: ${choice.label}. No action was executed.`);}
+ function close(message){open=false;id('closed').textContent='Menu closed';id('notice').textContent=message;render();id('reopen').focus();}
+ function reopen(){open=true;selected=0;offset=0;input.value='';id('notice').textContent='';render();input.focus();}
+ function resize(){const probe=document.createElement('span');probe.className='cell';probe.textContent='M';const hidden=frame.hidden;frame.hidden=false;grid.append(probe);const width=probe.getBoundingClientRect().width;probe.remove();frame.hidden=hidden;const style=getComputedStyle(canvas),available=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);columns=Math.max(32,Math.min(Number(id('width').value),Math.floor(available/width)));id('dimensions').textContent=`${columns} × 19 cells`;render();}
+ input.addEventListener('input',()=>{selected=0;offset=0;render();});
+ input.addEventListener('paste',event=>{const raw=event.clipboardData.getData('text/plain');if(/[\x00-\x1f\x7f]/.test(raw)){event.preventDefault();const value=raw.replace(/[\x00-\x1f\x7f]/g,'');input.setRangeText(value,input.selectionStart,input.selectionEnd,'end');selected=0;offset=0;render();}});
+ input.addEventListener('keydown',event=>{
+  if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();selected=Math.max(0,Math.min(lastLayout.matches.length-1,selected+(event.key==='ArrowDown'?1:-1)));render();}
+  else if(event.key==='Enter'||event.key==='Tab'){event.preventDefault();activate();}
+  else if(event.key==='Escape'||(event.key==='Backspace'&&!input.value)){event.preventDefault();close('Dismissed. No action was executed.');}
+ });
+ hits.addEventListener('wheel',event=>{if(lastLayout.matches.length<=lastLayout.listHeight)return;event.preventDefault();selected=Math.max(0,Math.min(lastLayout.matches.length-1,selected+(event.deltaY>0?1:-1)));render();},{passive:false});
+ id('mode').addEventListener('change',()=>{selected=0;offset=0;open=true;id('notice').textContent='';render();input.focus();});
+ id('width').addEventListener('change',resize);id('light').addEventListener('change',()=>canvas.classList.toggle('light',id('light').checked));id('reopen').addEventListener('click',reopen);
+ id('clear').addEventListener('click',()=>{input.value='';selected=0;offset=0;open=true;id('notice').textContent='';render();input.focus();});
+ new ResizeObserver(resize).observe(canvas);resize();input.focus();
+}
+</script>
+</body>
+</html>
