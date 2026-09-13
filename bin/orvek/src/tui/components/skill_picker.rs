@@ -451,7 +451,7 @@ mod tests {
         let mut picker = SkillPicker::new(
             vec![
                 Skill::new("short", "Brief"),
-                Skill::new(name, &"Long description ".repeat(20)),
+                Skill::new(name, "Long description ".repeat(20)),
             ]
             .into(),
         );
