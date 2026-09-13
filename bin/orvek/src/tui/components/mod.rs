@@ -12,6 +12,7 @@ mod keybindings;
 mod memory;
 mod model_selector;
 mod node;
+mod notification;
 mod queue;
 mod recent_prompt_picker;
 mod review_confirmation;
