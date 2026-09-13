@@ -846,8 +846,7 @@ pub(crate) async fn run(
                         app.update(AppEvent::NotifyError {
                             pane: ready.identity.pane,
                             error: format!(
-                                "Could not open the browser. Press O to retry or open {} manually: {error}",
-                                url,
+                                "Could not open the browser. Press O to retry or C to copy the link: {error}"
                             ),
                         }),
                         &mut scheduler,
@@ -2960,6 +2959,19 @@ mod tests {
     use orvek_subagents::{AgentId, AgentStatus, AgentUpdate};
     use std::{cell::Cell, collections::HashMap, fs, path::Path, sync::Arc};
     use tempfile::tempdir;
+
+    #[test]
+    fn browser_open_failure_copy_omits_the_review_url() {
+        let url = "http://127.0.0.1:4321/review/secret-token".to_owned();
+        let error = "browser launch failed";
+        let message =
+            format!("Could not open the browser. Press O to retry or C to copy the link: {error}");
+
+        assert!(!message.contains(&url));
+        assert!(!message.contains("secret-token"));
+        assert!(message.contains("Press O to retry"));
+        assert!(message.contains("C to copy the link"));
+    }
 
     #[test]
     fn control_or_super_v_requests_an_image_paste() {

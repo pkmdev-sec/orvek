@@ -9,11 +9,13 @@ use super::{
     },
     effort::{EffortEffect, EffortEvent, EffortSelector},
     file_finder::{FileFinder, FileFinderEffect, FileFinderEvent},
-    floating::Floating,
     keybindings::{KeybindingsEffect, KeybindingsEvent, KeybindingsHelp},
     memory::{MemoryBrowser, MemoryBrowserEffect, MemoryBrowserEvent},
     model_selector::{ModelSelector, ModelSelectorEffect, ModelSelectorEvent},
     node::{Component, ComponentUpdate, Node, RenderRequest},
+    notification::{
+        Notification, NotificationDetails, NotificationDetailsEffect, NotificationDetailsEvent,
+    },
     queue::{MessageQueue, QueueEffect, QueueEvent, QueueId},
     recent_prompt_picker::{RecentPromptPicker, RecentPromptPickerEffect, RecentPromptPickerEvent},
     review_confirmation::{
@@ -48,7 +50,7 @@ use ratatui::{
     layout::{Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 use semver::Version;
 use std::{
@@ -60,7 +62,6 @@ use tokio_util::sync::CancellationToken;
 
 const KEY_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(2);
 const SELECTION_SCROLL_INTERVAL: Duration = Duration::from_millis(60);
-const BREADCRUMB_DURATION: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ConfirmationAction {
@@ -100,43 +101,10 @@ struct KeyConfirmation {
     deadline: Instant,
 }
 
-struct Notification {
-    message: Line<'static>,
-    color: Color,
-    deadline: Instant,
-}
-
 struct SelectionAutoScroll {
     direction: isize,
     position: Position,
     deadline: Instant,
-}
-
-impl Notification {
-    fn plain(message: String, color: Color) -> Self {
-        Self {
-            message: Line::styled(
-                message,
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ),
-            color,
-            deadline: Instant::now() + BREADCRUMB_DURATION,
-        }
-    }
-
-    fn update_available(version: Version) -> Self {
-        let green = Style::default().fg(Color::Green);
-        Self {
-            message: Line::from(vec![
-                Span::styled("Update available · ", green),
-                Span::styled(format!("v{version}"), green.add_modifier(Modifier::BOLD)),
-                Span::styled(" · run ", green),
-                Span::styled("`orvek update`", Style::default().fg(Color::Reset)),
-            ]),
-            color: Color::Green,
-            deadline: Instant::now() + BREADCRUMB_DURATION,
-        }
-    }
 }
 
 pub(crate) enum RootEvent {
@@ -296,6 +264,7 @@ enum Overlay {
     RecentPrompts(Node<RecentPromptPicker>),
     Sessions(Node<SessionPicker>),
     ReviewDownload(Node<ReviewDownloadConfirmation>),
+    NotificationDetails(Node<NotificationDetails>),
     Subagents(SubagentOverlay),
 }
 
@@ -354,6 +323,7 @@ pub(crate) struct RootNode {
     thread: ThreadState,
     key_confirmation: Option<KeyConfirmation>,
     notification: Option<Notification>,
+    notification_hit_area: Option<Rect>,
     discarded_draft: Option<ComposerDraft>,
     queue_edit: Option<QueueEdit>,
     selection: Selection,
@@ -403,6 +373,7 @@ impl RootNode {
             thread: ThreadState::New,
             key_confirmation: None,
             notification: None,
+            notification_hit_area: None,
             discarded_draft: None,
             queue_edit: None,
             selection: Selection::default(),
@@ -727,7 +698,9 @@ impl RootNode {
             self.key_confirmation
                 .as_ref()
                 .map(|confirmation| confirmation.deadline),
-            self.notification.as_ref().map(|notice| notice.deadline),
+            self.notification
+                .as_ref()
+                .and_then(Notification::expires_at),
             self.selection_auto_scroll
                 .as_ref()
                 .map(|scroll| scroll.deadline),
@@ -849,6 +822,7 @@ impl RootNode {
                 Overlay::Memory(browser) => browser.render(frame, area, theme),
                 Overlay::RecentPrompts(picker) => picker.render(frame, area, theme),
                 Overlay::Sessions(picker) => picker.render(frame, area, theme),
+                Overlay::NotificationDetails(details) => details.render(frame, area, theme),
                 Overlay::ReviewDownload(confirmation) => {
                     confirmation.render(frame, area, theme);
                 }
@@ -860,14 +834,21 @@ impl RootNode {
                 }
             }
         }
-        if let Some(notification) = &self.notification {
-            render_notification(
-                frame,
-                area,
-                theme,
-                &notification.message,
-                notification.color,
-            );
+        let now = Instant::now();
+        if self
+            .notification
+            .as_ref()
+            .is_some_and(|notice| notice.expired(now))
+        {
+            self.notification = None;
+        }
+        self.notification_hit_area = None;
+        if let Some(notification) = &mut self.notification {
+            if self.overlay.is_none() && !self.selection.is_active() && self.interactive {
+                self.notification_hit_area =
+                    notification.render(frame, self.transcript_area, theme);
+            }
+            notification.visibility(self.notification_hit_area.is_some(), now);
         }
         if let Some(confirmation) = &self.key_confirmation {
             render_key_confirmation(frame, area, composer_area, theme, confirmation.action);
@@ -911,6 +892,9 @@ impl RootNode {
         }
         if self.blocking_task.is_some() && is_control_c(&event) {
             return self.update_key_confirmation(ConfirmationAction::Exit, Instant::now());
+        }
+        if let Some(update) = self.update_notice_input(&event) {
+            return update;
         }
         match self.blocking_task {
             Some(BlockingTask::Review) => return self.update_review_input(event),
@@ -1196,6 +1180,79 @@ impl RootNode {
         })
     }
 
+    fn update_notice_input(&mut self, event: &Event) -> Option<ComponentUpdate<RootEffect>> {
+        if let Some(Overlay::NotificationDetails(_)) = &self.overlay {
+            return Some(self.update_notification_details(event.clone()));
+        }
+        if self.overlay.is_some() {
+            return None;
+        }
+
+        let open_with_key = matches!(
+            &event,
+            Event::Key(key)
+                if key.code == KeyCode::F(2)
+                    && matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
+                    && key.modifiers.is_empty()
+        );
+        let click = match &event {
+            Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+                Some(Position::new(mouse.column, mouse.row))
+            }
+            _ if open_with_key => None,
+            _ => return None,
+        };
+        let click_hits_notice = click.is_some_and(|position| {
+            self.notification_hit_area
+                .is_some_and(|area| area.contains(position))
+        });
+        if open_with_key || click_hits_notice {
+            return Some(self.open_notification_details());
+        }
+        None
+    }
+
+    fn open_notification_details(&mut self) -> ComponentUpdate<RootEffect> {
+        let now = Instant::now();
+        let can_open = self
+            .notification
+            .as_ref()
+            .is_some_and(|notice| self.notification_hit_area.is_some() && !notice.expired(now));
+        if !can_open {
+            return ComponentUpdate::none();
+        }
+        let details = NotificationDetails::new(
+            self.notification
+                .as_ref()
+                .expect("notice availability was checked before constructing its detail snapshot"),
+        );
+        self.key_confirmation = None;
+        self.overlay = Some(Overlay::NotificationDetails(Node::new(details)));
+        ComponentUpdate::render(RenderRequest::Immediate)
+    }
+
+    fn update_notification_details(&mut self, event: Event) -> ComponentUpdate<RootEffect> {
+        let Some(Overlay::NotificationDetails(details)) = &mut self.overlay else {
+            return ComponentUpdate::none();
+        };
+        let update = details.update(NotificationDetailsEvent::Terminal(event));
+        let effect = update.effects.into_iter().next();
+        match effect {
+            Some(NotificationDetailsEffect::Dismiss) => self.overlay = None,
+            Some(NotificationDetailsEffect::Copy(text)) => {
+                return ComponentUpdate {
+                    effects: vec![RootEffect::Copy(text)],
+                    render: update.render,
+                };
+            }
+            None => {}
+        }
+        ComponentUpdate {
+            effects: Vec::new(),
+            render: update.render,
+        }
+    }
+
     fn update_handoff_input(&mut self, event: Event) -> ComponentUpdate<RootEffect> {
         if is_escape(&event) {
             self.key_confirmation = None;
@@ -1396,6 +1453,7 @@ impl RootNode {
             Some(Overlay::RecentPrompts(_)) => self.update_recent_prompt_picker(event),
             Some(Overlay::Sessions(_)) => self.update_session_picker(event),
             Some(Overlay::ReviewDownload(_)) => self.update_review_confirmation(event),
+            Some(Overlay::NotificationDetails(_)) => self.update_notification_details(event),
             Some(Overlay::Subagents(SubagentOverlay::Tree)) => {
                 let effect = self.subagents.update_tree(event);
                 self.apply_subagent_effect(effect)
@@ -2576,7 +2634,7 @@ impl RootNode {
         let notification = if self
             .notification
             .as_ref()
-            .is_some_and(|notice| now >= notice.deadline)
+            .is_some_and(|notice| notice.expired(now))
         {
             self.notification = None;
             RenderRequest::Immediate
@@ -2908,6 +2966,10 @@ impl Component for RootNode {
                     RenderRequest::Immediate,
                 );
                 update.effects.extend(waiting.effects);
+                self.notification = Some(Notification::plain(
+                    "Review feedback added to draft.".to_owned(),
+                    Color::Green,
+                ));
                 update.render = update.render.max(waiting.render);
                 update
             }
@@ -3132,32 +3194,6 @@ fn recent_prompt(record: &TranscriptRecord) -> Option<RecentPromptDraft> {
         text: prompt.text,
         recorded_at_unix_ms: record.recorded_at_unix_ms(),
     })
-}
-
-fn render_notification(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    theme: &Theme,
-    message: &Line<'_>,
-    color: Color,
-) {
-    if area.is_empty() {
-        return;
-    }
-    let text_width = message.width();
-    let width = u16::try_from(text_width.saturating_add(4)).unwrap_or(u16::MAX);
-    let paragraph = Paragraph::new(message.clone())
-        .centered()
-        .wrap(Wrap { trim: true });
-    let body_width = width.min(area.width).saturating_sub(2).max(1);
-    let body_height = u16::try_from(text_width.div_ceil(usize::from(body_width)))
-        .unwrap_or(u16::MAX)
-        .max(1);
-    let popup = Floating::new("", width, body_height.saturating_add(2), &[])
-        .at_top()
-        .colors(color, color)
-        .render(frame, area, theme);
-    frame.render_widget(paragraph, popup.body);
 }
 
 fn render_key_confirmation(
@@ -3478,6 +3514,10 @@ mod tests {
         let mut key = KeyEvent::new(code, modifiers);
         key.kind = kind;
         super::RootEvent::Terminal(Event::Key(key))
+    }
+
+    fn f2() -> super::RootEvent {
+        key(KeyCode::F(2), KeyModifiers::NONE)
     }
 
     fn mouse(kind: MouseEventKind, column: u16, row: u16) -> super::RootEvent {
@@ -6952,6 +6992,115 @@ mod tests {
             "existing draft\n\n## Review: Approved"
         );
         assert!(root.blocking_task.is_none());
+    }
+
+    #[test]
+    fn review_feedback_reports_a_draft_insert_without_sending_it() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(super::RootEvent::ReplaceDraft("existing draft".to_owned()));
+        root.update(super::RootEvent::ReviewStarted);
+
+        let update = root.update(super::RootEvent::ReviewFinished(
+            "## Review: Approved".to_owned(),
+        ));
+
+        assert_eq!(update.effects, Vec::new());
+        let notification = root.notification.as_ref().unwrap();
+        assert_eq!(
+            notification
+                .message
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "Review feedback added to draft."
+        );
+        assert_eq!(
+            root.composer().draft(),
+            "existing draft\n\n## Review: Approved"
+        );
+    }
+
+    #[test]
+    fn notification_details_open_from_the_rendered_notice_and_capture_clicks() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(super::RootEvent::NotifyError(
+            "first line\nsecond line\nthird line".to_owned(),
+        ));
+        let rendered = render_root_text(&mut root, 100, 20);
+        assert!(rendered.contains("first line"));
+
+        let opened = root.update(f2());
+        assert_eq!(opened.render, super::RenderRequest::Immediate);
+        assert!(matches!(
+            root.overlay,
+            Some(Overlay::NotificationDetails(_))
+        ));
+        root.update(key(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert!(root.composer().draft().is_empty());
+
+        let copy = root.update(key(KeyCode::Char('c'), KeyModifiers::NONE));
+        assert_eq!(
+            copy.effects,
+            [RootEffect::Copy(
+                "first line\nsecond line\nthird line".to_owned()
+            )]
+        );
+        let dismissed = root.update(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(dismissed.render, super::RenderRequest::Immediate);
+        assert!(root.overlay.is_none());
+
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(super::RootEvent::NotifySuccess("click me".to_owned()));
+        let _ = render_root_text(&mut root, 100, 20);
+        let area = root.notification_hit_area.unwrap();
+        root.update(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            area.x + 1,
+            area.y + 1,
+        ));
+        assert!(matches!(
+            root.overlay,
+            Some(Overlay::NotificationDetails(_))
+        ));
+    }
+
+    #[test]
+    fn notification_details_copy_takes_precedence_over_review_link_copy() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(super::RootEvent::NotifyError("notice message".to_owned()));
+        let _ = render_root_text(&mut root, 100, 20);
+        root.update(super::RootEvent::ReviewStarted);
+        root.update(super::RootEvent::ReviewReady(
+            "http://127.0.0.1:4321/review".to_owned(),
+        ));
+        root.update(f2());
+
+        let copy = root.update(key(KeyCode::Char('c'), KeyModifiers::NONE));
+        let escape = root.update(key(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert_eq!(
+            copy.effects,
+            [RootEffect::Copy("notice message".to_owned())]
+        );
+        assert_eq!(escape.effects, Vec::new());
+        assert_eq!(root.blocking_task, Some(super::BlockingTask::Review));
+    }
+
+    #[test]
+    fn notification_details_keep_their_snapshot_and_resume_the_newest_notice() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(super::RootEvent::NotifyError("opened notice".to_owned()));
+        let _ = render_root_text(&mut root, 100, 20);
+        root.update(f2());
+        root.update(super::RootEvent::NotifySuccess("newest notice".to_owned()));
+
+        let copy = root.update(key(KeyCode::Char('c'), KeyModifiers::NONE));
+        root.update(key(KeyCode::Esc, KeyModifiers::NONE));
+        let rendered = render_root_text(&mut root, 100, 20);
+
+        assert_eq!(copy.effects, [RootEffect::Copy("opened notice".to_owned())]);
+        assert!(rendered.contains("newest notice"));
     }
 
     #[test]
