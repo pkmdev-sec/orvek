@@ -4,8 +4,8 @@ Review one component at a time. Open its HTML proposal with macOS `open`, then w
 explicit approval. Feedback revises that component only. An approval locks the named version and
 scope; changes to it need another review. Design approval does not authorize native implementation.
 
-The welcome logo, chat bar, execution view, Actions menu, and activity indicator are approved.
-The current review is **Model selector, proposal 1**.
+The welcome logo, chat bar, execution view, Actions menu, activity indicator, and model selector
+are approved. The current review is **Effort selector, proposal 1**.
 
 Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
 colors. The HTML uses approximate samples; those values are not a proposed replacement palette.
@@ -19,8 +19,8 @@ welcome-logo colors stay fixed.
 | 3 | Conversation and execution rows | Approved and locked | [Proposal 1](components/transcript-v1.html) |
 | 4 | Actions menu | Approved and locked | [Proposal 1](components/actions-v1.html) |
 | 5 | Persistent activity indicator | Approved and locked | [Proposal 1](components/activity-v1.html) |
-| 6 | Model selector | Awaiting approval | [Proposal 1](components/model-v1.html) |
-| 7 | Effort selector | Not started | Review separately from model selection. |
+| 6 | Model selector | Approved and locked | [Proposal 1](components/model-v1.html) |
+| 7 | Effort selector | Awaiting approval | [Proposal 1](components/effort-v1.html) |
 | 8 | Session, file, and skill pickers | Not started | Review each picker separately. |
 | 9 | Queue and child-agent views | Not started | Preserve existing workflow. |
 | 10 | Review prompts and notifications | Not started | Preserve existing actions and event meaning. |
@@ -77,6 +77,8 @@ the existing Rust behavioral tests. Browser layout checks are not native runtime
 Locked artifact: `transcript-v1.html` at `bcac24a`, SHA-256
 `bd87d124c3839e73a86334cac689c12500edafe96bdad2027768afe6a7c1f2d5`.
 Its pending-review label is historical; this registry records approval.
+
+
 
 Approved preview files remain unchanged. Future components have no approved design and should not
 receive speculative preview changes.
@@ -147,7 +149,7 @@ blending. Native appearance still needs verification.
 ## Model selector, proposal 1
 
 The [HTML](components/model-v1.html) retains the current three choices and linear interaction.
-No approval recorded yet. Source: `components/model_selector.rs`, `RootNode::open_model`, and
+Approved by the user. Source: `components/model_selector.rs`, `RootNode::open_model`, and
 `RootNode::update_model`.
 
 - Keep Luna, Terra, Sol in that order, with their existing white, green, and yellow model colors.
@@ -168,3 +170,35 @@ No approval recorded yet. Source: `components/model_selector.rs`, `RootNode::ope
 The browser changes local sample values only and reuses its rendered cells during motion. Native
 animation deadlines, terminal color handling, small-height layout, and session-transition behavior
 remain implementation checks. The effort selector is a separate, future review.
+
+Locked artifact: `model-v1.html` at `c639ca2`, SHA-256
+`cbfcda7cbfd0a3d4762d34104c4ae59fcb49bf36a57c1a6282214e73da710f94`.
+Its pending-review label is historical; this registry records approval.
+
+## Effort selector, proposal 1
+
+The [HTML](components/effort-v1.html) retains the circular effort control and its five native levels:
+low, medium, high, xhigh, max. No approval recorded yet.
+
+- Keep the 48 × 17 normal popup and native circular ordering. Add labels beside all five stops.
+  Keep unselected labels muted and use the existing effort color for the selected level and arc.
+- Separate selected effort from current effort. Arrow navigation still wraps in both directions;
+  Enter applies and Escape/Backspace cancels. Selection text updates immediately during animation.
+- Keep Pro separate from effort and preserve the `p` toggle. Label it `Pro for new sessions` so
+  changing a saved preference is not mistaken for changing the active session's reasoning mode.
+- Retain `EffortEffect::Apply(effort, pro)` and the existing root/config/worker update path. The
+  current selector exposes all five levels; do not invent model-specific UI gates or guarantees of
+  provider support. Preserve backend validation and error handling.
+- Use a labelled list below 44 columns. The compact popup is 13 rows high, keeps the same order and
+  keys, and shows selection immediately. Normal dial movement is proposed at 220 ms, with the
+  current cubic easing and wrapping arc behavior. Reduced motion skips animation.
+- Clicking a label highlights its level; clicking the Pro line toggles its pending value. These
+  mouse interactions are proposed additions. Neither gesture applies until Enter.
+- Reuse rendered cells and the existing scheduler. No idle animation, new framework, provider
+  lookup, model evaluation, or configuration write occurs in the preview.
+
+Source: `components/effort.rs`, `ReasoningEffort::ALL`, `RootNode::open_effort/update_effort`,
+`RootEffect::SetEffort` handling in `tui/mod.rs`, and `WorkerCommand::SetThinking` in `worker.rs`.
+Native tests still need to cover current/fork propagation, failure behavior, theme colors, reduced
+motion, very small heights, and source-aligned apply/cancel semantics. The browser only changes
+sample values. Session selection is the next review after approval.

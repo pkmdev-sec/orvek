@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Effort selector · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:740px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.toggle{display:flex;gap:8px;align-items:center;min-height:36px}.toggle input{accent-color:#aebfcb}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--border:#59646e;--low:#aeb8c2;--medium:#8ad0c5;--high:#e4ba6d;--xhigh:#e99292;--max:#d79bd8;--pro:#89c789;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 22px 22px;overflow:auto}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:26px;gap:12px}.stage{min-height:405px;display:grid;place-items:start center}.frame{position:relative;font:15px/18px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;outline:none}.grid{font:inherit;white-space:pre;margin:0;user-select:none}.cell{display:inline-block;width:1ch;height:18px;vertical-align:top}.border{color:var(--border)}.muted{color:var(--muted)}.title,.strong{font-weight:600}.low{color:var(--low)}.medium{color:var(--medium)}.high{color:var(--high)}.xhigh{color:var(--xhigh)}.max{color:var(--max)}.pro{color:var(--pro)}.hit{position:absolute;height:18px;min-height:0;background:transparent;border:0;border-radius:0;padding:0;margin:0}.hit:hover{background:#7a899911}.hit:focus-visible{outline:none}.notice{min-height:22px;color:var(--muted);font-size:12px;margin-top:16px}.closed{font:14px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);max-width:48ch;padding-top:85px}.note{font-size:11px;color:var(--muted);margin:20px 0 0}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:16px 8px}.explanation{grid-template-columns:1fr;gap:16px}.frame{font-size:13px}h1{font-size:27px}}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>The effort selector</h1>
+<p class="intro">One proposal: keep the circular control, label all five levels, and make the Pro preference explicit.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Current effort in sample<select id="current"><option value="0">low</option><option value="1" selected>medium</option><option value="2">high</option><option value="3">xhigh</option><option value="4">max</option></select></label>
+<label>Popup width<select id="width"><option value="48">Normal · 48 columns</option><option value="40">Narrow · 40 columns</option><option value="32">Small · 32 columns</option></select></label>
+<button id="reopen" type="button">Reopen selector</button>
+<label class="toggle"><input id="savedPro" type="checkbox">Saved Pro preference</label>
+<label class="toggle"><input id="reduce" type="checkbox">Reduce motion</label>
+</div>
+<section class="canvas" id="canvas" aria-label="Effort selector preview">
+<div class="caption"><span>EFFORT / INTERACTIVE PREVIEW</span><span id="dimensions"></span></div>
+<div class="stage"><div class="frame" id="frame" tabindex="0" role="group" aria-label="Effort selection"><pre class="grid" id="grid" aria-hidden="true"></pre><div id="hits"></div></div><div class="closed" id="closed" hidden>Selector closed</div></div>
+<div class="notice" id="notice" role="status"></div>
+<p class="note">Arrows cycle through levels. P toggles Pro. Enter applies; Esc or Backspace cancels. Click a level to highlight it. Pro changes are for new sessions. All changes here affect only the sample; native colors stay the same.</p>
+</section>
+<div class="explanation">
+<div><h2>The dial stays</h2><p>Five labelled stops make the circular control easier to read. Arrow navigation still wraps from max to low and back.</p></div>
+<div><h2>Review before applying</h2><p>The selected level is separate from the current effort. Pro is a separate preference, not another effort level.</p></div>
+<div><h2>Less space when needed</h2><p>Narrow screens show the same five choices as a compact list. Reduced motion keeps selection immediate without animation.</p></div>
+</div>
+<div class="foot"><span>Review effort selection only. Previously approved components remain unchanged.</span><a href="../decisions.md">Review order and approvals</a></div>
+</main>
+<script>
+const effortStudy=(()=>{
+ const levels=['low','medium','high','xhigh','max'];
+ const move=(index,direction)=>(index+direction+levels.length)%levels.length;
+ function apply(current,selected,savedPro,pro,confirm){return confirm?{current:selected,savedPro:pro}:{current,savedPro};}
+ function helpRows(width){const rows=[];let line='';for(const group of ['←/→ effort','p pro','enter apply','esc cancel']){if(line&&line.length+3+group.length>width){rows.push(line);line='';}line+=(line?' · ':'')+group;}if(line)rows.push(line);return rows;}
+ function point(cx,cy,phase){const angle=-Math.PI/2+Math.PI*2*phase/5;return {x:Math.round(cx+Math.cos(angle)*8),y:Math.round(cy+Math.sin(angle)*4)};}
+ function filled(phase,fill,wrapping){return wrapping?phase<1e-9||(phase>=4-fill-1e-9&&phase<=4+1e-9):phase<=fill+1e-9;}
+ function layout({columns=48,current=1,selected=1,pro=false,phase=selected,fill=selected,wrapping=false}={}){
+  if(columns<32)throw new Error('Preview minimum width is 32 columns.');
+  const compact=columns<44,height=compact?13:17,grid=Array.from({length:height},()=>Array.from({length:columns},()=>({ch:' ',role:'text'}))),hits=[];
+  function write(value,x,y,role='text'){[...value].forEach((ch,index)=>{if(x+index>=columns-1||y>=height-1)throw new Error('Row overflow.');grid[y][x+index]={ch,role};});}
+  for(let x=1;x<columns-1;x++){grid[0][x]={ch:'─',role:'border'};grid[height-1][x]={ch:'─',role:'border'};}
+  for(let y=1;y<height-1;y++){grid[y][0]={ch:'│',role:'border'};grid[y][columns-1]={ch:'│',role:'border'};}
+  [['╭',0,0],['╮',columns-1,0],['╰',0,height-1],['╯',columns-1,height-1]].forEach(([ch,x,y])=>{grid[y][x]={ch,role:'border'};});
+  write(' Effort ',Math.floor((columns-8)/2),0,'title');
+  const title='Selected: '+levels[selected],titleX=Math.floor((columns-title.length)/2);write(title,titleX,1,'muted');write(levels[selected],titleX+10,1,levels[selected]+' strong');
+  const currentLine='Current: '+levels[current],currentY=compact?2:12;write(currentLine,Math.floor((columns-currentLine.length)/2),currentY,'muted');
+  if(compact){levels.forEach((level,index)=>{write((index===selected?'› ':'  ')+level,Math.floor(columns/2)-4,4+index,index===selected?level+' strong':'muted');hits.push({x:3,y:4+index,width:columns-6,index});});}
+  else{
+   const cx=Math.floor(columns/2),cy=7;
+   for(let sample=0;sample<96;sample++){const part=sample/96*5,p=point(cx,cy,part);write('•',p.x,p.y,filled(part,fill,wrapping)?levels[selected]:'muted');}
+   levels.forEach((level,index)=>{const p=point(cx,cy,index);write('●',p.x,p.y,filled(index,fill,wrapping)?levels[selected]:'muted');});
+   const p=point(cx,cy,phase);write('●',p.x,p.y,levels[selected]+' strong');
+   const labels=[{x:cx-1,y:2},{x:cx+11,y:6},{x:cx+8,y:11},{x:cx-13,y:11},{x:cx-14,y:6}];
+   levels.forEach((level,index)=>{const p=labels[index];write(level,p.x,p.y,index===selected?level+' strong':'muted');hits.push({x:p.x-1,y:p.y,width:level.length+2,index});});
+  }
+  const proLine=(compact?'Pro (new sessions): ':'Pro for new sessions: ')+(pro?'on':'off'),proY=compact?9:13,proX=Math.floor((columns-proLine.length)/2);write(proLine,proX,proY,'pro');
+  const help=helpRows(columns-2);help.forEach((line,index)=>write(line,Math.floor((columns-line.length)/2),height-1-help.length+index,'muted'));
+  return {grid,height,columns,hits,proHit:{x:proX,y:proY,width:proLine.length},help,currentY,proY,compact};
+ }
+ return {levels,move,apply,point,filled,layout};
+})();
+if(typeof document!=='undefined'){
+ const id=x=>document.getElementById(x),frame=id('frame'),grid=id('grid'),canvas=id('canvas');
+ let current=1,selected=1,savedPro=false,pro=false,phase=1,fill=1,target=1,phaseFrom=1,fillFrom=1,entered=0,wrapping=false,ticket=0,columns=48,open=true,cells=[],dimensions='';
+ id('reduce').checked=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ function advance(now){if(!entered)return false;const progress=Math.min(1,(now-entered)/220),eased=1-Math.pow(1-progress,3);phase=phaseFrom+(target-phaseFrom)*eased;fill=fillFrom+(selected-fillFrom)*eased;if(progress===1){phase=selected;target=selected;fill=selected;entered=0;wrapping=false;}return progress<1;}
+ function paint(){
+  const r=effortStudy.layout({columns,current,selected,pro,phase,fill,wrapping}),size=`${columns}:${r.height}`;
+  if(size!==dimensions){dimensions=size;grid.replaceChildren();cells=[];for(let y=0;y<r.height;y++){for(let x=0;x<columns;x++){const span=document.createElement('span');grid.append(span);cells.push(span);}if(y<r.height-1)grid.append(document.createTextNode('\n'));}}
+  r.grid.flat().forEach((cell,index)=>{const span=cells[index],role=`cell ${cell.role}`;if(span.textContent!==cell.ch)span.textContent=cell.ch;if(span.className!==role)span.className=role;});return r;
+ }
+ function tick(now){const active=advance(now);paint();if(active&&open&&!document.hidden)ticket=requestAnimationFrame(tick);}
+ function arm(){cancelAnimationFrame(ticket);if(entered&&open&&!document.hidden)ticket=requestAnimationFrame(tick);}
+ function choose(index,direction){if(index===selected)return;advance(performance.now());const before=selected;let delta=direction;if(delta===undefined){delta=(index-selected+5)%5;if(delta>2)delta-=5;}selected=index;phaseFrom=phase;fillFrom=fill;target+=delta;wrapping=(before===4&&selected===0)||(before===0&&selected===4);if(id('reduce').checked||columns<44){phase=selected;fill=selected;target=selected;entered=0;wrapping=false;}else entered=performance.now();render();arm();}
+ function togglePro(){pro=!pro;render();frame.focus();}
+ function close(confirm){const result=effortStudy.apply(current,selected,savedPro,pro,confirm);current=result.current;savedPro=result.savedPro;id('current').value=String(current);id('savedPro').checked=savedPro;open=false;entered=0;cancelAnimationFrame(ticket);id('notice').textContent=confirm?`Sample effort: ${effortStudy.levels[current]}. Pro for new sessions: ${savedPro?'on':'off'}. No native settings changed.`:`Cancelled. Effort and Pro preference are unchanged.`;render();id('reopen').focus();}
+ function render(){
+  const r=paint();frame.style.width=`${columns}ch`;frame.hidden=!open;id('closed').hidden=open;id('dimensions').textContent=`${columns} × ${r.height} cells`;
+  const holder=id('hits');holder.replaceChildren();
+  const hit=(area,label,action)=>{const button=document.createElement('button');button.className='hit';button.type='button';button.tabIndex=-1;button.style.left=`${area.x}ch`;button.style.top=`${area.y*18}px`;button.style.width=`${area.width}ch`;button.setAttribute('aria-label',label);button.addEventListener('click',action);holder.append(button);};
+  r.hits.forEach(area=>hit(area,`Select ${effortStudy.levels[area.index]} effort`,()=>{choose(area.index);frame.focus();}));hit(r.proHit,`Pro for new sessions: ${pro?'on':'off'}. Toggle.`,togglePro);
+ }
+ function reopen(){cancelAnimationFrame(ticket);selected=current;pro=savedPro;phase=selected;fill=selected;target=selected;entered=0;wrapping=false;open=true;id('notice').textContent='';render();frame.focus();}
+ function resize(){const probe=document.createElement('span');probe.className='cell';probe.textContent='M';const hidden=frame.hidden;frame.hidden=false;grid.append(probe);const width=probe.getBoundingClientRect().width;probe.remove();frame.hidden=hidden;const style=getComputedStyle(canvas),available=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);columns=Math.max(32,Math.min(Number(id('width').value),Math.floor(available/width)));if(columns<44){entered=0;phase=selected;fill=selected;target=selected;wrapping=false;cancelAnimationFrame(ticket);}render();}
+ frame.addEventListener('keydown',event=>{if(!open)return;if(['ArrowLeft','ArrowUp','ArrowRight','ArrowDown'].includes(event.key)){event.preventDefault();const direction=['ArrowLeft','ArrowUp'].includes(event.key)?-1:1;choose(effortStudy.move(selected,direction),direction);}else if(event.key==='p'){event.preventDefault();togglePro();}else if(event.key==='Enter'){event.preventDefault();close(true);}else if(event.key==='Escape'||event.key==='Backspace'){event.preventDefault();close(false);}});
+ id('current').addEventListener('change',()=>{current=Number(id('current').value);reopen();});id('savedPro').addEventListener('change',()=>{savedPro=id('savedPro').checked;reopen();});id('width').addEventListener('change',resize);id('reopen').addEventListener('click',reopen);
+ id('reduce').addEventListener('change',()=>{if(id('reduce').checked){entered=0;phase=selected;fill=selected;target=selected;wrapping=false;}render();arm();});document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelAnimationFrame(ticket);else{advance(performance.now());paint();arm();}});
+ new ResizeObserver(resize).observe(canvas);resize();frame.focus();
+}
+</script>
+</body>
+</html>
