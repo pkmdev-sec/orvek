@@ -4,8 +4,8 @@ Review one component at a time. Open its HTML proposal with macOS `open`, then w
 explicit approval. Feedback revises that component only. An approval locks the named version and
 scope; changes to it need another review. Design approval does not authorize native implementation.
 
-The welcome logo, chat bar, execution view, Actions menu, activity indicator, and model selector
-are approved. The current review is **Effort selector, proposal 1**.
+The welcome logo, chat bar, execution view, Actions menu, activity indicator, model selector, and
+effort selector are approved. The current review is **Session picker, proposal 1**.
 
 Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
 colors. The HTML uses approximate samples; those values are not a proposed replacement palette.
@@ -20,11 +20,13 @@ welcome-logo colors stay fixed.
 | 4 | Actions menu | Approved and locked | [Proposal 1](components/actions-v1.html) |
 | 5 | Persistent activity indicator | Approved and locked | [Proposal 1](components/activity-v1.html) |
 | 6 | Model selector | Approved and locked | [Proposal 1](components/model-v1.html) |
-| 7 | Effort selector | Awaiting approval | [Proposal 1](components/effort-v1.html) |
-| 8 | Session, file, and skill pickers | Not started | Review each picker separately. |
-| 9 | Queue and child-agent views | Not started | Preserve existing workflow. |
-| 10 | Review prompts and notifications | Not started | Preserve existing actions and event meaning. |
-| 11 | Welcome placement and final consistency | Not started | Check approved components together, including light and narrow layouts. |
+| 7 | Effort selector | Approved and locked | [Proposal 1](components/effort-v1.html) |
+| 8 | Session picker | Awaiting approval | [Proposal 1](components/sessions-v1.html) |
+| 9 | File picker | Not started | Current native file lookup is the baseline. |
+| 10 | Skill picker | Not started | Review separately. |
+| 11 | Queue and child-agent views | Not started | Preserve existing workflow. |
+| 12 | Review prompts and notifications | Not started | Preserve existing actions and event meaning. |
+| 13 | Welcome placement and final consistency | Not started | Check approved components together, including light and narrow layouts. |
 
 ## Chat bar, proposal 1
 
@@ -77,6 +79,8 @@ the existing Rust behavioral tests. Browser layout checks are not native runtime
 Locked artifact: `transcript-v1.html` at `bcac24a`, SHA-256
 `bd87d124c3839e73a86334cac689c12500edafe96bdad2027768afe6a7c1f2d5`.
 Its pending-review label is historical; this registry records approval.
+
+
 
 
 
@@ -178,7 +182,7 @@ Its pending-review label is historical; this registry records approval.
 ## Effort selector, proposal 1
 
 The [HTML](components/effort-v1.html) retains the circular effort control and its five native levels:
-low, medium, high, xhigh, max. No approval recorded yet.
+low, medium, high, xhigh, max. Approved by the user.
 
 - Keep the 48 × 17 normal popup and native circular ordering. Add labels beside all five stops.
   Keep unselected labels muted and use the existing effort color for the selected level and arc.
@@ -202,3 +206,36 @@ Source: `components/effort.rs`, `ReasoningEffort::ALL`, `RootNode::open_effort/u
 Native tests still need to cover current/fork propagation, failure behavior, theme colors, reduced
 motion, very small heights, and source-aligned apply/cancel semantics. The browser only changes
 sample values. Session selection is the next review after approval.
+
+Locked artifact: `effort-v1.html` at `459a028`, SHA-256
+`7772262a30efaaeeaf2556e75b98475587291ac28b276a2a8bb6cc671c09ff3a`.
+Its pending-review label is historical; this registry records approval.
+
+## Session picker, proposal 1
+
+The [HTML](components/sessions-v1.html) keeps the 76 × 18 rounded picker and its Resume/Mention
+modes. No approval recorded yet. Source: `components/session_picker.rs`, `SessionSummary` in
+`sessions/checkpoint.rs`, session discovery in `sessions/storage.rs`, and root picker effects.
+
+- Put the existing saved preview first, with model/effort and saved Pro mode beneath. Use a plain
+  `No preview available` fallback; do not generate titles or fetch conversation content on selection.
+- Label the age column `Started`, matching `started_at_unix_ms`. Preserve discovery order, which
+  the storage query sorts by update time. Do not relabel start age as last activity.
+- Show the full selected session ID and workspace below the list. Wrap ID text when necessary;
+  selection always returns the stored full ID, never a truncated display value.
+- Keep current workspace scoping and active-session exclusion. Resume requires a checkpoint;
+  Mention can include stored sessions without one. Do not add an all-workspaces switch.
+- Preserve case-insensitive substring search over ID, preview, model, and workspace. Typing resets
+  selection; arrows clamp; Enter/Tab confirms; Escape or Backspace on an empty search dismisses.
+- Use mode-specific titles and hints. Mention inserts `@@<session_id> `; it never resumes a session.
+- Distinguish an empty discovery result from a non-empty result filtered down to zero matches.
+- Click selects for inspection; double-click confirms. Wheel navigation is proposed. These mouse
+  handlers are additions to the native keyboard/paste picker and must use the same exact-ID path.
+- Details use one or more existing popup rows, reducing visible entries from the current layout.
+  The selected row stays visible. Reuse rendered cells and hit targets; do not add an idle timer,
+  new persistence fields, provider calls, or repeated storage reads during navigation.
+
+Browser sessions and ages are fictional fixtures. Loading and load-error behavior remain in Root;
+they are not redesigned inside the picker. Verify native sanitization, glyph widths, stable
+selection, duplicate previews, same-workspace filtering, missing checkpoints, and distinct
+Resume/Mention effects during implementation. File selection is the next component after approval.

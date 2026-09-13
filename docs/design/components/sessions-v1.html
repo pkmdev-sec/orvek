@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Session picker · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:740px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.toggle{display:flex;gap:8px;align-items:center;min-height:36px}.toggle input{accent-color:#aebfcb}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--border:#59646e;--accent:#76a9df;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 22px 22px;overflow:auto}.canvas.light{--base:#f7f8f9;--text:#283441;--muted:#627180;--border:#909ba5;--accent:#265f99}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:26px;gap:12px}.stage{min-height:455px;display:grid;place-items:start center}.frame{position:relative;font:15px/23px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.grid{font:inherit;white-space:pre;user-select:none;margin:0}.cell{display:inline-block;width:1ch;height:23px;vertical-align:top}.border{color:var(--border)}.muted{color:var(--muted)}.accent{color:var(--accent);font-weight:600}.title{font-weight:600}.search{position:absolute;top:23px;left:11ch;font:inherit;line-height:23px;padding:0;border:0;outline:0;background:var(--base);color:var(--text);height:23px;min-width:0;border-radius:0;caret-color:var(--text)}.hit{position:absolute;left:1ch;min-height:0;height:46px;background:transparent;border:0;border-radius:0;padding:0;margin:0;outline:none}.hit:hover{background:#7a89990b}.note{font-size:11px;color:var(--muted);margin:24px 0 0}.notice{min-height:21px;color:var(--muted);font-size:12px;margin-top:18px}.closed{font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);padding-top:120px}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:16px 8px}.explanation{grid-template-columns:1fr;gap:16px}.frame{font-size:13px}h1{font-size:27px}}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>The session picker</h1>
+<p class="intro">One proposal: lead with the conversation preview, then show the information needed to choose the right session.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Picker mode<select id="mode"><option value="resume">Resume session</option><option value="mention">Mention session</option></select></label>
+<label>Popup width<select id="width"><option value="76">Normal · 76 columns</option><option value="52">Compact · 52 columns</option><option value="40">Narrow · 40 columns</option><option value="32">Small · 32 columns</option></select></label>
+<button id="reopen" type="button">Reopen picker</button><button id="clear" type="button">Clear search</button>
+<label class="toggle"><input id="empty" type="checkbox">No saved sessions</label><label class="toggle"><input id="light" type="checkbox">Light</label>
+</div>
+<section class="canvas" id="canvas" aria-label="Session picker preview">
+<div class="caption"><span>SESSIONS / INTERACTIVE PREVIEW</span><span id="dimensions"></span></div>
+<div class="stage"><div class="frame" id="frame"><pre class="grid" id="grid" aria-hidden="true"></pre><div id="hits"></div><input class="search" id="search" type="text" aria-label="Search sessions by text, ID, model, or workspace" autocomplete="off" spellcheck="false"></div><div class="closed" id="closed" hidden></div></div>
+<div class="notice" id="notice" role="status" aria-live="polite"></div>
+<p class="note">Search by text, ID, model, or workspace. ↑/↓ select; Enter or Tab confirms; Esc closes. Click selects, double-click confirms. All sessions are fictional. Native theme colors and session storage remain unchanged.</p>
+</section>
+<div class="explanation">
+<div><h2>Recognize the conversation</h2><p>The saved preview comes first. Model, effort, and any Pro setting sit beneath it. Start age has a clear heading.</p></div>
+<div><h2>Keep identity exact</h2><p>The full selected ID and workspace stay below the list. Similar previews still select different sessions by their full IDs.</p></div>
+<div><h2>Resume and mention are explicit</h2><p>The title and confirmation hint match the mode. Mention inserts a reference; it does not resume the session.</p></div>
+</div>
+<div class="foot"><span>Review this picker only. File selection comes next.</span><a href="../decisions.md">Review order and approvals</a></div>
+</main>
+<script>
+const sessionsStudy=(()=>{
+ const workspace='/work/orvek',activeId='019ce701-8101-7001-8a01-000000000099';
+ const samples=[
+  ['Review session restore behavior','gpt-5.6-sol','medium',false,'2d',true],
+  ['Simplify command output','gpt-5.6-terra','high',false,'18m',true],
+  ['Check local memory writes','gpt-5.6-sol','medium',true,'3h',true],
+  ['Review session restore behavior','gpt-5.6-luna','low',false,'1d',true],
+  ['Update project instructions','gpt-5.6-terra','medium',false,'2d',true],
+  ['Inspect compaction recovery','gpt-5.6-sol','xhigh',false,'5d',true],
+  ['', 'gpt-5.6-sol','medium',false,'1w',false]
+ ].map(([preview,model,effort,pro,age,resumable],index)=>({session_id:`019ce701-8101-7001-8a01-${String(index+1).padStart(12,'0')}`,workspace,preview,model,effort,pro,age,resumable}));
+ const source=[...samples,{...samples[0],session_id:activeId},{...samples[0],workspace:'/work/another-project',session_id:'019ce701-8101-7001-8a01-000000000088'}];
+ function available(mode='resume',empty=false){return empty?[]:source.filter(s=>s.workspace===workspace&&s.session_id!==activeId&&(mode==='mention'||s.resumable));}
+ function filter(query='',mode='resume',empty=false){const q=query.toLowerCase();return available(mode,empty).filter(s=>[s.session_id,s.preview,s.model,s.workspace].some(value=>value.toLowerCase().includes(q)));}
+ const cut=(value,width)=>value.length<=width?value:value.slice(0,Math.max(0,width-1))+'…';
+ function wrap(value,width){const rows=[];let rest=value;while(rest.length>width){let end=rest.lastIndexOf(' ',width);if(end<1)end=width;rows.push(rest.slice(0,end));rest=rest.slice(end).replace(/^ /,'');}rows.push(rest);return rows;}
+ function helpRows(mode,width){const rows=[];let line='';for(const group of ['↑↓ move',mode==='resume'?'enter/tab resume':'enter/tab insert','esc close']){if(line&&line.length+3+group.length>width){rows.push(line);line='';}line+=(line?' · ':'')+group;}if(line)rows.push(line);return rows;}
+ function choose(query,mode,selected,empty=false){const s=filter(query,mode,empty)[selected];return s?{kind:mode==='resume'?'Resume':'Mention',session_id:s.session_id}:null;}
+ function layout({columns=76,query='',mode='resume',empty=false,selected=0,offset=0}={}){
+  if(columns<32)throw new Error('Preview minimum width is 32 columns.');
+  const height=18,matches=filter(query,mode,empty);selected=matches.length?Math.max(0,Math.min(selected,matches.length-1)):0;
+  const selectedSession=matches[selected],help=helpRows(mode,columns-2);
+  const idRows=[];if(selectedSession){const width=columns-10;for(let start=0;start<selectedSession.session_id.length;start+=width)idRows.push((start?'    ':'ID: ')+selectedSession.session_id.slice(start,start+width));}
+  const details=selectedSession?[...idRows,...wrap('Workspace: '+selectedSession.workspace,columns-6)]:[''];
+  const detailY=height-1-help.length-details.length,listTop=3,listHeight=Math.floor((detailY-listTop)/2);
+  offset=Math.max(0,Math.min(offset,Math.max(0,matches.length-listHeight)));if(selected<offset)offset=selected;if(selected>=offset+listHeight)offset=selected-listHeight+1;
+  const grid=Array.from({length:height},()=>Array.from({length:columns},()=>({ch:' ',role:'text'}))),hits=[];
+  function write(value,x,y,role='text'){[...value].forEach((ch,index)=>{if(x+index>=columns-1||y>=height-1)throw new Error('Row overflow.');grid[y][x+index]={ch,role};});}
+  for(let x=1;x<columns-1;x++){grid[0][x]={ch:'─',role:'border'};grid[height-1][x]={ch:'─',role:'border'};}
+  for(let y=1;y<height-1;y++){grid[y][0]={ch:'│',role:'border'};grid[y][columns-1]={ch:'│',role:'border'};}
+  [['╭',0,0],['╮',columns-1,0],['╰',0,height-1],['╯',columns-1,height-1]].forEach(([ch,x,y])=>{grid[y][x]={ch,role:'border'};});
+  const title=mode==='resume'?' Resume session ':' Mention session ';write(title,Math.floor((columns-title.length)/2),0,'title');write('Search:',3,1,'muted');write([...query].slice(-(columns-13)).join(''),11,1);
+  write('Session',3,2,'muted');write('Started',columns-10,2,'muted');
+  matches.slice(offset,offset+listHeight).forEach((session,index)=>{
+   const y=listTop+index*2,selectedRow=index+offset===selected;
+   if(selectedRow)write('›',1,y,'accent');
+   write(cut(session.preview||'No preview available',columns-17),3,y,selectedRow?'accent':'text');write(session.age,columns-3-session.age.length,y,'muted');
+   const suffix=' · '+session.effort+(session.pro?' · pro':'');const model=cut(session.model,columns-6-suffix.length);write(model+suffix,3,y+1,'muted');
+   hits.push({y,index:offset+index,session_id:session.session_id,preview:session.preview,selected:selectedRow});
+  });
+  if(!matches.length){const message=available(mode,empty).length?'No matching sessions':mode==='resume'?'No resumable sessions found':'No other sessions found';wrap(message,columns-6).forEach((line,index)=>write(line,3,4+index,'muted'));}
+  details.forEach((line,index)=>write(line,3,detailY+index,'muted'));help.forEach((line,index)=>write(line,Math.floor((columns-line.length)/2),height-1-help.length+index,'muted'));
+  return {grid,height,columns,matches,selectedSession,selected,offset,hits,details,detailY,help,listHeight};
+ }
+ return {source,samples,workspace,activeId,available,filter,choose,layout};
+})();
+if(typeof document!=='undefined'){
+ const id=x=>document.getElementById(x),frame=id('frame'),grid=id('grid'),input=id('search'),hits=id('hits'),canvas=id('canvas');
+ let selected=0,offset=0,columns=76,open=true,lastLayout,gridWidth=0,renderedCells=[],hitKey='';
+ function render(){
+  lastLayout=sessionsStudy.layout({columns,query:input.value,mode:id('mode').value,empty:id('empty').checked,selected,offset});selected=lastLayout.selected;offset=lastLayout.offset;
+  if(gridWidth!==columns){gridWidth=columns;grid.replaceChildren();renderedCells=[];for(let y=0;y<18;y++){for(let x=0;x<columns;x++){const span=document.createElement('span');grid.append(span);renderedCells.push(span);}if(y<17)grid.append(document.createTextNode('\n'));}}
+  lastLayout.grid.flat().forEach((cell,index)=>{const span=renderedCells[index],role=`cell ${cell.role}`;if(span.textContent!==cell.ch)span.textContent=cell.ch;if(span.className!==role)span.className=role;});
+  const nextHitKey=columns+':'+lastLayout.hits.map(row=>row.session_id+':'+row.y+':'+row.index).join('|');
+  if(nextHitKey!==hitKey){hitKey=nextHitKey;hits.replaceChildren();lastLayout.hits.forEach(row=>{const button=document.createElement('button');button.className='hit';button.type='button';button.tabIndex=-1;button.style.top=`${row.y*23}px`;button.style.width=`${columns-2}ch`;button.setAttribute('aria-label',(row.preview||'No preview available')+'. Select session '+row.session_id);button.addEventListener('click',()=>{selected=row.index;render();input.focus();});button.addEventListener('dblclick',()=>activate());hits.append(button);});}
+  input.style.width=`${columns-13}ch`;frame.style.width=`${columns}ch`;frame.hidden=!open;id('closed').hidden=open;
+ }
+ function activate(){const result=sessionsStudy.choose(input.value,id('mode').value,selected,id('empty').checked);if(!result)return;close(result.kind==='Resume'?`Sample resume target: ${result.session_id}. No session was opened.`:`Sample insertion: @@${result.session_id} . No session was resumed.`);}
+ function close(message){open=false;id('closed').textContent='Picker closed';id('notice').textContent=message;render();id('reopen').focus();}
+ function reopen(){open=true;selected=0;offset=0;input.value='';id('notice').textContent='';render();input.focus();}
+ function resize(){const probe=document.createElement('span');probe.className='cell';probe.textContent='M';const hidden=frame.hidden;frame.hidden=false;grid.append(probe);const width=probe.getBoundingClientRect().width;probe.remove();frame.hidden=hidden;const style=getComputedStyle(canvas),available=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);columns=Math.max(32,Math.min(Number(id('width').value),Math.floor(available/width)));id('dimensions').textContent=`${columns} × 18 cells`;render();}
+ input.addEventListener('input',()=>{selected=0;offset=0;render();});
+ input.addEventListener('paste',event=>{const raw=event.clipboardData.getData('text/plain');if(/[\x00-\x1f\x7f]/.test(raw)){event.preventDefault();input.setRangeText(raw.replace(/[\x00-\x1f\x7f]/g,''),input.selectionStart,input.selectionEnd,'end');selected=0;offset=0;render();}});
+ input.addEventListener('keydown',event=>{
+  if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();selected=Math.max(0,Math.min(lastLayout.matches.length-1,selected+(event.key==='ArrowDown'?1:-1)));render();}
+  else if(event.key==='Enter'||event.key==='Tab'){event.preventDefault();activate();}
+  else if(event.key==='Escape'||(event.key==='Backspace'&&!input.value)){event.preventDefault();close('Dismissed. No session changed.');}
+ });
+ hits.addEventListener('wheel',event=>{if(lastLayout.matches.length<=lastLayout.listHeight)return;event.preventDefault();selected=Math.max(0,Math.min(lastLayout.matches.length-1,selected+(event.deltaY>0?1:-1)));render();},{passive:false});
+ id('mode').addEventListener('change',reopen);id('empty').addEventListener('change',reopen);id('width').addEventListener('change',resize);id('light').addEventListener('change',()=>canvas.classList.toggle('light',id('light').checked));id('reopen').addEventListener('click',reopen);id('clear').addEventListener('click',reopen);
+ new ResizeObserver(resize).observe(canvas);resize();input.focus();
+}
+</script>
+</body>
+</html>
