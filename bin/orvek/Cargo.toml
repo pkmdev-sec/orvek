@@ -57,6 +57,7 @@ shlex.workspace = true
 syntect.workspace = true
 tar.workspace = true
 orvek-memory = { workspace = true, features = ["client", "local", "native-server", "tool"] }
+orvek-harness.workspace = true
 orvek-subagents.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true

@@ -1,0 +1,22 @@
+[package]
+name = "orvek-executor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Bounded Orvek sandbox transport and Linux supervision stub"
+
+[features]
+default = []
+stub = ["dep:libc"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+libc = { version = "0.2.189", optional = true }
+
+[[bin]]
+name = "orvek-executor"
+path = "src/main.rs"
+required-features = ["stub"]
