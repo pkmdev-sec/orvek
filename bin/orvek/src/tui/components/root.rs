@@ -5576,8 +5576,8 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(rendered.contains("start a new session"));
-        assert!(rendered.contains("apply."));
+        assert!(rendered.contains("Pro enabled"));
+        assert!(rendered.contains("F2 details"));
     }
 
     #[test]
