@@ -5,7 +5,9 @@ use super::{
     node::{Component, ComponentUpdate, RenderRequest},
 };
 use crate::tui::{
-    format::{format_age, sanitize_terminal_text_inline, wrap_display_lines},
+    format::{
+        format_age, sanitize_terminal_text, sanitize_terminal_text_inline, wrap_display_lines,
+    },
     theme::Theme,
 };
 use chrono::{DateTime, Utc};
@@ -906,14 +908,14 @@ impl MemoryBrowser {
         let rows = lines
             .into_iter()
             .flat_map(|line| {
-                let style = if line.spans.len() == 2 {
-                    line.spans[0].style
-                } else {
-                    line.style
-                };
-                wrap_display_lines(&line.to_string(), usize::from(area.width))
+                line.spans
                     .into_iter()
-                    .map(move |text| Line::styled(text, style))
+                    .flat_map(|span| {
+                        wrap_display_lines(&span.content, usize::from(area.width))
+                            .into_iter()
+                            .map(move |text| Line::from(vec![Span::styled(text, span.style)]))
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
         self.max_scroll = rows
@@ -989,7 +991,18 @@ impl MemoryBrowser {
                 },
                 Style::default().fg(theme.accent()),
             ),
-            Line::styled(error.message.clone(), Style::default().fg(theme.text())),
+            Line::from(
+                error
+                    .message
+                    .split('\n')
+                    .map(|line| {
+                        Span::styled(
+                            sanitize_terminal_text(line).into_owned(),
+                            Style::default().fg(theme.text()),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
             Line::default(),
             Line::styled(
                 format!("Source: {}", self.context_label()),
@@ -1691,6 +1704,23 @@ mod tests {
         assert!(rendered.contains("Remote memory · alice"));
         assert!(rendered.contains("Could not load memories."));
         assert!(rendered.contains("unavailable"));
+    }
+
+    #[test]
+    fn load_errors_preserve_embedded_newlines() {
+        let mut browser = MemoryBrowser::new();
+        browser.update(MemoryBrowserEvent::LoadFailed {
+            source: MemorySource::Local,
+            access: None,
+            error: "first\nsecond\u{1b}third\nlast".to_owned(),
+        });
+
+        let rendered = render(&mut browser, 80, 16);
+
+        assert!(rendered.contains("first"));
+        assert!(rendered.contains("second�third"));
+        assert!(rendered.contains("last"));
+        assert!(!rendered.contains("firstsecond"));
     }
 
     #[test]
