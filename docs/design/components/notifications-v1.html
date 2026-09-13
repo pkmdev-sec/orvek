@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Notifications and review status · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:740px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--border:#59646e;--accent:#76a9df;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 22px 22px;overflow:auto}.canvas.light{--base:#f7f8f9;--text:#283441;--muted:#627180;--border:#909ba5;--accent:#265f99}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:26px;gap:12px}.stage{min-height:365px;display:grid;place-items:center}.frame{position:relative;outline:none;font:14px/23px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.grid{font:inherit;white-space:pre;user-select:none;margin:0}.cell{display:inline-block;width:1ch;height:23px;vertical-align:top}.border{color:var(--border)}.muted{color:var(--muted)}.accent{color:var(--accent);font-weight:600}.hit{position:absolute;min-height:0;background:transparent;border:0;border-radius:0;padding:0;margin:0;color:transparent;outline:none}.hit:hover{background:#7a899910}.hit:focus-visible{outline:1px solid var(--accent);outline-offset:2px}.note{font-size:11px;color:var(--muted);margin:24px 0 0}.notice{min-height:21px;color:var(--muted);font-size:12px;margin-top:18px}.closed{font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);max-width:50ch}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:16px 8px}.explanation{grid-template-columns:1fr;gap:16px}.frame{font-size:13px}h1{font-size:27px}}
+
+.frame{font-size:14px;line-height:22px}.cell{height:22px}.stage{min-height:440px}.canvas{--success:#89c789;--warning:#e4ba6d;--error:#e99292;--model:#dca665;--effort:#8ad0bb}.canvas.light{--success:#38743b;--warning:#886125;--error:#a53737;--model:#865b24;--effort:#2e705b}.success{color:var(--success)}.warning{color:var(--warning)}.error{color:var(--error)}.model{color:var(--model)}.effort{color:var(--effort)}.strong{font-weight:600}.toggle{display:flex;align-items:center;gap:8px;min-height:36px}.toggle input{accent-color:#aebfcb}.event-controls{margin-top:14px;margin-bottom:20px}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>Notifications and review status</h1>
+<p class="intro">Small notices above the conversation. Review status beside context. Keep the draft visible and the text readable.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Sample notice<select id="noticeKind"><option value="browser">Browser could not open</option><option value="copied">Copied selection</option><option value="preference">Preference saved</option><option value="cancelled">Review cancelled</option><option value="long">Long error</option><option value="update">Update available</option></select></label>
+<button id="show" type="button">Show notice</button>
+<label>Terminal width<select id="width"><option value="100">100 columns</option><option value="80">80 columns</option><option value="60">60 columns</option><option value="40">40 columns</option><option value="32">32 columns</option></select></label>
+<label>Pane height<select id="height"><option value="24">24 rows</option><option value="16">16 rows</option><option value="12">12 rows</option></select></label>
+<label>Background<select id="scheme"><option value="dark">Dark</option><option value="light">Light</option></select></label>
+</div>
+<div class="controls event-controls">
+<label>Review event<select id="review"><option value="ready">Ready in browser</option><option value="waiting">Started</option><option value="feedback">Feedback returned</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option><option value="idle">No review · thinking</option></select></label>
+<button id="reviewEvent" type="button">Apply event</button>
+<button id="expire" type="button">Expire notice</button>
+<label class="toggle"><input id="covered" type="checkbox">Picker covers pane</label>
+<label class="toggle"><input id="automatic" type="checkbox">Run 10s timeout</label>
+<label class="toggle"><input id="reduce" type="checkbox">Reduce motion</label>
+</div>
+<section class="canvas" id="canvas" aria-label="Notifications and review status preview">
+<div class="caption"><span>PANE EXCERPT / INTERACTIVE PREVIEW</span><span id="dimensions"></span></div>
+<div class="stage"><div class="frame" id="frame" tabindex="0" role="group" aria-label="Sample conversation and notices" aria-describedby="description"><pre class="grid" id="grid" aria-hidden="true"></pre><button id="noticeHit" type="button" class="hit" aria-label="Read the sample notification"></button><p class="sr-only" id="description"></p></div><div class="closed" id="coveredMessage" hidden>Picker open. The notice waits until the pane is uncovered.</div></div>
+<div class="notice" id="report" role="status"></div>
+<p class="note">Click a notice or press F2 for its full text. In details: arrows/Page Up/Down scroll, C copies the sample message, Esc returns. During review: O reopens, C copies the link, Esc twice requests cancellation. These actions are simulated. The timeout is held for inspection unless enabled above. The draft is a fixture.</p>
+</section>
+<div class="explanation">
+<div><h2>Keep the notice small</h2><p>One rounded notice, using the existing success, warning, and error colors. Longer messages wrap; their full text stays available in a read-only view.</p></div>
+<div><h2>Protect the active input</h2><p>Notices stay inside the conversation area. They wait behind pickers and never push the chat bar. Opening details does not discard the draft or stop work.</p></div>
+<div><h2>Keep the status honest</h2><p>The green review wave stays after context. Ready does not mean finished. Returned feedback goes into the draft for you to send; an error does not erase it.</p></div>
+</div>
+<div class="foot"><span>Review this component only. Native theme colors and approved layouts stay fixed.</span><a href="../decisions.md">Review order and approvals</a></div>
+</main>
+<script>
+const composerStudy=(()=>{
+ const states={idle:{label:'',active:false},thinking:{label:'Thinking',active:true},background:{label:'Running in background',active:true},compacting:{label:'Compacting context',active:true},error:{label:'Request failed',active:false}};
+ function wrap(text,width){const rows=[];let line='';for(const word of text.split(' ')){if(line&&line.length+1+word.length>width){rows.push(line);line='';}line+=(line?' ':'')+word;}if(line)rows.push(line);return rows;}
+ function layout({columns=110,state='thinking',editorRows=2,hasDraft=false,model='gpt-5.6-sol',effort='medium'}={}){
+  if(columns<32)throw new Error('The review supports 32 columns or more.');
+  const context='12% / 272k',status=states[state].label,metadata=`${model}  ${effort}`;
+  const inner=columns-4,primary=context+(status?'  '+status:'');
+  const shared=primary.length+metadata.length+4<=inner;
+  const statusRows=primary.length<=inner?[primary]:[context,...wrap(status,inner)];
+  const metaRows=shared?[]:wrap(metadata,inner);
+  const chromeRows=statusRows.length+metaRows.length;
+  const inputY=chromeRows+1,height=inputY+Math.max(2,Math.min(6,editorRows))+2;
+  const grid=Array.from({length:height},()=>Array.from({length:columns},()=>({ch:' ',role:'text'})));
+  const runs=[],regions={editor:{x:2,y:inputY,width:inner,height:height-inputY-2},status:[],metadata:[]};
+  function write(text,x,y,role='text'){[...text].forEach((ch,dx)=>{if(x+dx>=columns-1)throw new Error('Text exceeds its region.');grid[y][x+dx]={ch,role};});}
+  for(let x=1;x<columns-1;x++){grid[0][x]={ch:'─',role:'border'};grid[height-1][x]={ch:'─',role:'border'};}
+  for(let y=1;y<height-1;y++){grid[y][0]={ch:'│',role:'border'};grid[y][columns-1]={ch:'│',role:'border'};}
+  [['╭',0,0],['╮',columns-1,0],['╰',0,height-1],['╯',columns-1,height-1]].forEach(([ch,x,y])=>{grid[y][x]={ch,role:'border'};});
+  function label(text,x,y,role){if(y===0||y===height-1){grid[y][x-1]={ch:' ',role:'text'};grid[y][x+text.length]={ch:' ',role:'text'};}write(text,x,y,role);}
+  label(context,2,0,'muted');
+  if(status){
+   const lines=statusRows.length===1?[status]:statusRows.slice(1),sx=statusRows.length===1?2+context.length+2:2,sy=statusRows.length===1?0:1;
+   lines.forEach((line,index)=>{const y=sy+index;label(line,sx,y,state==='error'?'error':'text');regions.status.push({x:sx,y,width:line.length,height:1});[...line].forEach((_,dx)=>runs.push({x:sx+dx,y,index:dx}));});
+  }
+  if(shared){const x=columns-2-metadata.length;label(metadata,x,0,'muted');write(model,x,0,'model');write(effort,x+model.length+2,0,'effort');regions.metadata.push({x,y:0,width:metadata.length,height:1});}
+  else metaRows.forEach((line,index)=>{const y=statusRows.length+index;write(line,2,y,'muted');regions.metadata.push({x:2,y,width:line.length,height:1});if(line.includes(model))write(model,2+line.indexOf(model),y,'model');if(line.includes(effort))write(effort,2+line.indexOf(effort),y,'effort');});
+  const workspace='~/orvek',space=inner-workspace.length-3;
+  const options=hasDraft?['@ paths · @@ sessions','@ paths']:['/ actions · @ paths · @@ sessions','/ actions · @ paths','/ actions'];
+  const hint=options.find(value=>value.length<=space)||'';
+  if(hint)label(hint,2,height-1,'muted');label(workspace,columns-2-workspace.length,height-1,'muted');
+  return {grid,regions,runs,columns,height,shared,label:status,active:states[state].active};
+ }
+ return {layout,states};
+})();
+const noticesStudy=(()=>{
+ const part=(text,role)=>({text,role});
+ const fixtures={
+  browser:{color:'error',parts:[part('Could not open the browser. Press O to retry or C to copy the review link.','error strong')]},
+  copied:{color:'success',parts:[part('Copied selection to clipboard.','success strong')]},
+  preference:{color:'success',parts:[part('Pro enabled for new sessions · start a new session to apply.','success strong')]},
+  cancelled:{color:'warning',parts:[part('Review cancelled.','warning strong')]},
+  long:{color:'error',parts:[part('Could not load the sample context artifact.\n\nThe saved reference names sample_context_artifact_2026_09_13_abcd1234, but its image file is missing. The saved conversation is still available.\n\nThis is a fictional error for checking text wrapping and scrolling. No files were read or changed. A long message stays readable here without enlarging the notice over the chat bar.','error strong')]},
+  update:{color:'success',parts:[part('Update available · ','success'),part('v1.2.3','success strong'),part(' · run ','success'),part('`orvek update`','text')]}
+ };
+ const text=notice=>notice.parts.map(p=>p.text).join('');
+ function wrapped(parts,width){
+  const lines=[];let rest=[];
+  function flush(){while(rest.length>width){let end=width;while(end>0&&rest[end].ch!==' ')end--;if(end===0)end=width;lines.push(rest.slice(0,end));rest=rest.slice(end);while(rest[0]?.ch===' ')rest.shift();}lines.push(rest);rest=[];}
+  for(const p of parts)for(const ch of p.text){if(ch==='\n')flush();else rest.push({ch,role:p.role});}flush();return lines;
+ }
+ function fresh(kind,id=1){return {...fixtures[kind],id,remaining:10000};}
+ function create(){return {review:'ready',draft:'Keep this draft for the next prompt.',cursor:36,notice:fresh('browser'),nextId:2,details:null,scroll:0,covered:false,cancelUntil:null};}
+ function notify(state,kind){state.notice=fresh(kind,state.nextId++);}
+ function advance(state,ms,visible){if(visible&&state.notice){state.notice.remaining=Math.max(0,state.notice.remaining-ms);if(state.notice.remaining===0)state.notice=null;}}
+ function reviewEvent(state,event){state.cancelUntil=null;state.review=event;
+  if(event==='waiting'||event==='ready')return;
+  if(event==='failed')notify(state,'long');
+  if(event==='cancelled')notify(state,'cancelled');
+  if(event==='feedback'){
+   const cursor=Math.min(state.cursor,state.draft.length),before=state.draft.slice(0,cursor),after=state.draft.slice(cursor),feedback='Review notes: keep the session checks.';
+   state.draft=before+(before?'\n\n':'')+feedback+(after?'\n\n':'')+after;state.cursor=before.length+(before?2:0)+feedback.length;
+   state.notice={id:state.nextId++,color:'success',remaining:10000,parts:[part('Review feedback added to draft.','success strong')]};
+  }
+ }
+ function reviewKey(state,key,now,kind='press'){
+  if(kind==='release'||(kind==='repeat'&&key==='Escape'))return null;
+  if(!['waiting','ready'].includes(state.review))return null;
+  if(state.review==='ready'&&(key==='o'||key==='c')){state.cancelUntil=null;return key==='o'?'reopen':'copy-link';}
+  if(key==='Escape'){if(state.cancelUntil!==null&&now<=state.cancelUntil){state.cancelUntil=null;return 'cancel-review';}state.cancelUntil=now+2000;return 'confirm-cancel';}
+  state.cancelUntil=null;return null;
+ }
+ function composer(state,columns,maxHeight){
+  const status=state.review==='ready'?'Review ready · O\u00a0reopen · C\u00a0copy\u00a0link':state.review==='waiting'?'Waiting for review…':state.review==='idle'?'Thinking':'';
+  composerStudy.states.noticeReview={label:status,active:!!status};
+  const editorRows=Math.max(2,Math.min(6,wrapped([part(state.draft,'text')],columns-4).length));
+  let layout=composerStudy.layout({columns,state:'noticeReview',hasDraft:true,editorRows});
+  if(layout.height>maxHeight)layout=composerStudy.layout({columns,state:'noticeReview',hasDraft:true,editorRows:Math.max(2,editorRows-(layout.height-maxHeight))});
+  for(const row of layout.grid)for(const cell of row)if(cell.ch==='\u00a0')cell.ch=' ';
+  layout.label=layout.label.replaceAll('\u00a0',' ');
+  const review=state.review==='ready'||state.review==='waiting';
+  for(const row of layout.grid)for(const cell of row)if(review&&cell.role==='border')cell.role='success';
+  if(review)layout.runs.forEach(({x,y})=>layout.grid[y][x].role='success');
+  wrapped([part(state.draft,'text')],layout.regions.editor.width).slice(0,layout.regions.editor.height).forEach((line,i)=>line.forEach((cell,x)=>layout.grid[layout.regions.editor.y+i][layout.regions.editor.x+x]=cell));
+  return {...layout,review};
+ }
+ function scene(state,{columns=100,rows=24}={}){
+  if(columns<32||rows<12)throw new Error('This study covers at least 32 columns and 12 rows.');
+  const c=composer(state,columns,rows),composerY=rows-c.height,transcriptHeight=Math.max(0,composerY-1),grid=Array.from({length:rows},()=>Array.from({length:columns},()=>({ch:' ',role:'text'})));
+  const put=(value,x,y,role='text')=>[...value].forEach((ch,i)=>{if(x+i<columns&&y>=0&&y<rows)grid[y][x+i]={ch,role};});
+  const cells=(line,x,y)=>line.forEach((cell,i)=>{if(x+i<columns&&y>=0&&y<rows)grid[y][x+i]=cell;});
+  const box=(x,y,width,height,color,title='')=>{for(let dy=0;dy<height;dy++)put(' '.repeat(width),x,y+dy);put('╭'+'─'.repeat(width-2)+'╮',x,y,color);put('╰'+'─'.repeat(width-2)+'╯',x,y+height-1,color);for(let dy=1;dy<height-1;dy++){put('│',x,y+dy,color);put('│',x+width-1,y+dy,color);}if(title)put(' '+title+' ',x+2,y,color);};
+  const transcript=['┃ Review the changes to session restore.','','The review opens in your browser.','Your draft stays here while you inspect the changes.'];let lineY=Math.max(0,transcriptHeight-6);
+  transcript.forEach(line=>wrapped([part(line,line.startsWith('┃')?'effort':'text')],columns-4).forEach(row=>{if(lineY<transcriptHeight)cells(row,2,lineY++);}));
+  c.grid.forEach((row,y)=>cells(row,0,composerY+y));
+  const result={grid,composer:c,composerY,transcriptHeight,notice:null,details:null,runs:c.runs.map(r=>({...r,y:r.y+composerY})),wave:c.active&&!state.covered&&!state.details};
+  if(state.covered){result.wave=false;return result;}
+  if(state.details){
+   const width=Math.min(72,columns),all=wrapped(state.details.parts,width-6),height=Math.min(rows,Math.max(7,all.length+5)),x=Math.floor((columns-width)/2),y=Math.floor((rows-height)/2),capacity=height-5,maxScroll=Math.max(0,all.length-capacity),scroll=Math.max(0,Math.min(state.scroll,maxScroll));
+   box(x,y,width,height,state.details.color,'Notification');all.slice(scroll,scroll+capacity).forEach((line,i)=>cells(line,x+3,y+1+i));
+   const position=(scroll+1)+'–'+Math.min(scroll+capacity,all.length)+' / '+all.length;put(position,x+width-3-position.length,y+height-3,'muted');put('↑↓ scroll · C copy · Esc back',x+2,y+height-2,'muted');
+   result.details={x,y,width,height,capacity,maxScroll,scroll};return result;
+  }
+  if(state.notice&&transcriptHeight>=3){
+   const width=Math.min(64,columns,Math.max(12,text(state.notice).length+4)),all=wrapped(state.notice.parts,width-4),limit=Math.min(4,transcriptHeight-2),overflow=all.length>limit,capacity=limit-(overflow?1:0);
+   if(capacity<1)return result;
+   const height=Math.min(all.length,capacity)+2+(overflow?1:0),x=Math.floor((columns-width)/2);box(x,0,width,height,state.notice.color);
+   all.slice(0,capacity).forEach((line,i)=>cells(line,all.length===1?x+Math.floor((width-line.length)/2):x+2,i+1));
+   if(overflow)put('… F2 details',x+width-14,height-2,'muted');
+   result.notice={x,y:0,width,height,overflow,capacity};
+  }
+  return result;
+ }
+ function openDetails(state,visible){if(state.covered||!visible||!state.notice)return false;state.details={...state.notice};state.scroll=0;state.cancelUntil=null;return true;}
+ return {fixtures,text,wrapped,create,notify,advance,reviewEvent,reviewKey,scene,openDetails};
+})();
+if(typeof document!=='undefined'){
+ const id=name=>document.getElementById(name),frame=id('frame'),grid=id('grid'),canvas=id('canvas'),hit=id('noticeHit'),state=noticesStudy.create();
+ let columns=100,layout,cells=[],waveTimer=0,expiryTimer=0,confirmationTimer=0,waveFrame=0,lastClock=performance.now(),wasHidden=document.hidden,automatic=false;
+ id('reduce').checked=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ function visible(){return !!layout?.notice&&!state.covered&&!state.details&&!wasHidden;}
+ function settle(){const now=performance.now();if(automatic)noticesStudy.advance(state,Math.max(0,now-lastClock),visible());lastClock=now;}
+ function report(value){id('report').textContent=value;}
+ function paintWave(){if(!layout?.wave)return;const percentages=[100,85,70,55,40,48,62,80];layout.runs.forEach(({x,y,index})=>{const cell=cells[y*columns+x];if(!cell)return;const value=percentages[(index+waveFrame)%8];cell.style.opacity=value<60?'.62':'1';cell.style.fontWeight=value>90?'600':'400';});}
+ function arm(){clearTimeout(waveTimer);clearTimeout(expiryTimer);if(layout.wave&&!id('reduce').checked&&!document.hidden&&!state.covered)waveTimer=setTimeout(()=>{waveFrame=(waveFrame+1)%8;paintWave();armWave();},140);if(visible()&&id('automatic').checked)expiryTimer=setTimeout(()=>{settle();render();},state.notice.remaining);}
+ function armWave(){if(layout.wave&&!id('reduce').checked&&!document.hidden&&!state.covered)waveTimer=setTimeout(()=>{waveFrame=(waveFrame+1)%8;paintWave();armWave();},140);}
+ function render(){
+  layout=noticesStudy.scene(state,{columns,rows:Number(id('height').value)});if(layout.details)state.scroll=layout.details.scroll;
+  frame.hidden=state.covered;id('coveredMessage').hidden=!state.covered;frame.style.width=columns+'ch';frame.style.height=layout.grid.length*22+'px';
+  id('dimensions').textContent=columns+' × '+layout.grid.length+' cells';
+  if(grid.dataset.size!==columns+'x'+layout.grid.length){grid.replaceChildren();cells=[];layout.grid.forEach(row=>{row.forEach(()=>{const cell=document.createElement('span');grid.append(cell);cells.push(cell);});grid.append(document.createTextNode('\n'));});grid.dataset.size=columns+'x'+layout.grid.length;}
+  layout.grid.flat().forEach((next,i)=>{const cell=cells[i],role='cell '+next.role;if(cell.textContent!==next.ch)cell.textContent=next.ch;if(cell.className!==role)cell.className=role;cell.style.opacity='';cell.style.fontWeight='';});
+  hit.hidden=!layout.notice;if(layout.notice){const h=layout.notice;Object.assign(hit.style,{left:h.x+'ch',top:h.y*22+'px',width:h.width+'ch',height:h.height*22+'px'});}
+  const current=state.details||state.notice;id('description').textContent=(current?noticesStudy.text(current)+' ':'')+(layout.composer.label||'No review running.')+' Draft: '+state.draft;
+  arm();
+ }
+ function resize(){settle();const probe=document.createElement('span');probe.className='cell';probe.textContent='M';const hidden=frame.hidden;frame.hidden=false;grid.append(probe);const unit=probe.getBoundingClientRect().width;probe.remove();frame.hidden=hidden;const style=getComputedStyle(canvas),available=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);columns=Math.max(32,Math.min(Number(id('width').value),Math.floor(available/unit)));render();}
+ function details(){settle();if(noticesStudy.openDetails(state,!!layout.notice)){clearTimeout(confirmationTimer);report('Read-only sample. C reports a copy action; nothing is put on your clipboard.');render();frame.focus();}}
+ hit.addEventListener('click',details);
+ frame.addEventListener('keydown',event=>{
+  if(state.covered)return;settle();
+  if(event.key==='F2'&&!state.details){event.preventDefault();details();return;}
+  if(state.details){if(event.key==='Escape'){event.preventDefault();state.details=null;report('Returned to the same draft.');render();return;}if(event.key==='c'&&!event.ctrlKey&&!event.metaKey&&!event.altKey){event.preventDefault();report('Sample: copy notification requested.');return;}const delta={ArrowUp:-1,ArrowDown:1,PageUp:-layout.details.capacity,PageDown:layout.details.capacity,Home:-layout.details.maxScroll,End:layout.details.maxScroll}[event.key];if(delta!==undefined){event.preventDefault();state.scroll+=delta;render();}return;}
+  if(event.ctrlKey||event.metaKey||event.altKey)return;
+  const effect=noticesStudy.reviewKey(state,event.key,performance.now(),event.repeat?'repeat':'press');
+  if(state.cancelUntil===null)clearTimeout(confirmationTimer);
+  if(effect){event.preventDefault();clearTimeout(confirmationTimer);const messages={reopen:'Sample: reopen review requested. No browser was launched.','copy-link':'Sample: copy review link requested. No clipboard write.','confirm-cancel':'Press Esc again within 2 seconds to request cancellation.','cancel-review':'Sample: cancellation requested. Use the Cancelled event to acknowledge it.'};report(messages[effect]);if(effect==='confirm-cancel')confirmationTimer=setTimeout(()=>{state.cancelUntil=null;report('Cancellation confirmation expired. Review is still active.');},2000);}
+  render();
+ });
+ frame.addEventListener('wheel',event=>{if(!state.details||!event.deltaY)return;event.preventDefault();state.scroll+=Math.sign(event.deltaY)*2;render();},{passive:false});
+ id('show').addEventListener('click',()=>{settle();noticesStudy.notify(state,id('noticeKind').value);report(state.covered||state.details?'Newest notice retained until this view closes.':'Sample notice shown.');render();});
+ id('reviewEvent').addEventListener('click',()=>{settle();clearTimeout(confirmationTimer);noticesStudy.reviewEvent(state,id('review').value);report('Sample event applied. Nothing was sent to an agent.');render();});
+ id('expire').addEventListener('click',()=>{settle();if(visible()){noticesStudy.advance(state,10000,true);report('Notice expired. Draft and review state are unchanged.');}else report('Notice is paused while covered or without enough space.');render();});
+ id('covered').addEventListener('change',()=>{settle();state.covered=id('covered').checked;report(state.covered?'Notice timeout and covered waves paused.':'Pane visible again.');render();});
+ id('automatic').addEventListener('change',()=>{settle();automatic=id('automatic').checked;render();});id('reduce').addEventListener('change',()=>{settle();render();});id('scheme').addEventListener('change',()=>{canvas.classList.toggle('light',id('scheme').value==='light');render();});id('width').addEventListener('change',resize);id('height').addEventListener('change',()=>{settle();render();});
+ document.addEventListener('visibilitychange',()=>{settle();wasHidden=document.hidden;render();});new ResizeObserver(resize).observe(canvas);resize();frame.focus();
+}
+</script>
+</body>
+</html>

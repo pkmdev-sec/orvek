@@ -4,8 +4,8 @@ Review one component at a time. Open its HTML proposal with macOS `open`, then w
 explicit approval. Feedback revises that component only. An approval locks the named version and
 scope; changes to it need another review. Design approval does not authorize native implementation.
 
-Components through the child-agent view are approved. The current review is **Review download dialog,
-proposal 1**.
+Components through the review download dialog are approved. The current review is
+**Notifications and review status, proposal 1**.
 
 Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
 colors. The HTML uses approximate samples; those values are not a proposed replacement palette.
@@ -26,8 +26,8 @@ welcome-logo colors stay fixed.
 | 10 | Skill picker | Approved and locked | [Proposal 1](components/skills-v1.html) |
 | 11 | Message queue | Approved and locked | [Proposal 1](components/queue-v1.html) |
 | 12 | Child-agent view | Approved and locked | [Proposal 1](components/agents-v1.html) |
-| 13 | Review download dialog | Awaiting approval | [Proposal 1](components/review-v1.html) |
-| 14 | Notifications and review status | Not started | Preserve event meaning and cancellation. |
+| 13 | Review download dialog | Approved and locked | [Proposal 1](components/review-v1.html) |
+| 14 | Notifications and review status | Awaiting approval | [Proposal 1](components/notifications-v1.html) |
 | 15 | Recent prompt picker | Not started | Preserve prompt history and draft handling. |
 | 16 | Memory browser | Not started | Preserve existing data and actions. |
 | 17 | Context diagnostics | Not started | Preserve measured values and recovery details. |
@@ -420,8 +420,8 @@ Its pending-review label is historical; this registry records approval.
 
 ## Review download dialog, proposal 1
 
-The [HTML](components/review-v1.html) keeps the rounded 64 × 9 confirmation. No approval recorded
-yet. Source: `components/review_confirmation.rs`, `components/floating.rs`,
+The [HTML](components/review-v1.html) keeps the rounded 64 × 9 confirmation. Approved by the
+user. Source: `components/review_confirmation.rs`, `components/floating.rs`,
 `RootNode::update_review_confirmation`, the `RootEffect::Review` handler and `spawn_review` in
 `tui/mod.rs`, `ReviewAssets::availability` / `download` in `review/assets.rs`, and
 `tui/review_controller.rs`.
@@ -466,3 +466,107 @@ dismissal with an unchanged draft, hit testing, wrapped copy and borders, short-
 resize recovery, Ready/DownloadRequired/development/error routing, stale review events, and
 interruption. Reuse existing asset/controller tests for their contracts. Browser layout checks do
 not prove native terminal rendering, download behavior, or performance.
+
+Locked artifact: `review-v1.html` at `b5f28a0`, SHA-256
+`2768e0477430183d1c292bff7fcddb84b2aea23e287e802f86a242c926fbb197`.
+Its pending-review label is historical; this registry records approval.
+
+## Notifications and review status, proposal 1
+
+The [HTML](components/notifications-v1.html) retains the small rounded notices and review status in
+composer chrome. No approval recorded yet. Sources: `Notification`, `render_notification`,
+`update_review_input`, `update_key_confirmation`, and review event handlers in `components/root.rs`;
+`AppNode::update` in `components/app.rs`; `ComposerEvent::ReviewWaiting` and `render_chrome` in
+`components/composer.rs`; `components/waved_text.rs`; review routing in `tui/mod.rs`; and
+`ReviewServer::url` in `review/server.rs`.
+
+### Notices
+
+- Keep one current notice per pane. New notices replace it, as today. No notification feed, durable
+  history, sound, or entrance animation. Keep green success/update, yellow cancellation/warning,
+  and red failure colors. Preserve update version emphasis and the reset-color update command.
+- Keep the popup at the top of the transcript area, below the activity header. It floats over
+  history without resizing the transcript or moving the composer. Constrain its rectangle to the
+  transcript, excluding queue and input. Never draw it over an open picker or active selection.
+- Keep short messages centered. Wrap longer messages with a small left inset. Cap width at 64
+  columns and the body at four rows, including an overflow hint when needed. Measure actual wrapped
+  lines with the native text-width rules; character-count division is insufficient for word wrap.
+- Click a visible notice or press F2 to read its full text. Show `F2 details` when truncated.
+  F2 is a proposed binding; no existing F-key binding was found in the current TUI sources.
+  Do not claim an arbitrary host terminal will deliver it without configuration.
+- The details view reuses a rounded, scrollable, read-only popup. Arrows/Page Up/Down/Home/End scroll,
+  C copies the displayed message through the existing copy effect, and Escape returns. It never
+  submits text, follows an embedded command, opens a URL, or cancels running review work.
+- Capture pointer events inside a notice before underlying transcript selection, tools, or links.
+  Clicking elsewhere retains existing input behavior. Opening details clears a pending two-key
+  cancellation confirmation so Escape cannot accidentally complete it on return.
+- Preserve the ten-second display duration, but count time only while the notice is visible. Pause
+  it behind overlays/details, during overlapping selection, or when the transcript cannot fit it.
+  A new notice received while covered becomes the pending current notice. Resume on visibility;
+  do not start an animation timer to poll for space. Visible unfocused split panes still count.
+- Details keep the message opened by the user. A newer notice may replace the pending current
+  notice without changing the text being read. Closing details shows the newest notice. Retain
+  only these bounded slots; no backlog. Full text is available while the notice is retained.
+
+Observed issues: Root renders notifications after overlays, so a notice can cover a picker.
+`render_notification` estimates height with `text_width.div_ceil(body_width)` while Paragraph wraps
+at word boundaries. These are source-backed risks; the existing narrow-message test covers one
+phrase, not arbitrary wrapping. Add failing native cases before fixing them.
+
+### Review status
+
+- Preserve the approved composer geometry and the wave after context. This preview reuses its
+  layout model unchanged, then supplies the review labels and current green review color/border.
+  Keep each `O reopen` and `C copy link` hint together when wrapping. Metadata uses the approved
+  extra row when needed; neither status nor its wave may paint into the draft.
+- `ReviewStarted` still means waiting for review. The event does not distinguish downloading,
+  preparation, or browser startup. Do not invent percentages or claim a specific stage.
+- `ReviewReady` exposes O reopen and C copy link; it does not unlock the composer or prove that the
+  browser opened. Preserve the real URL in the existing narrowly scoped action state. Keep it out
+  of routine visible status. Draft text stays visible while typing, submission, and image paste
+  remain blocked according to current behavior.
+- Preserve Escape twice within two seconds to request review cancellation, including repeat-key
+  suppression. Keep Ctrl+C twice to exit and Ctrl+T's existing fork route. A request is not a
+  completion event. The sample reports requests separately from the selectable completion events.
+- Finished feedback is inserted at the cursor, with the existing separators and remaining draft.
+  It is not sent automatically. Add one concise success notice after insertion: `Review feedback
+  added to draft.` Do not label the review approved or the coding task complete from that text.
+- Cancelled/failed events clear review state and keep the draft, with the existing yellow/red
+  notice. Preserve pane generations and ReviewIdentity checks before updates reach the root.
+  Browser-open failure leaves review ready so retry and explicit link copy remain available.
+
+Security correction within this flow: `ReviewServer::url` embeds its access token in the path.
+The initial browser-open failure currently interpolates that URL into `NotifyError`. Replace that
+visible text with O retry / C copy link instructions and a safe OS error cause, without the URL.
+Do not keep an unredacted copy in notification details, clipboard-message content, or diagnostics.
+The explicit review-link copy action remains available. Reuse terminal-control sanitization for
+all displayed messages; it is not a substitute for removing secrets at the producing boundary.
+Do not make broader secret-ownership guarantees about the existing review service.
+
+### Implementation boundary and checks
+
+Keep Root as the owner of notifications and review state. A small proposed
+`components/notification.rs` can own wrapping, visible-time accounting, and details geometry;
+use existing Floating, styles, scheduler, and Copy effects. There is no new backend API or store.
+Route F2/click entry and notification details before review's blocking-input handler, while
+preserving global exit handling. Other overlays retain their existing routes. Inspection must not compete
+with O/C actions unless that details view is open. Future keyboard help must list F2.
+
+Use WavedText's existing 140 ms cadence and eight shades for review status. Repaint only its cells;
+stop decorative ticks when covered, hidden, static, or reduced motion is requested. A visible notice
+needs one expiry deadline, not a recurring clock. Measure/cache wrapping by message and width, and
+reuse transcript/composer caches. The browser has a held timeout option for visual inspection;
+that option is test scaffolding, not a proposed application preference.
+
+Native checks must cover exact word wrapping, Unicode/control text, tiny rectangles, notices with
+queue/picker/selection, mouse capture, expiry and hidden-time accounting, replacement during details,
+message-copy versus review-link-copy routing, two-key cancellation, repeats, resize, and split-pane
+ownership. Verify preserved text and image attachments when feedback arrives at different cursor
+positions. Test browser launch failure without exposing its URL/token, and stale/cancelled review
+callbacks. Keep existing update styling and controller tests. Measure idle/covered wakeups and
+long-transcript repaint work before claiming a performance improvement.
+
+The preview uses fictional messages and a text-only draft. It never opens a browser review, copies
+to the system clipboard, downloads, calls a model, or submits a prompt. Its pure layout/state checks
+do not prove native input handling, rendering, clipboard behavior, or performance. Recent prompt
+history is the next component after approval.
