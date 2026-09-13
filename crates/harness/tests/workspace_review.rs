@@ -369,9 +369,9 @@ async fn inherited_git_environment_is_ignored() {
     repo.write("text.txt", b"changed\n");
     let status = Command::new(std::env::current_exe().unwrap())
         .args(["--ignored", "--exact", "environment_fixture_child"])
-        .env("TACT_REVIEW_TEST_REPO", repo.path())
+        .env("ORVEK_REVIEW_TEST_REPO", repo.path())
         .env(
-            "TACT_REVIEW_TEST_ARTIFACTS",
+            "ORVEK_REVIEW_TEST_ARTIFACTS",
             repo.temp.path().join("artifacts"),
         )
         .env("GIT_DIR", "/definitely/not/a/repository")
@@ -392,9 +392,9 @@ async fn inherited_git_environment_is_ignored() {
 #[tokio::test]
 #[ignore = "subprocess fixture for inherited environment isolation"]
 async fn environment_fixture_child() {
-    let path = std::env::var_os("TACT_REVIEW_TEST_REPO").unwrap();
+    let path = std::env::var_os("ORVEK_REVIEW_TEST_REPO").unwrap();
     let artifacts = ArtifactStore::open(
-        &std::path::PathBuf::from(std::env::var_os("TACT_REVIEW_TEST_ARTIFACTS").unwrap()),
+        &std::path::PathBuf::from(std::env::var_os("ORVEK_REVIEW_TEST_ARTIFACTS").unwrap()),
         128 * 1024 * 1024,
     )
     .unwrap();

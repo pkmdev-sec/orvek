@@ -550,7 +550,7 @@ impl<'a> Staging<'a> {
         if fs::fstat(parent).map_err(map_error)?.st_dev != device {
             return Err(ToolError::PathDenied);
         }
-        let name = format!(".tact-write-{}", Uuid::new_v4());
+        let name = format!(".orvek-write-{}", Uuid::new_v4());
         fs::mkdirat(parent, &name, Mode::from_raw_mode(0o700)).map_err(map_error)?;
         let directory = match fs::openat(parent, &name, DIRECTORY_FLAGS, Mode::empty()) {
             Ok(directory) => directory,

@@ -58,7 +58,7 @@ impl Workspace {
             .parent()
             .ok_or(RuntimeError::Request("workspace cannot be filesystem root"))?;
         if !readonly {
-            let recovery = parent.join(".tact-guest-results");
+            let recovery = parent.join(".orvek-guest-results");
             if recovery.try_exists()?
                 && fs::read_dir(&recovery)?
                     .take(limits.retained_guests as usize)
@@ -72,7 +72,7 @@ impl Workspace {
             }
         }
         let lock_name = format!(
-            ".tact-runtime-lock-{}",
+            ".orvek-runtime-lock-{}",
             Digest::of(root.as_os_str().as_bytes())
         );
         let lease = OpenOptions::new()
@@ -87,7 +87,7 @@ impl Workspace {
             .try_lock_exclusive()
             .map_err(|_| RuntimeError::Setup("workspace already has an active execution".into()))?;
         let temporary = tempfile::Builder::new()
-            .prefix(".tact-runtime-")
+            .prefix(".orvek-runtime-")
             .tempdir_in(parent)?;
         let artifacts = ArtifactStore::open(
             &temporary.path().join("artifacts"),
@@ -267,7 +267,7 @@ impl Workspace {
             .root
             .parent()
             .ok_or(RuntimeError::Request("workspace parent missing"))?
-            .join(".tact-guest-results");
+            .join(".orvek-guest-results");
         fs::create_dir_all(&root)?;
         if fs::symlink_metadata(&root)?.file_type().is_symlink() {
             return Err(RuntimeError::Setup(
@@ -347,7 +347,7 @@ pub(super) fn retained(
     let path = workspace
         .parent()
         .ok_or(RuntimeError::Request("workspace parent missing"))?
-        .join(".tact-guest-results")
+        .join(".orvek-guest-results")
         .join(job_id.to_string())
         .join("receipt.json");
     if !path.try_exists()? {
@@ -364,7 +364,7 @@ pub(super) fn retained(
     let expected_tree = workspace
         .parent()
         .ok_or(RuntimeError::Request("workspace parent missing"))?
-        .join(".tact-guest-results")
+        .join(".orvek-guest-results")
         .join(job_id.to_string())
         .join("tree");
     if record.tree != expected_tree

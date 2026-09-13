@@ -838,7 +838,7 @@ fn open_store_lock(path: &Path) -> Result<File, AuthError> {
         .unwrap_or(Path::new("."));
     fs::create_dir_all(parent).map_err(|_| AuthError::StoreUnavailable)?;
     let mut name = path.as_os_str().to_owned();
-    name.push(".tact-lock");
+    name.push(".orvek-lock");
     let mut options = OpenOptions::new();
     options.create(true).read(true).write(true).truncate(false);
     #[cfg(unix)]

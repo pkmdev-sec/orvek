@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 #[ignore = "requires local Docker and pre-pulled debian:bookworm-slim"]
 async fn real_bug_requires_baseline_failure_and_candidate_success_before_delivery() {
     let root_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../.tact/verification-test-workspaces");
+        .join("../../.orvek/verification-test-workspaces");
     fs::create_dir_all(&root_path).unwrap();
     let root = tempfile::tempdir_in(root_path).unwrap();
     let baseline_path = root.path().join("baseline");

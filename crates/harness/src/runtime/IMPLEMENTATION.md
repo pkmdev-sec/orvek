@@ -47,7 +47,7 @@ Only immutable RO source/helper binds enter the container. Mutable storage has n
 
 ```sh
 crates/executor/build-linux.sh aarch64
-TACT_EXECUTOR_HELPER="$PWD/target/executor/orvek-executor-linux-aarch64" \
+ORVEK_EXECUTOR_HELPER="$PWD/target/executor/orvek-executor-linux-aarch64" \
   cargo test -p orvek-harness --test docker_execution -- --ignored --test-threads=1 \
   --skip memory_exhaustion_cannot_return_success_or_publish_partial_source
 cargo test -p orvek-harness --lib runtime::transport
@@ -64,7 +64,7 @@ CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$(rustc --print sysroot)/lib/rus
 - Static arm64 build: **passed**; `/tmp/orvek-executor-build.log`. Final sidecar SHA-256: `3e93fa2366729f1210a68dea269374ac9befeeba9066d0bc19dc1d20672e0f4c`.
 - No managed containers remained after the final smoke.
 
-Docker was local Colima, cgroup v2, builtin seccomp, memory/swap/PID accounting enabled. The Linux arm64 `debian:bookworm-slim` image ID was `sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171`. A native quota probe confirmed 4 MiB and 64 inodes on each writable mount. All test sources were generated under this checkout's `.tact/docker-test-workspaces`; no user workspace, session database or provider credentials were read.
+Docker was local Colima, cgroup v2, builtin seccomp, memory/swap/PID accounting enabled. The Linux arm64 `debian:bookworm-slim` image ID was `sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171`. A native quota probe confirmed 4 MiB and 64 inodes on each writable mount. All test sources were generated under this checkout's local runtime-test directory; no user workspace, session database or provider credentials were read.
 
 The native cases cover host-secret/socket isolation; normal writes/deletes/executable and owner-private modes/safe symlinks/empty directories; readonly verification; output/deadline/cancellation; detached descendants; byte, inode and cache exhaustion; OOM; host conflict plus validated retained guest; unsafe symlinks, FIFOs, hardlinks and root-mode mutation; forged protocol stdout; malicious tar preserved as plain bytes; and capability/user-mount-namespace denial.
 

@@ -227,7 +227,7 @@ impl DockerExecutor {
         };
         let helper = helper
             .map(Path::to_owned)
-            .or_else(|| std::env::var_os("TACT_EXECUTOR_HELPER").map(PathBuf::from))
+            .or_else(|| std::env::var_os("ORVEK_EXECUTOR_HELPER").map(PathBuf::from))
             .unwrap_or(
                 std::env::current_exe()?
                     .parent()
@@ -1022,7 +1022,7 @@ fn readonly_bind(path: &Path, target: &str) -> Result<String, RuntimeError> {
 fn helper_bytes(path: &Path) -> Result<Vec<u8>, RuntimeError> {
     let meta = fs::symlink_metadata(path).map_err(|_| {
         RuntimeError::Setup(
-            "Linux executor helper missing; set TACT_EXECUTOR_HELPER or install the architecture-specific sidecar".into(),
+                "Linux executor helper missing; set ORVEK_EXECUTOR_HELPER or install the architecture-specific sidecar".into(),
         )
     })?;
     if !meta.is_file() || meta.len() > 8 * 1024 * 1024 {

@@ -24,7 +24,7 @@ impl Default for SnapshotPolicy {
         Self {
             excluded_roots: vec![
                 ".git".into(),
-                ".tact".into(),
+                ".orvek".into(),
                 "target".into(),
                 "node_modules".into(),
                 ".env".into(),

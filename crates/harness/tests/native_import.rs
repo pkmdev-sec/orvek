@@ -11,7 +11,7 @@ use rusqlite::{Connection, params};
 use serde_json::json;
 
 #[tokio::test]
-#[ignore = "requires local Docker and configured TACT_EXECUTOR_HELPER"]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
 async fn legacy_import_creates_one_native_session_without_old_completion_or_execution() {
     let root = tempfile::tempdir().unwrap();
     let database = root.path().join("legacy.sqlite3");

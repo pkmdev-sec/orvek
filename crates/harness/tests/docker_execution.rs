@@ -4,8 +4,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 fn workspace_tempdir() -> tempfile::TempDir {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.tact/docker-test-workspaces");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.orvek/docker-test-workspaces");
     fs::create_dir_all(&root).unwrap();
     tempfile::tempdir_in(root).unwrap()
 }
@@ -118,7 +118,7 @@ async fn timeout_and_presignalled_cancellation_are_not_success() {
 
 async fn quota_executor() -> DockerExecutor {
     let helper =
-        std::env::var_os("TACT_EXECUTOR_HELPER").expect("set the explicitly built Linux helper");
+        std::env::var_os("ORVEK_EXECUTOR_HELPER").expect("set the explicitly built Linux helper");
     DockerExecutor::connect_with_helper(
         "debian:bookworm-slim",
         std::path::Path::new(&helper),

@@ -202,7 +202,7 @@ fn atomic_create_replace_and_delete_return_exact_before_after_identities_and_mod
         !e.unwrap()
             .file_name()
             .to_string_lossy()
-            .starts_with(".tact-write-")
+            .starts_with(".orvek-write-")
     }));
 }
 
@@ -552,16 +552,16 @@ fn repeated_parent_symlink_swaps_keep_descriptor_operations_inside_the_workspace
 }
 
 #[tokio::test]
-#[ignore = "requires an explicitly provided locally installed TACT_WORKSPACE_TEST_IMAGE and Docker"]
+#[ignore = "requires an explicitly provided locally installed ORVEK_WORKSPACE_TEST_IMAGE and Docker"]
 async fn exec_command_runs_only_through_the_isolated_docker_executor() {
     let mut fixture = Fixture::new();
-    let shared = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.tact/workspace-tool-tests");
+    let shared = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/workspace-tool-tests");
     fs::create_dir_all(&shared).unwrap();
     let directory = tempfile::tempdir_in(shared).unwrap();
     fixture.context.workspace = directory.path().join("workspace");
     fs::create_dir(&fixture.context.workspace).unwrap();
     fixture.directory = directory;
-    let image = std::env::var("TACT_WORKSPACE_TEST_IMAGE").expect("explicit local test image");
+    let image = std::env::var("ORVEK_WORKSPACE_TEST_IMAGE").expect("explicit local test image");
     let executor = orvek_harness::runtime::DockerExecutor::connect(&image)
         .await
         .unwrap();

@@ -72,7 +72,7 @@ fn final_message(id: &str) -> Value {
 }
 
 #[tokio::test]
-#[ignore = "requires local Docker and configured TACT_EXECUTOR_HELPER"]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
 async fn human_shell_keeps_private_changes_across_requests_without_model_calls_or_source_overwrite()
 {
     use orvek_harness::{
@@ -80,7 +80,7 @@ async fn human_shell_keeps_private_changes_across_requests_without_model_calls_o
         submission::SubmitIntent,
         workspace::{Entry, Snapshot},
     };
-    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.tact/ct");
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/ct");
     fs::create_dir_all(&directory).unwrap();
     let root = tempfile::tempdir_in(directory).unwrap();
     let source = root.path().join("source");
@@ -188,7 +188,7 @@ async fn human_shell_keeps_private_changes_across_requests_without_model_calls_o
 }
 
 #[tokio::test]
-#[ignore = "requires local Docker and configured TACT_EXECUTOR_HELPER"]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
 async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_coding_task() {
     use orvek_harness::{
         auxiliary::{
@@ -198,7 +198,7 @@ async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_cod
         session::{SessionCommand, SessionId},
         submission::{SubmissionStatus, SubmitIntent},
     };
-    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.tact/ct");
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/ct");
     fs::create_dir_all(&directory).unwrap();
     let root = tempfile::tempdir_in(directory).unwrap();
     let source = root.path().join("source");
@@ -386,7 +386,7 @@ async fn controller_rejects_premature_finish_then_delivers_an_actually_verified_
 }
 
 #[tokio::test]
-#[ignore = "requires local Docker and configured TACT_EXECUTOR_HELPER"]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
 async fn ordinary_action_is_classified_then_admitted_as_one_task() {
     exercise(DeliveryKind::Source, Mode::OrdinaryInformation).await;
 }
@@ -416,7 +416,7 @@ async fn natural_request_cannot_edit_until_its_behavioral_contract_is_pinned() {
 }
 
 #[tokio::test]
-#[ignore = "requires local Docker and configured TACT_EXECUTOR_HELPER"]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
 async fn disconnected_submission_and_followup_keep_one_task_and_its_original_checks() {
     exercise(DeliveryKind::Source, Mode::Queued).await;
 }
@@ -436,7 +436,7 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
     let queued = matches!(mode, Mode::Queued);
     let natural = matches!(mode, Mode::Natural | Mode::Queued);
     let ordinary_information = matches!(mode, Mode::OrdinaryInformation);
-    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.tact/ct");
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/ct");
     fs::create_dir_all(&directory).unwrap();
     let root = tempfile::tempdir_in(directory).unwrap();
     let source = root.path().join("source");

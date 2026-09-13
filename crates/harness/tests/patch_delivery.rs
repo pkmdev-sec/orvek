@@ -466,7 +466,7 @@ async fn inherited_git_configuration_cannot_execute_helpers_or_touch_an_external
         ])
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
-        .env("TACT_PATCH_POISON_CHILD", poison.path())
+        .env("ORVEK_PATCH_POISON_CHILD", poison.path())
         .env("HOME", poison.path())
         .env("GIT_CONFIG_GLOBAL", config)
         .env("GIT_INDEX_FILE", &index)
@@ -493,7 +493,7 @@ async fn inherited_git_configuration_cannot_execute_helpers_or_touch_an_external
 #[tokio::test]
 #[ignore = "invoked with a controlled environment by the parent isolation test"]
 async fn poisoned_configuration_child() {
-    let poison = std::env::var_os("TACT_PATCH_POISON_CHILD").expect("isolated parent fixture");
+    let poison = std::env::var_os("ORVEK_PATCH_POISON_CHILD").expect("isolated parent fixture");
     let fixture = Fixture::new();
     for root in [&fixture.base, &fixture.candidate] {
         file(
