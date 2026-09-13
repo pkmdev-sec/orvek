@@ -5,7 +5,7 @@ explicit approval. Feedback revises that component only. An approval locks the n
 scope; changes to it need another review. Design approval does not authorize native implementation.
 
 The welcome logo, chat bar, execution view, Actions menu, and activity indicator are approved.
-The next review is **Model selector, proposal 1**.
+The current review is **Model selector, proposal 1**.
 
 Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
 colors. The HTML uses approximate samples; those values are not a proposed replacement palette.
@@ -19,12 +19,12 @@ welcome-logo colors stay fixed.
 | 3 | Conversation and execution rows | Approved and locked | [Proposal 1](components/transcript-v1.html) |
 | 4 | Actions menu | Approved and locked | [Proposal 1](components/actions-v1.html) |
 | 5 | Persistent activity indicator | Approved and locked | [Proposal 1](components/activity-v1.html) |
-| 6 | Model selector | Preparing proposal | Current native choices and session rules stay. |
+| 6 | Model selector | Awaiting approval | [Proposal 1](components/model-v1.html) |
 | 7 | Effort selector | Not started | Review separately from model selection. |
-| 7 | Session, file, and skill pickers | Not started | Review each picker separately. |
-| 8 | Queue and child-agent views | Not started | Preserve existing workflow. |
-| 9 | Review prompts and notifications | Not started | Preserve existing actions and event meaning. |
-| 10 | Welcome placement and final consistency | Not started | Check approved components together, including light and narrow layouts. |
+| 8 | Session, file, and skill pickers | Not started | Review each picker separately. |
+| 9 | Queue and child-agent views | Not started | Preserve existing workflow. |
+| 10 | Review prompts and notifications | Not started | Preserve existing actions and event meaning. |
+| 11 | Welcome placement and final consistency | Not started | Check approved components together, including light and narrow layouts. |
 
 ## Chat bar, proposal 1
 
@@ -143,3 +143,28 @@ Native rendering note: the current theme exposes a light/dark scheme, not the te
 default background RGB. Preserve that background. When it is unknown, use `▀`/`▄`/`█`/space with
 reset background for on/off half-pixels; do not add a blocking startup query to reproduce HTML
 blending. Native appearance still needs verification.
+
+## Model selector, proposal 1
+
+The [HTML](components/model-v1.html) retains the current three choices and linear interaction.
+No approval recorded yet. Source: `components/model_selector.rs`, `RootNode::open_model`, and
+`RootNode::update_model`.
+
+- Keep Luna, Terra, Sol in that order, with their existing white, green, and yellow model colors.
+  Do not add provider choices, pricing, or unsupported capability/ranking claims.
+- Separate `Selected` from `Current`. Arrow movement changes only the pending choice; Enter
+  applies, while Escape/Backspace dismisses. Preserve clamped movement with either arrow axis.
+- Keep a rounded 52-column popup. Increase height from seven to nine rows to show the current
+  value and preserve readable help at narrow widths.
+- Use a neutral rail and a single moving selection marker, replacing the filled rail. Each model
+  label keeps its own color. A proposed 180 ms movement begins from the current marker position;
+  labels and Enter act immediately. Reduced motion snaps without a timer.
+- Clicking a model highlights it; Enter still applies. Mouse highlighting is a proposed addition
+  to the existing keyboard-only selector. It must not apply on hover or click.
+- Preserve the new-session guard. An established conversation cannot open the selector or change
+  models through it. Applying the current model remains a no-op; applying another model follows
+  the existing `SetModel` flow. Do not change providers, saved sessions, or configuration ownership.
+
+The browser changes local sample values only and reuses its rendered cells during motion. Native
+animation deadlines, terminal color handling, small-height layout, and session-transition behavior
+remain implementation checks. The effort selector is a separate, future review.

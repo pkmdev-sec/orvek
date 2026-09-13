@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Model selector · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:740px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.toggle{display:flex;gap:8px;align-items:center;min-height:36px}.toggle input{accent-color:#aebfcb}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--border:#59646e;--Luna:#e8e8e8;--Terra:#89c789;--Sol:#e4ba6d;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 22px 22px;overflow:auto}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:28px;gap:12px}.stage{min-height:240px;display:grid;place-items:start center}.frame{position:relative;font:15px/23px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;outline:none}.grid{font:inherit;white-space:pre;margin:0;user-select:none}.cell{display:inline-block;width:1ch;height:23px;vertical-align:top}.border{color:var(--border)}.muted{color:var(--muted)}.title{font-weight:600}.Luna{color:var(--Luna)}.Terra{color:var(--Terra)}.Sol{color:var(--Sol)}.strong{font-weight:600}.choice{position:absolute;top:92px;height:46px;min-height:0;background:transparent;border:0;border-radius:0;padding:0;margin:0}.choice:hover{background:#7a89990b}.choice:focus-visible{outline:none}.notice{min-height:22px;color:var(--muted);font-size:12px;margin-top:16px}.closed{font:14px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);max-width:50ch;padding-top:35px}.note{font-size:11px;color:var(--muted);margin:20px 0 0}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:16px 8px}.explanation{grid-template-columns:1fr;gap:16px}.frame{font-size:13px}h1{font-size:27px}}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>The model selector</h1>
+<p class="intro">One proposal: three clear choices, with the highlighted selection kept separate from the model currently set.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Current model in sample<select id="current"><option value="0">Luna</option><option value="1">Terra</option><option value="2" selected>Sol</option></select></label>
+<label>Session state<select id="session"><option value="new">New session</option><option value="started">Conversation started</option></select></label>
+<label>Popup width<select id="width"><option value="52">Normal · 52 columns</option><option value="40">Narrow · 40 columns</option><option value="32">Small · 32 columns</option></select></label>
+<button id="reopen" type="button">Reopen selector</button>
+<label class="toggle"><input id="reduce" type="checkbox">Reduce motion</label>
+</div>
+<section class="canvas" id="canvas" aria-label="Model selector preview">
+<div class="caption"><span>MODEL SELECTOR / INTERACTIVE PREVIEW</span><span id="dimensions"></span></div>
+<div class="stage"><div class="frame" id="frame" tabindex="0" role="group" aria-label="Model selection"><pre class="grid" id="grid" aria-hidden="true"></pre><div id="choices" role="radiogroup" aria-label="Available models"></div></div><div class="closed" id="closed" hidden></div></div>
+<div class="notice" id="notice" role="status"></div>
+<p class="note">Use ←/→ or ↑/↓, or click a model to highlight it. Enter applies; Esc or Backspace cancels. This changes only the sample. Model choices and native colors stay the same.</p>
+</section>
+<div class="explanation">
+<div><h2>Current and selected are distinct</h2><p>Browse without changing the model. The current value stays visible until you explicitly apply a selection.</p></div>
+<div><h2>The familiar three choices</h2><p>Luna, Terra, and Sol keep their colors and order. A single moving marker shows selection on a neutral rail.</p></div>
+<div><h2>Existing session rule preserved</h2><p>Model selection is available for a new session. Once a conversation starts, the selector stays closed.</p></div>
+</div>
+<div class="foot"><span>Review model selection only. The effort selector comes next.</span><a href="../decisions.md">Review order and approvals</a></div>
+</main>
+<script>
+const modelStudy=(()=>{
+ const models=['Luna','Terra','Sol'];
+ const move=(index,direction)=>Math.max(0,Math.min(models.length-1,index+direction));
+ function apply(current,selected,session){return session==='new'?selected:current;}
+ function wrap(value,width){const lines=[];let line='';for(const word of value.split(' ')){if(line&&line.length+word.length+1>width){lines.push(line);line='';}line+=(line?' ':'')+word;}if(line)lines.push(line);return lines;}
+ function layout({columns=52,current=2,selected=2,position=selected}={}){
+  if(columns<32)throw new Error('Preview minimum width is 32 columns.');
+  const height=9,grid=Array.from({length:height},()=>Array.from({length:columns},()=>({ch:' ',role:'text'})));
+  function write(value,x,y,role='text'){[...value].forEach((ch,index)=>{if(x+index>=columns-1)throw new Error('Row overflow.');grid[y][x+index]={ch,role};});}
+  for(let x=1;x<columns-1;x++){grid[0][x]={ch:'─',role:'border'};grid[height-1][x]={ch:'─',role:'border'};}
+  for(let y=1;y<height-1;y++){grid[y][0]={ch:'│',role:'border'};grid[y][columns-1]={ch:'│',role:'border'};}
+  [['╭',0,0],['╮',columns-1,0],['╰',0,height-1],['╯',columns-1,height-1]].forEach(([ch,x,y])=>{grid[y][x]={ch,role:'border'};});
+  write(' Select model ',Math.floor((columns-14)/2),0,'title');
+  const chosen='Selected: '+models[selected],chosenX=Math.floor((columns-chosen.length)/2);write(chosen,chosenX,1,'muted');write(models[selected],chosenX+10,1,models[selected]+' strong');
+  const active='Current: '+models[current],activeX=Math.floor((columns-active.length)/2);write(active,activeX,2,'muted');write(models[current],activeX+9,2,models[current]);
+  const left=4,right=columns-5,stops=models.map((_,index)=>Math.round(left+(right-left)*index/2));
+  for(let x=left;x<=right;x++)write('─',x,4,'border');
+  stops.forEach((column,index)=>{write('●',column,4,'muted');write(models[index],column-Math.floor(models[index].length/2),5,models[index]);});
+  const marker=Math.round(left+(right-left)*Math.max(0,Math.min(2,position))/2);write('◆',marker,4,models[selected]+' strong');
+  const help=wrap('←/→ model · enter apply · esc cancel',columns-4);help.forEach((line,index)=>write(line,Math.floor((columns-line.length)/2),height-1-help.length+index,'muted'));
+  return {grid,height,columns,stops,marker,help,selected:models[selected],current:models[current]};
+ }
+ return {models,move,apply,layout};
+})();
+if(typeof document!=='undefined'){
+ const id=x=>document.getElementById(x),frame=id('frame'),grid=id('grid'),canvas=id('canvas');
+ let current=2,selected=2,position=2,from=2,entered=0,ticket=0,columns=52,open=true,gridWidth=0,renderedCells=[];
+ id('reduce').checked=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ function step(now){if(!entered)return false;const t=Math.min(1,(now-entered)/180);position=from+(selected-from)*(1-Math.pow(1-t,3));if(t===1){position=selected;entered=0;}return t<1;}
+ function paint(){
+  const r=modelStudy.layout({columns,current,selected,position});
+  if(gridWidth!==columns){grid.replaceChildren();renderedCells=[];gridWidth=columns;for(let y=0;y<9;y++){for(let x=0;x<columns;x++){const span=document.createElement('span');grid.append(span);renderedCells.push(span);}if(y<8)grid.append(document.createTextNode('\n'));}}
+  r.grid.flat().forEach((cell,index)=>{const span=renderedCells[index],role=`cell ${cell.role}`;if(span.textContent!==cell.ch)span.textContent=cell.ch;if(span.className!==role)span.className=role;});return r;
+ }
+ function tick(now){const moving=step(now);paint();if(moving&&!document.hidden&&open)ticket=requestAnimationFrame(tick);}
+ function arm(){cancelAnimationFrame(ticket);if(entered&&!document.hidden&&open)ticket=requestAnimationFrame(tick);}
+ function select(index){if(index===selected)return;step(performance.now());from=position;selected=index;if(id('reduce').checked){position=selected;entered=0;}else entered=performance.now();render();arm();}
+ function close(message){open=false;entered=0;cancelAnimationFrame(ticket);id('closed').textContent='Selector closed';id('notice').textContent=message;render();id('reopen').focus();}
+ function confirm(){if(id('session').value!=='new')return;const same=current===selected;current=modelStudy.apply(current,selected,id('session').value);id('current').value=String(current);close(same?`Kept ${modelStudy.models[current]}. No native settings changed.`:`Applied ${modelStudy.models[current]} to the sample. No native settings changed.`);}
+ function render(){
+  const r=paint();frame.style.width=`${columns}ch`;frame.hidden=!open;id('closed').hidden=open;
+  const holder=id('choices');holder.replaceChildren();r.stops.forEach((column,index)=>{const button=document.createElement('button');button.type='button';button.className='choice';button.tabIndex=-1;button.setAttribute('role','radio');button.setAttribute('aria-label',modelStudy.models[index]);button.setAttribute('aria-checked',String(selected===index));button.style.left=`${Math.max(1,column-4)}ch`;button.style.width='8ch';button.addEventListener('click',()=>{select(index);frame.focus();});holder.append(button);});
+ }
+ function reopen(){
+  if(id('session').value!=='new'){open=false;entered=0;cancelAnimationFrame(ticket);id('closed').textContent='The model is fixed for this conversation. Start a new session to choose another model.';id('notice').textContent='Model selection is unavailable in this sample state.';render();return;}
+  selected=current;position=current;entered=0;open=true;id('notice').textContent='';render();frame.focus();
+ }
+ function resize(){const probe=document.createElement('span');probe.className='cell';probe.textContent='M';const hidden=frame.hidden;frame.hidden=false;grid.append(probe);const width=probe.getBoundingClientRect().width;probe.remove();frame.hidden=hidden;const style=getComputedStyle(canvas),available=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);columns=Math.max(32,Math.min(Number(id('width').value),Math.floor(available/width)));id('dimensions').textContent=`${columns} × 9 cells`;render();}
+ frame.addEventListener('keydown',event=>{if(!open)return;if(['ArrowLeft','ArrowUp','ArrowRight','ArrowDown'].includes(event.key)){event.preventDefault();const next=modelStudy.move(selected,['ArrowLeft','ArrowUp'].includes(event.key)?-1:1);if(next!==selected)select(next);}else if(event.key==='Enter'){event.preventDefault();confirm();}else if(event.key==='Escape'||event.key==='Backspace'){event.preventDefault();close(`Cancelled. Current model remains ${modelStudy.models[current]}.`);}});
+ id('current').addEventListener('change',()=>{current=Number(id('current').value);reopen();});id('session').addEventListener('change',reopen);id('width').addEventListener('change',resize);id('reopen').addEventListener('click',reopen);
+ id('reduce').addEventListener('change',()=>{if(id('reduce').checked){entered=0;position=selected;}render();arm();});document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelAnimationFrame(ticket);else{step(performance.now());paint();arm();}});
+ new ResizeObserver(resize).observe(canvas);resize();frame.focus();
+}
+</script>
+</body>
+</html>
