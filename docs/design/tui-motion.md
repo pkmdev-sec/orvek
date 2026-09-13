@@ -5,6 +5,10 @@ Status: design only, on `design/tui-motion`. Native source baseline: `59bef36`.
 **Approved:** the new welcome logo in the [logo preview](tui-motion-preview.html).
 **Baseline for everything else:** the existing native Orvek interface.
 
+Follow the [component review order](decisions.md): present one HTML proposal, open it for the user,
+and wait for explicit approval before starting the next component. The current proposal is the
+[chat bar](components/composer-v1.html). Approved versions stay fixed unless the user reopens them.
+
 The chat bar, execution presentation, and Actions menu need focused improvements. Their current
 structure stays. The proposed shaded editor, tool cards, extra badges, and replacement palette are
 out of scope. Crush and the [interactive TUI references](tui-references.md) supply ideas for specific

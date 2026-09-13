@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Chat bar · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:700px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.toggle{display:flex;gap:8px;align-items:center;min-height:36px}.toggle input{accent-color:#aebfcb}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--border:#54616c;--focus:#8295a4;--model:#dca665;--effort:#8ad0bb;--error:#e99292;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 22px 30px;overflow:auto}.canvas.light{--base:#f7f8f9;--text:#283441;--muted:#627180;--border:#9eabb7;--focus:#627b91;--model:#865b24;--effort:#2e705b;--error:#a53737}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:28px;gap:12px}.frame{position:relative;margin:0 auto;font:15px/22px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;line-height:22px}.grid{font:inherit;white-space:pre;margin:0;user-select:none}.cell{display:inline-block;width:1ch;height:22px;vertical-align:top}.border{color:var(--border)}.frame:focus-within .border{color:var(--focus)}.muted{color:var(--muted)}.model{color:var(--model)}.effort{color:var(--effort)}.error{color:var(--error)}textarea{position:absolute;left:2ch;resize:none;border:0;outline:0;background:transparent;color:var(--text);caret-color:var(--text);font:inherit;line-height:22px;padding:0;margin:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;tab-size:4}textarea::placeholder{color:var(--muted);opacity:.75}textarea::selection{background:#53617166}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}.sr-only{position:absolute;width:1px;height:1px;clip-path:inset(50%);overflow:hidden}.input-note{font-size:11px;color:var(--muted);margin:24px 0 0}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:16px 8px}.explanation{grid-template-columns:1fr;gap:16px}.frame{font-size:13px}h1{font-size:27px}}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>The chat bar</h1>
+<p class="intro">One proposal: keep the familiar frame, give text more breathing room, and keep the full activity status readable.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Activity<select id="state"><option value="idle">Ready</option><option value="thinking" selected>Thinking</option><option value="background">Running in background</option><option value="compacting">Compacting context</option><option value="error">Request failed</option></select></label>
+<label>Terminal width<select id="width"><option value="110">Wide · 110 columns</option><option value="80">Normal · 80 columns</option><option value="60">Compact · 60 columns</option><option value="40">Narrow · 40 columns</option><option value="32">Small · 32 columns</option></select></label>
+<button id="multiline" type="button">Try multiline text</button>
+<button id="clear" type="button">Clear</button>
+<label class="toggle"><input id="light" type="checkbox">Light</label>
+<label class="toggle"><input id="reduce" type="checkbox">Reduce motion</label>
+</div>
+<section class="canvas" id="canvas" aria-label="Chat bar preview">
+<div class="caption"><span>CHAT BAR / LIVE PREVIEW</span><span id="dimensions"></span></div>
+<div class="frame" id="frame"><pre class="grid" id="grid" aria-hidden="true"></pre><textarea id="draft" rows="2" aria-label="Try the proposed chat input" placeholder="What would you like to work on?" spellcheck="false"></textarea></div>
+<div id="announcement" class="sr-only" role="status"></div>
+<p class="input-note">Type in the box. Enter adds a line in this preview; nothing is sent. All status and model values are samples.</p>
+</section>
+<div class="explanation">
+<div><h2>The familiar frame</h2><p>A thin rounded border, a plain input surface, and the current model, context, and workspace positions on wide screens.</p></div>
+<div><h2>Motion stays with the text</h2><p>The thinking wave remains after the context meter. It changes brightness without moving the text or the cursor.</p></div>
+<div><h2>Readable at smaller widths</h2><p>Status gets space first. Model details use an extra row when needed; input stays in its own region.</p></div>
+</div>
+<div class="foot"><span>Review only this component. Approval is recorded when you confirm it in chat.</span><span><a href="../decisions.md">Review order</a> · <a href="../tui-motion-preview.html">Approved logo</a></span></div>
+</main>
+<script>
+const composerStudy=(()=>{
+ const states={idle:{label:'',active:false},thinking:{label:'Thinking',active:true},background:{label:'Running in background',active:true},compacting:{label:'Compacting context',active:true},error:{label:'Request failed',active:false}};
+ function wrap(text,width){const rows=[];let line='';for(const word of text.split(' ')){if(line&&line.length+1+word.length>width){rows.push(line);line='';}line+=(line?' ':'')+word;}if(line)rows.push(line);return rows;}
+ function layout({columns=110,state='thinking',editorRows=2,hasDraft=false,model='gpt-5.6-sol',effort='medium'}={}){
+  if(columns<32)throw new Error('The review supports 32 columns or more.');
+  const context='12% / 272k',status=states[state].label,metadata=`${model}  ${effort}`;
+  const inner=columns-4,primary=context+(status?'  '+status:'');
+  const shared=primary.length+metadata.length+4<=inner;
+  const statusRows=primary.length<=inner?[primary]:[context,...wrap(status,inner)];
+  const metaRows=shared?[]:wrap(metadata,inner);
+  const chromeRows=statusRows.length+metaRows.length;
+  const inputY=chromeRows+1,height=inputY+Math.max(2,Math.min(6,editorRows))+2;
+  const grid=Array.from({length:height},()=>Array.from({length:columns},()=>({ch:' ',role:'text'})));
+  const runs=[],regions={editor:{x:2,y:inputY,width:inner,height:height-inputY-2},status:[],metadata:[]};
+  function write(text,x,y,role='text'){[...text].forEach((ch,dx)=>{if(x+dx>=columns-1)throw new Error('Text exceeds its region.');grid[y][x+dx]={ch,role};});}
+  for(let x=1;x<columns-1;x++){grid[0][x]={ch:'─',role:'border'};grid[height-1][x]={ch:'─',role:'border'};}
+  for(let y=1;y<height-1;y++){grid[y][0]={ch:'│',role:'border'};grid[y][columns-1]={ch:'│',role:'border'};}
+  [['╭',0,0],['╮',columns-1,0],['╰',0,height-1],['╯',columns-1,height-1]].forEach(([ch,x,y])=>{grid[y][x]={ch,role:'border'};});
+  function label(text,x,y,role){if(y===0||y===height-1){grid[y][x-1]={ch:' ',role:'text'};grid[y][x+text.length]={ch:' ',role:'text'};}write(text,x,y,role);}
+  label(context,2,0,'muted');
+  if(status){
+   const lines=statusRows.length===1?[status]:statusRows.slice(1),sx=statusRows.length===1?2+context.length+2:2,sy=statusRows.length===1?0:1;
+   lines.forEach((line,index)=>{const y=sy+index;label(line,sx,y,state==='error'?'error':'text');regions.status.push({x:sx,y,width:line.length,height:1});[...line].forEach((_,dx)=>runs.push({x:sx+dx,y,index:dx}));});
+  }
+  if(shared){const x=columns-2-metadata.length;label(metadata,x,0,'muted');write(model,x,0,'model');write(effort,x+model.length+2,0,'effort');regions.metadata.push({x,y:0,width:metadata.length,height:1});}
+  else metaRows.forEach((line,index)=>{const y=statusRows.length+index;write(line,2,y,'muted');regions.metadata.push({x:2,y,width:line.length,height:1});if(line.includes(model))write(model,2+line.indexOf(model),y,'model');if(line.includes(effort))write(effort,2+line.indexOf(effort),y,'effort');});
+  const workspace='~/orvek',space=inner-workspace.length-3;
+  const options=hasDraft?['@ paths · @@ sessions','@ paths']:['/ actions · @ paths · @@ sessions','/ actions · @ paths','/ actions'];
+  const hint=options.find(value=>value.length<=space)||'';
+  if(hint)label(hint,2,height-1,'muted');label(workspace,columns-2-workspace.length,height-1,'muted');
+  return {grid,regions,runs,columns,height,shared,label:status,active:states[state].active};
+ }
+ return {layout,states};
+})();
+if(typeof document!=='undefined'){
+ const id=x=>document.getElementById(x),canvas=id('canvas'),frame=id('frame'),grid=id('grid'),draft=id('draft');
+ let cells=[],layout,columns=110,ticket=0,lastPaint=0;
+ id('reduce').checked=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ function colors(){return id('light').checked?['#3e566a','#536d80','#456477','#324f64']:['#a6b7c4','#c1d2de','#e2edf4','#bccfdc'];}
+ function paintWave(now){if(!layout?.active)return;const palette=colors();layout.runs.forEach(({x,y,index})=>{const shade=Math.floor((Math.sin(index*.5-now/550)+1)*1.5);cells[y*columns+x].style.color=palette[shade];});}
+ function tick(now){if(now-lastPaint>=50){paintWave(now);lastPaint=now;}if(layout.active&&!id('reduce').checked&&!document.hidden)ticket=requestAnimationFrame(tick);}
+ function arm(){cancelAnimationFrame(ticket);if(layout.active&&!id('reduce').checked&&!document.hidden)ticket=requestAnimationFrame(tick);}
+ function rebuild(){
+  const probe=document.createElement('span');probe.className='cell';probe.textContent='M';grid.append(probe);const cellWidth=probe.getBoundingClientRect().width;probe.remove();
+  const style=getComputedStyle(canvas),available=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);
+  columns=Math.max(32,Math.min(Number(id('width').value),Math.floor(available/cellWidth)));
+  frame.style.width=`${columns}ch`;draft.style.width=`${columns-4}ch`;draft.style.height='44px';
+  const rows=Math.max(2,Math.min(6,Math.ceil(draft.scrollHeight/22)));
+  layout=composerStudy.layout({columns,state:id('state').value,editorRows:rows,hasDraft:!!draft.value});
+  grid.replaceChildren();cells=[];
+  layout.grid.forEach((row,y)=>{row.forEach(cell=>{const span=document.createElement('span');span.className=`cell ${cell.role}`;span.textContent=cell.ch;grid.append(span);cells.push(span);});if(y<layout.height-1)grid.append(document.createTextNode('\n'));});
+  draft.style.top=`${layout.regions.editor.y*22}px`;draft.style.height=`${layout.regions.editor.height*22}px`;
+  id('dimensions').textContent=`${columns} columns`;arm();
+ }
+ draft.addEventListener('input',rebuild);
+ id('state').addEventListener('change',()=>{id('announcement').textContent=composerStudy.states[id('state').value].label||'Ready';rebuild();});
+ id('width').addEventListener('change',rebuild);
+ id('light').addEventListener('change',()=>{canvas.classList.toggle('light',id('light').checked);rebuild();});
+ id('reduce').addEventListener('change',rebuild);
+ id('multiline').addEventListener('click',()=>{draft.value='Review the session restore path.\nKeep the existing behavior and explain any issue you find.\nStart with the relevant tests.';rebuild();draft.focus();});
+ id('clear').addEventListener('click',()=>{draft.value='';rebuild();draft.focus();});
+ document.addEventListener('visibilitychange',arm);
+ new ResizeObserver(rebuild).observe(canvas);rebuild();
+}
+</script>
+</body>
+</html>
