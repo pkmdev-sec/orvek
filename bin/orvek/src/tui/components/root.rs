@@ -2919,7 +2919,7 @@ impl Component for RootNode {
             }
             RootEvent::ConfirmReviewDownload => {
                 self.overlay = Some(Overlay::ReviewDownload(Node::new(
-                    ReviewDownloadConfirmation,
+                    ReviewDownloadConfirmation::default(),
                 )));
                 ComponentUpdate::render(RenderRequest::Immediate)
             }

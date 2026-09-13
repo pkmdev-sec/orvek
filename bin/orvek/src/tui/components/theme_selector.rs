@@ -4,14 +4,17 @@ use super::{
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
 };
-use crate::tui::theme::{Theme, ThemeMode};
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crate::tui::{
+    format::truncate_display,
+    theme::{Theme, ThemeMode},
+};
+use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::{
     Frame,
     layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{List, ListItem, ListState},
+    widgets::Paragraph,
 };
 
 const KEY_BINDINGS: [(&str, &str); 3] = [("↑↓", "change"), ("enter", "apply"), ("esc", "cancel")];
@@ -28,6 +31,8 @@ pub(super) enum ThemeSelectorEffect {
 
 pub(super) struct ThemeSelector {
     selected: usize,
+    current: ThemeMode,
+    targets: [Rect; 3],
 }
 
 impl ThemeSelector {
@@ -36,7 +41,11 @@ impl ThemeSelector {
             .iter()
             .position(|mode| *mode == initial)
             .expect("all theme modes are selectable");
-        Self { selected }
+        Self {
+            selected,
+            current: initial,
+            targets: [Rect::default(); 3],
+        }
     }
 
     fn update_key(
@@ -75,41 +84,97 @@ impl Component for ThemeSelector {
     fn update(&mut self, event: Self::Event) -> ComponentUpdate<Self::Effect> {
         match event {
             ThemeSelectorEvent::Terminal(Event::Key(key)) => self.update_key(key),
+            ThemeSelectorEvent::Terminal(Event::Mouse(mouse))
+                if mouse.kind == MouseEventKind::Down(MouseButton::Left) =>
+            {
+                let Some(index) = self
+                    .targets
+                    .iter()
+                    .position(|target| target.contains(Position::new(mouse.column, mouse.row)))
+                else {
+                    return ComponentUpdate::none();
+                };
+                self.selected = index;
+                ComponentUpdate::render(RenderRequest::Immediate)
+            }
             ThemeSelectorEvent::Terminal(_) => ComponentUpdate::none(),
         }
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        if area.is_empty() {
+        self.targets = [Rect::default(); 3];
+        let body = Floating::new("Theme", 48, 11, &KEY_BINDINGS)
+            .render(frame, area, theme)
+            .body;
+        if body.is_empty() {
             return;
         }
-        let layout = Floating::new("Theme", 38, 7, &KEY_BINDINGS).render(frame, area, theme);
-        let items = ThemeMode::ALL.into_iter().map(|mode| {
+        let row = |offset| Rect::new(body.x, body.y + offset, body.width, 1).intersection(body);
+        frame.render_widget(
+            Paragraph::new(format!(
+                "  Selected: {}",
+                ThemeMode::ALL[self.selected].as_str()
+            ))
+            .style(Style::default().fg(theme.accent())),
+            row(0),
+        );
+        frame.render_widget(
+            Paragraph::new(format!("  Current: {}", self.current.as_str()))
+                .style(Style::default().fg(theme.muted())),
+            row(1),
+        );
+        let capacity = body.height.saturating_sub(3).min(3);
+        let offset = self
+            .selected
+            .saturating_sub(usize::from(capacity).saturating_sub(1));
+        for visible in 0..capacity {
+            let index = offset + usize::from(visible);
+            if index >= ThemeMode::ALL.len() {
+                break;
+            }
+            let mode = ThemeMode::ALL[index];
+            let selected = index == self.selected;
             let detail = match mode {
                 ThemeMode::Auto => "Follow the operating system",
-                ThemeMode::Light => "Always use the light palette",
-                ThemeMode::Dark => "Always use the dark palette",
+                ThemeMode::Light => "Use the light palette",
+                ThemeMode::Dark => "Use the dark palette",
             };
-            ListItem::new(Line::from(vec![
-                Span::styled(
-                    format!("{:<6}", mode.as_str()),
-                    Style::default().fg(theme.text()),
-                ),
-                Span::styled(detail, Style::default().fg(theme.muted())),
-            ]))
-        });
-        let list = List::new(items).highlight_symbol("› ").highlight_style(
-            Style::default()
-                .fg(theme.accent())
-                .add_modifier(Modifier::BOLD),
-        );
-        let mut state = ListState::default().with_selected(Some(self.selected));
-        frame.render_stateful_widget(list, layout.body, &mut state);
-        let cursor_y = layout.body.y + u16::try_from(self.selected).unwrap_or(u16::MAX);
-        frame.set_cursor_position(Position::new(
-            layout.body.x,
-            cursor_y.min(layout.body.bottom().saturating_sub(1)),
-        ));
+            let area = row(3 + visible);
+            self.targets[index] = area;
+            let label = format!("{}{:<6}", if selected { "› " } else { "  " }, mode.as_str());
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(
+                        label,
+                        Style::default()
+                            .fg(if selected {
+                                theme.accent()
+                            } else {
+                                theme.text()
+                            })
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        truncate_display(detail, usize::from(body.width).saturating_sub(8)),
+                        Style::default().fg(theme.muted()),
+                    ),
+                ])),
+                area,
+            );
+        }
+        if body.height >= 8 {
+            let mut sample = theme.clone();
+            sample.set_mode(ThemeMode::ALL[self.selected]);
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("  Palette preview: ", Style::default().fg(theme.muted())),
+                    Span::styled("Text ", Style::default().fg(sample.text())),
+                    Span::styled("Accent ", Style::default().fg(sample.accent())),
+                    Span::styled("Muted", Style::default().fg(sample.muted())),
+                ])),
+                row(7),
+            );
+        }
     }
 }
 
@@ -140,6 +205,42 @@ mod tests {
         assert_eq!(
             selector.update(key(KeyCode::Enter)).effects,
             [ThemeSelectorEffect::Apply(ThemeMode::Dark)]
+        );
+    }
+    #[test]
+    fn mouse_changes_only_the_pending_theme_and_tiny_layouts_are_safe() {
+        use crate::tui::theme::Theme;
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut selector = ThemeSelector::new(ThemeMode::Auto);
+        let mut terminal = Terminal::new(TestBackend::new(48, 11)).unwrap();
+        terminal
+            .draw(|frame| selector.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let target = selector.targets[2];
+        let update = selector.update(ThemeSelectorEvent::Terminal(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: target.x,
+            row: target.y,
+            modifiers: KeyModifiers::NONE,
+        })));
+        assert!(update.effects.is_empty());
+        assert_eq!(selector.current, ThemeMode::Auto);
+        assert_eq!(
+            selector.update(key(KeyCode::Enter)).effects,
+            [ThemeSelectorEffect::Apply(ThemeMode::Dark)]
+        );
+        for width in 0..20 {
+            for height in 0..12 {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| selector.render(frame, frame.area(), &Theme::default()))
+                    .unwrap();
+            }
+        }
+        assert_eq!(
+            selector.update(key(KeyCode::Esc)).effects,
+            [ThemeSelectorEffect::Dismiss]
         );
     }
 }

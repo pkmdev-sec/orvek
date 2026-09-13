@@ -4,11 +4,11 @@ use super::{
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
 };
-use crate::tui::theme::Theme;
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crate::tui::{format::wrap_display_lines, theme::Theme};
+use crossterm::event::{Event, KeyCode, KeyEventKind, MouseEventKind};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
@@ -16,7 +16,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 const FOOTER: [(&str, &str); 2] = [("↑↓", "scroll"), ("esc", "close")];
-const BINDINGS: [(&str, &str); 26] = [
+const BINDINGS: [(&str, &str); 31] = [
     ("ctrl+s", "change reasoning effort"),
     ("ctrl+d", "select model · before first prompt"),
     ("ctrl+t", "fork session · when available"),
@@ -42,8 +42,16 @@ const BINDINGS: [(&str, &str); 26] = [
     ("tab", "focus queue · when present"),
     ("/", "open actions · empty prompt only"),
     ("@", "insert workspace file"),
+    ("@@", "mention another session"),
+    ("$", "insert an available skill reference"),
+    ("F2", "notification details"),
     ("!", "local shell command · prompt start"),
     ("mouse click/drag", "open links/tools · copy text"),
+    (
+        "picker click / double-click",
+        "select / use · actions open on click",
+    ),
+    ("picker wheel", "move selection · scroll over a preview"),
     ("pgup/pgdn · wheel", "scroll transcript"),
     ("ctrl+home/end", "jump to start · follow latest"),
 ];
@@ -60,6 +68,8 @@ pub(super) enum KeybindingsEffect {
 #[derive(Default)]
 pub(super) struct KeybindingsHelp {
     scroll: u16,
+    max_scroll: u16,
+    body: Rect,
 }
 
 impl Component for KeybindingsHelp {
@@ -80,11 +90,29 @@ impl Component for KeybindingsHelp {
                     }
                     KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
                     KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
+                    KeyCode::PageUp => {
+                        self.scroll = self.scroll.saturating_sub(self.body.height.max(1))
+                    }
+                    KeyCode::PageDown => {
+                        self.scroll = self.scroll.saturating_add(self.body.height.max(1))
+                    }
+                    KeyCode::Home => self.scroll = 0,
+                    KeyCode::End => self.scroll = self.max_scroll,
+                    _ => return ComponentUpdate::none(),
+                }
+            }
+            KeybindingsEvent::Terminal(Event::Mouse(mouse))
+                if self.body.contains(Position::new(mouse.column, mouse.row)) =>
+            {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.scroll = self.scroll.saturating_sub(1),
+                    MouseEventKind::ScrollDown => self.scroll = self.scroll.saturating_add(1),
                     _ => return ComponentUpdate::none(),
                 }
             }
             KeybindingsEvent::Terminal(_) => return ComponentUpdate::none(),
         }
+        self.scroll = self.scroll.min(self.max_scroll);
         ComponentUpdate::render(RenderRequest::Immediate)
     }
 
@@ -94,41 +122,60 @@ impl Component for KeybindingsHelp {
             .saturating_add(3);
         let layout =
             Floating::new("Keyboard shortcuts", 72, height, &FOOTER).render(frame, area, theme);
+        self.body = layout.body;
         if layout.body.is_empty() {
+            self.max_scroll = 0;
             return;
         }
-        let max_scroll = BINDINGS
-            .len()
-            .saturating_sub(usize::from(layout.body.height));
-        self.scroll = self
-            .scroll
-            .min(u16::try_from(max_scroll).unwrap_or(u16::MAX));
         let lines = BINDINGS
             .iter()
-            .map(|&(key, description)| binding_line(key, description, layout.body.width, theme))
+            .flat_map(|&(key, description)| {
+                binding_lines(key, description, layout.body.width, theme)
+            })
             .collect::<Vec<_>>();
+        self.max_scroll = lines
+            .len()
+            .saturating_sub(usize::from(layout.body.height))
+            .min(usize::from(u16::MAX)) as u16;
+        self.scroll = self.scroll.min(self.max_scroll);
         frame.render_widget(Paragraph::new(lines).scroll((self.scroll, 0)), layout.body);
     }
 }
 
-fn binding_line(
+fn binding_lines(
     key: &'static str,
     description: &'static str,
     width: u16,
     theme: &Theme,
-) -> Line<'static> {
+) -> Vec<Line<'static>> {
+    let key_style = Style::default()
+        .fg(theme.accent())
+        .add_modifier(Modifier::BOLD);
+    let description_style = Style::default().fg(theme.muted());
     let occupied = 1 + key.width() + description.width();
-    let gap = usize::from(width).saturating_sub(occupied).max(1);
-    Line::from(vec![
-        Span::styled(
-            format!(" {key}"),
-            Style::default()
-                .fg(theme.accent())
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" ".repeat(gap)),
-        Span::styled(description, Style::default().fg(theme.muted())),
-    ])
+    if occupied < usize::from(width) {
+        return vec![Line::from(vec![
+            Span::styled(format!(" {key}"), key_style),
+            Span::raw(" ".repeat(usize::from(width) - occupied)),
+            Span::styled(description, description_style),
+        ])];
+    }
+    let mut lines = wrap_display_lines(&format!(" {key}"), usize::from(width))
+        .into_iter()
+        .map(|text| Line::styled(text, key_style))
+        .collect::<Vec<_>>();
+    let inset = if width > 2 { 2 } else { 0 };
+    lines.extend(
+        wrap_display_lines(description, usize::from(width.saturating_sub(inset)))
+            .into_iter()
+            .map(|text| {
+                Line::styled(
+                    format!("{}{text}", " ".repeat(usize::from(inset))),
+                    description_style,
+                )
+            }),
+    );
+    lines
 }
 
 #[cfg(test)]
@@ -180,7 +227,7 @@ mod tests {
     #[test]
     fn popup_documents_context_sensitive_composer_shortcuts() {
         let mut help = KeybindingsHelp::default();
-        let mut terminal = Terminal::new(TestBackend::new(80, 29)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
 
         terminal
             .draw(|frame| help.render(frame, frame.area(), &Theme::default()))
@@ -284,5 +331,56 @@ mod tests {
         ))));
 
         assert_eq!(update.effects, [KeybindingsEffect::Dismiss]);
+    }
+    #[test]
+    fn long_keys_and_descriptions_wrap_without_losing_the_new_bindings() {
+        use unicode_width::UnicodeWidthStr;
+        for width in 1..40 {
+            for (key, description) in BINDINGS {
+                let lines = super::binding_lines(key, description, width, &Theme::default());
+                assert!(
+                    lines
+                        .iter()
+                        .all(|line| line.to_string().width() <= usize::from(width))
+                );
+            }
+        }
+        let narrow = super::binding_lines("key", "xyz", 1, &Theme::default())
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<String>();
+        assert!(narrow.ends_with("xyz"));
+        for required in ["@@", "$", "F2", "picker wheel"] {
+            assert!(BINDINGS.iter().any(|(key, _)| *key == required));
+        }
+        let mut help = KeybindingsHelp::default();
+        let mut terminal = Terminal::new(TestBackend::new(32, 12)).unwrap();
+        terminal
+            .draw(|frame| help.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        help.update(KeybindingsEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::End,
+            KeyModifiers::NONE,
+        ))));
+        terminal
+            .draw(|frame| help.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("follow"));
+        assert!(text.contains("latest"));
+        let end = help.scroll;
+        for _ in 0..20 {
+            help.update(KeybindingsEvent::Terminal(Event::Key(KeyEvent::new(
+                KeyCode::Down,
+                KeyModifiers::NONE,
+            ))));
+        }
+        assert_eq!(help.scroll, end);
     }
 }

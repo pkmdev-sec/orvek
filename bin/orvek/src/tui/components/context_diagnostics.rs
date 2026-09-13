@@ -9,19 +9,24 @@ use crate::tui::{
         CompactionDiagnostics, CompactionStatus, CompactionTrigger, ContextDiagnostics,
         ContinuationMode,
     },
+    format::wrap_display_lines,
     theme::Theme,
 };
 use chrono::{DateTime, Utc};
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::Paragraph,
 };
 
-const FOOTER: [(&str, &str); 2] = [("r", "refresh"), ("esc", "close")];
+const FOOTER: [(&str, &str); 3] = [
+    ("↑↓/pgup/pgdn", "scroll"),
+    ("r", "refresh"),
+    ("esc", "close"),
+];
 
 pub(super) enum ContextDiagnosticsEvent {
     Terminal(Event),
@@ -35,11 +40,19 @@ pub(super) enum ContextDiagnosticsEffect {
 
 pub(super) struct ContextDiagnosticsPanel {
     diagnostics: ContextDiagnostics,
+    scroll: usize,
+    max_scroll: usize,
+    body: Rect,
 }
 
 impl ContextDiagnosticsPanel {
     pub(super) const fn new(diagnostics: ContextDiagnostics) -> Self {
-        Self { diagnostics }
+        Self {
+            diagnostics,
+            scroll: 0,
+            max_scroll: 0,
+            body: Rect::new(0, 0, 0, 0),
+        }
     }
 
     pub(super) fn replace(&mut self, diagnostics: ContextDiagnostics) {
@@ -209,6 +222,49 @@ impl ContextDiagnosticsPanel {
         ]);
         lines
     }
+    fn wrapped_lines(&self, width: u16, theme: &Theme) -> Vec<Line<'static>> {
+        let mut rows = Vec::new();
+        for line in self.lines(theme) {
+            if line.spans.len() == 2 {
+                let label = &line.spans[0];
+                let value = &line.spans[1];
+                let wide = width >= 54;
+                let inset = if wide {
+                    26
+                } else if width > 2 {
+                    2
+                } else {
+                    0
+                };
+                if !wide {
+                    rows.extend(
+                        wrap_display_lines(label.content.trim_end(), usize::from(width))
+                            .into_iter()
+                            .map(|text| Line::styled(text, label.style)),
+                    );
+                }
+                for (index, text) in
+                    wrap_display_lines(&value.content, usize::from(width.saturating_sub(inset)))
+                        .into_iter()
+                        .enumerate()
+                {
+                    let prefix = if wide && index == 0 {
+                        Span::styled(label.content.to_string(), label.style)
+                    } else {
+                        Span::raw(" ".repeat(usize::from(inset)))
+                    };
+                    rows.push(Line::from(vec![prefix, Span::styled(text, value.style)]));
+                }
+            } else {
+                rows.extend(
+                    wrap_display_lines(&line.to_string(), usize::from(width))
+                        .into_iter()
+                        .map(|text| Line::styled(text, line.style)),
+                );
+            }
+        }
+        rows
+    }
 }
 
 impl Component for ContextDiagnosticsPanel {
@@ -216,34 +272,71 @@ impl Component for ContextDiagnosticsPanel {
     type Effect = ContextDiagnosticsEffect;
 
     fn update(&mut self, event: Self::Event) -> ComponentUpdate<Self::Effect> {
-        let ContextDiagnosticsEvent::Terminal(Event::Key(key)) = event else {
-            return ComponentUpdate::none();
-        };
-        if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
-            return ComponentUpdate::none();
-        }
-        let effect = match key.code {
-            KeyCode::Esc => ContextDiagnosticsEffect::Dismiss,
-            KeyCode::Char('r') if key.modifiers == KeyModifiers::NONE => {
-                ContextDiagnosticsEffect::Refresh
+        match event {
+            ContextDiagnosticsEvent::Terminal(Event::Key(key))
+                if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+            {
+                match key.code {
+                    KeyCode::Esc => {
+                        return ComponentUpdate {
+                            effects: vec![ContextDiagnosticsEffect::Dismiss],
+                            render: RenderRequest::Immediate,
+                        };
+                    }
+                    KeyCode::Char('r') if key.modifiers == KeyModifiers::NONE => {
+                        return ComponentUpdate {
+                            effects: vec![ContextDiagnosticsEffect::Refresh],
+                            render: RenderRequest::Immediate,
+                        };
+                    }
+                    KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
+                    KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
+                    KeyCode::PageUp => {
+                        self.scroll = self
+                            .scroll
+                            .saturating_sub(usize::from(self.body.height).max(1))
+                    }
+                    KeyCode::PageDown => {
+                        self.scroll = self
+                            .scroll
+                            .saturating_add(usize::from(self.body.height).max(1))
+                    }
+                    KeyCode::Home => self.scroll = 0,
+                    KeyCode::End => self.scroll = self.max_scroll,
+                    _ => return ComponentUpdate::none(),
+                }
+            }
+            ContextDiagnosticsEvent::Terminal(Event::Mouse(mouse))
+                if self.body.contains(Position::new(mouse.column, mouse.row)) =>
+            {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.scroll = self.scroll.saturating_sub(1),
+                    MouseEventKind::ScrollDown => self.scroll = self.scroll.saturating_add(1),
+                    _ => return ComponentUpdate::none(),
+                }
             }
             _ => return ComponentUpdate::none(),
-        };
-        ComponentUpdate {
-            effects: vec![effect],
-            render: RenderRequest::Immediate,
         }
+        self.scroll = self.scroll.min(self.max_scroll);
+        ComponentUpdate::render(RenderRequest::Immediate)
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        let layout =
-            Floating::new("Context diagnostics", 78, 28, &FOOTER).render(frame, area, theme);
-        if layout.body.is_empty() {
-            return;
-        }
+        self.body = Floating::new("Context diagnostics", 78, 28, &FOOTER)
+            .render(frame, area, theme)
+            .body;
+        let lines = self.wrapped_lines(self.body.width, theme);
+        self.max_scroll = lines.len().saturating_sub(usize::from(self.body.height));
+        self.scroll = self.scroll.min(self.max_scroll);
         frame.render_widget(
-            Paragraph::new(self.lines(theme)).wrap(Wrap { trim: false }),
-            layout.body,
+            Paragraph::new(
+                lines
+                    .into_iter()
+                    .skip(self.scroll)
+                    .take(usize::from(self.body.height))
+                    .collect::<Vec<_>>(),
+            ),
+            self.body,
         );
     }
 }
@@ -385,5 +478,47 @@ mod tests {
             rendered,
             "automatic / 1970-01-01 00:00:00Z · completed · 39.0s"
         );
+    }
+    #[test]
+    fn narrow_diagnostics_keep_unknowns_and_last_compaction_reachable() {
+        use super::{ContextDiagnosticsEffect, ContextDiagnosticsEvent};
+        use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+        let mut panel = ContextDiagnosticsPanel::new(ContextDiagnostics::default());
+        let mut terminal = Terminal::new(TestBackend::new(32, 12)).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        assert!(panel.max_scroll > 0);
+        panel.update(ContextDiagnosticsEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+        )));
+        terminal
+            .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("Before / next input"));
+        assert!(text.contains("unavailable"));
+        assert_eq!(
+            panel
+                .update(ContextDiagnosticsEvent::Terminal(Event::Key(
+                    KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)
+                )))
+                .effects,
+            [ContextDiagnosticsEffect::Refresh]
+        );
+        for width in 0..20 {
+            for height in 0..12 {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+                    .unwrap();
+            }
+        }
     }
 }
