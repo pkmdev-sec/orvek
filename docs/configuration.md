@@ -65,6 +65,8 @@ does not replace a running agent's tool set.
 ```toml
 [theme]
 mode = "auto"
+motion = "full" # Use "reduced" for static decorative effects.
+glyphs = "unicode" # Use "ascii" for simpler terminal artwork.
 ```
 
 `mode` accepts `auto`, `light`, or `dark`. Auto follows the system theme. Put color overrides under

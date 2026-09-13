@@ -13,6 +13,7 @@ pub(super) struct WavedText {
     text: String,
     base_color: Color,
     active: bool,
+    motion_enabled: bool,
     started_at: Instant,
     next_frame: Instant,
     frame: usize,
@@ -25,6 +26,7 @@ impl WavedText {
             text: text.into(),
             base_color,
             active: false,
+            motion_enabled: true,
             started_at: now,
             next_frame: now + FRAME_INTERVAL,
             frame: 0,
@@ -45,12 +47,16 @@ impl WavedText {
         self.active
     }
 
+    pub(super) fn set_motion_enabled(&mut self, enabled: bool) {
+        self.motion_enabled = enabled;
+    }
+
     pub(super) fn animation_deadline(&self) -> Option<Instant> {
-        self.active.then_some(self.next_frame)
+        (self.active && self.motion_enabled).then_some(self.next_frame)
     }
 
     pub(super) fn advance(&mut self, now: Instant) -> bool {
-        if !self.active || now < self.next_frame {
+        if !self.active || !self.motion_enabled || now < self.next_frame {
             return false;
         }
 
@@ -70,7 +76,7 @@ impl WavedText {
             .chars()
             .enumerate()
             .map(|(index, character)| {
-                let style = if self.active {
+                let style = if self.active && self.motion_enabled {
                     let percentage =
                         SHADE_PERCENTAGES[(index + self.frame) % SHADE_PERCENTAGES.len()];
                     shade(self.base_color, percentage)

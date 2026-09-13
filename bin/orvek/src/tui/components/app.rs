@@ -216,6 +216,7 @@ pub(crate) struct AppNode {
 impl AppNode {
     pub(crate) fn new(theme: Theme, workspace: PathBuf, mut root: RootNode) -> Self {
         root.set_theme_mode(theme.mode());
+        root.set_render_preferences(theme.motion_enabled(), theme.ascii_art());
         Self {
             theme,
             workspace,
@@ -448,9 +449,17 @@ impl AppNode {
                 let mode = self.theme.mode();
                 if let Some((_, main)) = &mut self.main {
                     main.component_mut().set_theme_mode(mode);
+                    main.component_mut().set_render_preferences(
+                        self.theme.motion_enabled(),
+                        self.theme.ascii_art(),
+                    );
                 }
                 if let Some((_, fork)) = &mut self.fork {
                     fork.component_mut().set_theme_mode(mode);
+                    fork.component_mut().set_render_preferences(
+                        self.theme.motion_enabled(),
+                        self.theme.ascii_art(),
+                    );
                 }
                 self.set_preferred_reasoning_mode(preferred_reasoning_mode);
                 self.set_memory_enabled(false);
@@ -1007,7 +1016,7 @@ mod tests {
             .collect::<String>();
         assert_eq!(rendered.matches("inherited history").count(), 2);
         assert!(
-            rendered.contains("ORVEK / Thinking"),
+            rendered.contains("Thinking"),
             "the new fork must show preparation immediately"
         );
         assert!(app.root(PaneId::Fork(1)).is_some());

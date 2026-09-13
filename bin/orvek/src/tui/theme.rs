@@ -23,9 +23,27 @@ pub(crate) enum ColorScheme {
     Dark,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum MotionMode {
+    #[default]
+    Full,
+    Reduced,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum GlyphMode {
+    #[default]
+    Unicode,
+    Ascii,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct Theme {
     mode: ThemeMode,
+    motion: MotionMode,
+    glyphs: GlyphMode,
     light: ThemePalette,
     dark: ThemePalette,
     #[serde(skip)]
@@ -54,6 +72,8 @@ struct ThemeColor(Color);
 #[serde(default, deny_unknown_fields)]
 struct ThemeFields {
     mode: ThemeMode,
+    motion: MotionMode,
+    glyphs: GlyphMode,
     light: PaletteFields,
     dark: PaletteFields,
     #[serde(flatten)]
@@ -87,6 +107,8 @@ impl Default for Theme {
     fn default() -> Self {
         Self {
             mode: ThemeMode::Auto,
+            motion: MotionMode::Full,
+            glyphs: GlyphMode::Unicode,
             light: ThemePalette::light(),
             dark: ThemePalette::dark(),
             system_scheme: ColorScheme::Dark,
@@ -95,6 +117,22 @@ impl Default for Theme {
 }
 
 impl Theme {
+    pub(crate) const fn scheme(&self) -> ColorScheme {
+        match self.mode {
+            ThemeMode::Light => ColorScheme::Light,
+            ThemeMode::Dark => ColorScheme::Dark,
+            ThemeMode::Auto => self.system_scheme,
+        }
+    }
+
+    pub(crate) const fn motion_enabled(&self) -> bool {
+        matches!(self.motion, MotionMode::Full)
+    }
+
+    pub(crate) const fn ascii_art(&self) -> bool {
+        matches!(self.glyphs, GlyphMode::Ascii)
+    }
+
     pub(crate) const fn mode(&self) -> ThemeMode {
         self.mode
     }
@@ -265,6 +303,8 @@ impl<'de> Deserialize<'de> for Theme {
         dark.apply(&fields.dark);
         Ok(Self {
             mode: fields.mode,
+            motion: fields.motion,
+            glyphs: fields.glyphs,
             light,
             dark,
             system_scheme: ColorScheme::Dark,
@@ -367,6 +407,17 @@ impl fmt::Display for ColorName {
 #[cfg(test)]
 mod tests {
     use super::{ColorScheme, SYSTEM_SCHEME_POLL_INTERVAL, Theme, ThemeMode};
+
+    #[test]
+    fn render_preferences_preserve_palette_overrides_when_round_tripped() {
+        let theme: Theme =
+            toml::from_str("motion = 'reduced'\nglyphs = 'ascii'\naccent = '#123456'\n").unwrap();
+        assert!(!theme.motion_enabled());
+        assert!(theme.ascii_art());
+        assert_eq!(theme.accent(), ratatui::style::Color::Rgb(18, 52, 86));
+        let restored: Theme = toml::from_str(&toml::to_string(&theme).unwrap()).unwrap();
+        assert_eq!(restored, theme);
+    }
     use nanocodex::Model;
     use ratatui::style::Color;
 

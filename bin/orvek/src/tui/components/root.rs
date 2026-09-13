@@ -351,6 +351,8 @@ pub(crate) struct RootNode {
     memory_enabled: bool,
     interactive: bool,
     theme_mode: ThemeMode,
+    motion_enabled: bool,
+    ascii_art: bool,
     preferred_reasoning_mode: ReasoningMode,
     subagents: SubagentTree,
     context_diagnostics: ContextDiagnostics,
@@ -395,6 +397,8 @@ impl RootNode {
             memory_enabled: false,
             interactive: true,
             theme_mode: ThemeMode::Auto,
+            motion_enabled: true,
+            ascii_art: false,
             preferred_reasoning_mode: ReasoningMode::Standard,
             subagents,
             context_diagnostics: ContextDiagnostics::default(),
@@ -424,6 +428,7 @@ impl RootNode {
         root.set_skills(Arc::clone(&self.skills));
         root.memory_enabled = self.memory_enabled;
         root.theme_mode = self.theme_mode;
+        root.set_render_preferences(self.motion_enabled, self.ascii_art);
         root.context_diagnostics = self.context_diagnostics.clone();
         root.composer
             .component_mut()
@@ -466,6 +471,23 @@ impl RootNode {
 
     pub(crate) fn set_theme_mode(&mut self, mode: ThemeMode) {
         self.theme_mode = mode;
+    }
+
+    pub(crate) fn set_render_preferences(&mut self, motion: bool, ascii: bool) {
+        self.motion_enabled = motion;
+        self.ascii_art = ascii;
+        self.activity.set_preferences(motion, ascii);
+        self.composer.component_mut().set_motion_enabled(motion);
+        self.queue.component_mut().set_motion_enabled(motion);
+        self.transcript
+            .component_mut()
+            .set_render_preferences(motion, ascii);
+        self.subagents.set_render_preferences(motion, ascii);
+        match &mut self.overlay {
+            Some(Overlay::Model(selector)) => selector.component_mut().set_motion_enabled(motion),
+            Some(Overlay::Effort(selector)) => selector.component_mut().set_motion_enabled(motion),
+            _ => {}
+        }
     }
 
     pub(crate) fn set_fast_mode(&mut self, enabled: bool) {
@@ -521,6 +543,8 @@ impl RootNode {
         let fork_available = self.fork_available;
         let memory_enabled = self.memory_enabled;
         let theme_mode = self.theme_mode;
+        let motion_enabled = self.motion_enabled;
+        let ascii_art = self.ascii_art;
         let max_subagents = self.subagents.max_subagents();
         *self = Self::new(workspace, thinking);
         self.set_reasoning_modes(reasoning_mode, preferred_reasoning_mode);
@@ -528,6 +552,7 @@ impl RootNode {
         self.fork_available = fork_available;
         self.memory_enabled = memory_enabled;
         self.theme_mode = theme_mode;
+        self.set_render_preferences(motion_enabled, ascii_art);
         self.set_max_subagents(max_subagents);
         if let Some(draft) = preserved_draft {
             self.composer.component_mut().restore_draft(draft);
@@ -604,6 +629,9 @@ impl RootNode {
         self.set_fast_mode(fast_mode);
         projection.transcript.set_workspace(workspace);
         self.transcript = Node::new(projection.transcript);
+        self.transcript
+            .component_mut()
+            .set_render_preferences(self.motion_enabled, self.ascii_art);
         self.context_diagnostics = projection.context_diagnostics;
         self.composer
             .component_mut()
@@ -643,9 +671,18 @@ impl RootNode {
         [
             selector,
             self.activity.deadline(),
-            self.transcript.component().animation_deadline(),
-            self.composer.component().animation_deadline(),
-            self.queue.component().animation_deadline(),
+            self.overlay
+                .is_none()
+                .then(|| self.transcript.component().animation_deadline())
+                .flatten(),
+            self.overlay
+                .is_none()
+                .then(|| self.composer.component().animation_deadline())
+                .flatten(),
+            self.overlay
+                .is_none()
+                .then(|| self.queue.component().animation_deadline())
+                .flatten(),
             self.key_confirmation
                 .as_ref()
                 .map(|confirmation| confirmation.deadline),
@@ -653,7 +690,10 @@ impl RootNode {
             self.selection_auto_scroll
                 .as_ref()
                 .map(|scroll| scroll.deadline),
-            self.subagents.animation_deadline(),
+            match &self.overlay {
+                Some(Overlay::Subagents(view)) => self.subagents.animation_deadline(*view),
+                _ => None,
+            },
         ]
         .into_iter()
         .flatten()
@@ -664,20 +704,37 @@ impl RootNode {
         if area.is_empty() {
             return;
         }
-        let mark_width = ActivityMark::WIDTH.min(area.width);
+        let header_height = if area.height >= 16 && !self.ascii_art {
+            2
+        } else {
+            1
+        };
+        let mark_width = if header_height == 2 {
+            ActivityMark::WIDTH
+        } else {
+            1
+        }
+        .min(area.width);
         self.activity
-            .render(frame, Rect::new(area.x, area.y, mark_width, 1), theme);
-        let label = format!(" ORVEK / {}", self.activity.state().label());
-        frame.buffer_mut().set_stringn(
-            area.x + mark_width,
-            area.y,
-            label,
-            usize::from(area.width.saturating_sub(mark_width)),
-            Style::default().fg(theme.code_text()),
+            .set_preferences(self.motion_enabled && header_height == 2, self.ascii_art);
+        self.activity.render(
+            frame,
+            Rect::new(area.x, area.y, mark_width, header_height),
+            theme,
         );
+        let label_x = area.x + mark_width + 2;
+        if label_x < area.right() {
+            frame.buffer_mut().set_stringn(
+                label_x,
+                area.y,
+                self.activity.state().label(),
+                usize::from(area.right() - label_x),
+                Style::default().fg(theme.code_text()),
+            );
+        }
         let area = Rect {
-            y: area.y + 1,
-            height: area.height - 1,
+            y: area.y + header_height,
+            height: area.height - header_height,
             ..area
         };
         let height = self
@@ -1356,7 +1413,7 @@ impl RootNode {
             return update;
         }
 
-        if !is_picker_navigation(&event) {
+        if !is_picker_navigation(&event) && !matches!(event, Event::Mouse(_)) {
             self.overlay = None;
             if is_escape(&event) {
                 return ComponentUpdate::render(RenderRequest::Immediate);
@@ -1420,7 +1477,7 @@ impl RootNode {
             return update;
         }
 
-        if !is_picker_navigation(&event) {
+        if !is_picker_navigation(&event) && !matches!(event, Event::Mouse(_)) {
             self.overlay = None;
             if is_escape(&event) {
                 return ComponentUpdate::render(RenderRequest::Immediate);
@@ -1668,10 +1725,12 @@ impl RootNode {
     }
 
     fn open_effort(&mut self) -> ComponentUpdate<RootEffect> {
-        self.overlay = Some(Overlay::Effort(Node::new(EffortSelector::new(
+        let mut selector = EffortSelector::new(
             self.composer.component().effort(),
             self.preferred_reasoning_mode == ReasoningMode::Pro,
-        ))));
+        );
+        selector.set_motion_enabled(self.motion_enabled);
+        self.overlay = Some(Overlay::Effort(Node::new(selector)));
         ComponentUpdate::render(RenderRequest::Immediate)
     }
 
@@ -1679,9 +1738,9 @@ impl RootNode {
         if self.thread != ThreadState::New {
             return ComponentUpdate::none();
         }
-        self.overlay = Some(Overlay::Model(Node::new(ModelSelector::new(
-            self.composer.component().model(),
-        ))));
+        let mut selector = ModelSelector::new(self.composer.component().model());
+        selector.set_motion_enabled(self.motion_enabled);
+        self.overlay = Some(Overlay::Model(Node::new(selector)));
         ComponentUpdate::render(RenderRequest::Immediate)
     }
 
@@ -2399,12 +2458,28 @@ impl RootNode {
         };
         let effort = self.update_effort(EffortEvent::AnimationFrame(now));
         let model = self.update_model(ModelSelectorEvent::AnimationFrame(now));
-        let transcript = self.update_transcript(TranscriptEvent::AnimationFrame(now));
-        let composer =
-            self.update_composer(ComposerEvent::AnimationFrame(now), RenderRequest::Streaming);
-        let queue = self.queue.update(QueueEvent::AnimationFrame(now));
+        let visible = self.overlay.is_none();
+        let transcript = if visible {
+            self.update_transcript(TranscriptEvent::AnimationFrame(now))
+        } else {
+            ComponentUpdate::none()
+        };
+        let composer = if visible {
+            self.update_composer(ComposerEvent::AnimationFrame(now), RenderRequest::Streaming)
+        } else {
+            ComponentUpdate::none()
+        };
+        let queue = if visible {
+            self.queue.update(QueueEvent::AnimationFrame(now))
+        } else {
+            ComponentUpdate::none()
+        };
         debug_assert!(queue.effects.is_empty());
-        let subagents = if self.subagents.advance(now) {
+        let subagents_changed = match &self.overlay {
+            Some(Overlay::Subagents(view)) => self.subagents.advance(now, *view),
+            _ => false,
+        };
+        let subagents = if subagents_changed {
             RenderRequest::Streaming
         } else {
             RenderRequest::None
@@ -3376,7 +3451,7 @@ mod tests {
                 .lines()
                 .next()
                 .unwrap()
-                .contains("ORVEK / Ready")
+                .contains("Ready")
         );
         root.update(RootEvent::ReplaceDraft("inspect source".to_owned()));
         root.update(key(KeyCode::Enter, KeyModifiers::NONE));
@@ -3418,13 +3493,15 @@ mod tests {
             terminal_expected: true,
         });
         assert_eq!(root.activity.state(), super::ActivityState::Complete);
+        root.activity
+            .advance(Instant::now() + std::time::Duration::from_millis(200));
         assert!(root.activity.deadline().is_none());
         assert!(
             render_root_text(&mut root, 80, 20)
                 .lines()
                 .next()
                 .unwrap()
-                .contains("ORVEK / Complete")
+                .contains("Complete")
         );
         root.update(RootEvent::NotifyError("fixture error".to_owned()));
         assert_eq!(root.activity.state(), super::ActivityState::Error);
@@ -3476,6 +3553,8 @@ mod tests {
             root.update(RootEvent::Transcript(Arc::new(finished)));
             root.update(RootEvent::ShellFinished);
             assert_eq!(root.activity.state(), expected);
+            root.activity
+                .advance(Instant::now() + std::time::Duration::from_millis(200));
             assert!(root.activity.deadline().is_none());
         }
     }
@@ -3489,6 +3568,8 @@ mod tests {
             "Context compaction was cancelled".to_owned(),
         )));
         assert_eq!(root.activity.state(), super::ActivityState::Cancelled);
+        root.activity
+            .advance(Instant::now() + std::time::Duration::from_millis(200));
         assert!(root.activity.deadline().is_none());
     }
 
@@ -4312,15 +4393,16 @@ mod tests {
     }
 
     #[test]
-    fn mouse_dismisses_mention_popovers_with_an_immediate_redraw() {
+    fn mouse_movement_keeps_mention_popovers_open() {
         let workspace = tempfile::tempdir().unwrap();
         let mut root = RootNode::new(workspace.path(), ReasoningEffort::Medium);
         root.update(key(KeyCode::Char('@'), KeyModifiers::NONE));
 
         let file_update = root.update(mouse(MouseEventKind::Moved, 0, 0));
 
-        assert!(root.overlay.is_none());
-        assert_eq!(file_update.render, RenderRequest::Immediate);
+        assert!(root.overlay.is_some());
+        assert!(file_update.effects.is_empty());
+        root.update(key(KeyCode::Esc, KeyModifiers::NONE));
 
         root.set_skills(vec![Skill::new("autofix", "Repair a pull request.")].into());
         root.update(key(KeyCode::Char(' '), KeyModifiers::NONE));
@@ -4328,8 +4410,8 @@ mod tests {
 
         let skill_update = root.update(mouse(MouseEventKind::Moved, 0, 0));
 
-        assert!(root.overlay.is_none());
-        assert_eq!(skill_update.render, RenderRequest::Immediate);
+        assert!(root.overlay.is_some());
+        assert!(skill_update.effects.is_empty());
     }
 
     #[test]
@@ -5969,11 +6051,10 @@ mod tests {
             .filter(|cell| cell.symbol() != " ")
             .collect::<Vec<_>>();
         assert!(!artwork.is_empty());
-        assert!(
-            artwork
-                .iter()
-                .all(|cell| matches!(cell.fg, Color::Yellow) || cell.fg == theme.code_text())
-        );
+        assert!(artwork.iter().all(|cell| matches!(
+            cell.fg,
+            Color::Rgb(182, 160, 247) | Color::Rgb(120, 201, 208)
+        ) || cell.fg == theme.code_text()));
     }
 
     #[test]

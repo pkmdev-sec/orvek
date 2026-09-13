@@ -109,6 +109,7 @@ pub(crate) struct Composer {
     last_width: usize,
     context_tokens: u64,
     context_limit: u64,
+    motion_enabled: bool,
     chrome_layout: Option<ChromeLayout>,
     workspace: String,
     thinking: ReasoningEffort,
@@ -210,6 +211,7 @@ impl Composer {
             last_width: 78,
             context_tokens: 0,
             context_limit: MODEL_WINDOW_TOKENS,
+            motion_enabled: true,
             chrome_layout: None,
             workspace: shorten_home(workspace),
             thinking,
@@ -234,6 +236,20 @@ impl Composer {
 
     pub(crate) const fn context_tokens(&self) -> u64 {
         self.context_tokens
+    }
+
+    pub(super) fn set_motion_enabled(&mut self, enabled: bool) {
+        self.motion_enabled = enabled;
+        for wave in [
+            &mut self.activity_wave,
+            &mut self.review_wave,
+            &mut self.subagent_wave,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            wave.set_motion_enabled(enabled);
+        }
     }
 
     pub(crate) fn update(&mut self, event: ComposerEvent) -> ComposerUpdate {
@@ -330,6 +346,7 @@ impl Composer {
                 self.activity_wave = status.as_ref().map(|status| {
                     let mut wave = WavedText::new(status, Color::Cyan);
                     wave.set_active(true, now);
+                    wave.set_motion_enabled(self.motion_enabled);
                     wave
                 });
                 self.activity_status = status;
@@ -348,6 +365,7 @@ impl Composer {
                 self.review_wave = status.as_ref().map(|status| {
                     let mut wave = WavedText::new(status, Color::Green);
                     wave.set_active(true, now);
+                    wave.set_motion_enabled(self.motion_enabled);
                     wave
                 });
                 self.review_status = status;
@@ -361,6 +379,7 @@ impl Composer {
                 self.subagent_wave = (count > 0).then(|| {
                     let mut wave = WavedText::new(format!("{count} subagents"), Color::Yellow);
                     wave.set_active(true, now);
+                    wave.set_motion_enabled(self.motion_enabled);
                     wave
                 });
                 ComposerUpdate::changed()

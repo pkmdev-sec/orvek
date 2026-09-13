@@ -79,6 +79,10 @@ impl Default for MessageQueue {
 }
 
 impl MessageQueue {
+    pub(super) fn set_motion_enabled(&mut self, enabled: bool) {
+        self.steering_label.set_motion_enabled(enabled);
+    }
+
     pub(super) fn push(&mut self, prompt: impl Into<Submission>) {
         self.items.push(QueueItem {
             id: QueueId(self.next_id),

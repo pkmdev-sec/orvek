@@ -136,6 +136,8 @@ pub(super) struct SubagentTree {
     effort: crate::app::config::ReasoningEffort,
     max_subagents: usize,
     workspace: std::path::PathBuf,
+    motion_enabled: bool,
+    ascii_art: bool,
 }
 
 impl SubagentTree {
@@ -149,6 +151,21 @@ impl SubagentTree {
             effort,
             max_subagents: DEFAULT_MAX_SUBAGENTS,
             workspace: std::env::current_dir().unwrap_or_default(),
+            motion_enabled: true,
+            ascii_art: false,
+        }
+    }
+
+    pub(super) fn set_render_preferences(&mut self, motion: bool, ascii: bool) {
+        self.motion_enabled = motion;
+        self.ascii_art = ascii;
+        for node in &mut self.nodes {
+            node.transcript
+                .component_mut()
+                .set_render_preferences(motion, ascii);
+        }
+        if !motion {
+            self.finish_camera_animation();
         }
     }
 
@@ -173,6 +190,7 @@ impl SubagentTree {
                 } else {
                     let id = descriptor.id;
                     let mut transcript = Transcript::with_effort(self.effort);
+                    transcript.set_render_preferences(self.motion_enabled, self.ascii_art);
                     transcript.set_workspace(&self.workspace);
                     self.nodes.push(AgentNode {
                         descriptor,
@@ -258,29 +276,35 @@ impl SubagentTree {
             .is_some_and(|node| node.descriptor.parent.is_none())
     }
 
-    pub(super) fn animation_deadline(&self) -> Option<Instant> {
-        self.nodes
-            .iter()
-            .filter_map(|node| node.transcript.component().animation_deadline())
-            .chain(
-                self.camera
-                    .animation
-                    .as_ref()
-                    .map(|animation| animation.next_frame),
-            )
-            .min()
+    pub(super) fn animation_deadline(&self, view: SubagentOverlay) -> Option<Instant> {
+        match view {
+            SubagentOverlay::Tree => self
+                .motion_enabled
+                .then(|| {
+                    self.camera
+                        .animation
+                        .as_ref()
+                        .map(|animation| animation.next_frame)
+                })
+                .flatten(),
+            SubagentOverlay::Transcript(id) => self
+                .nodes
+                .iter()
+                .find(|node| node.descriptor.id == id)
+                .and_then(|node| node.transcript.component().animation_deadline()),
+        }
     }
 
-    pub(super) fn advance(&mut self, now: Instant) -> bool {
-        let camera_changed = self.advance_camera(now);
-        self.nodes.iter_mut().fold(camera_changed, |changed, node| {
-            let node_changed = node
-                .transcript
-                .update(TranscriptEvent::AnimationFrame(now))
-                .render
-                != super::node::RenderRequest::None;
-            changed || node_changed
-        })
+    pub(super) fn advance(&mut self, now: Instant, view: SubagentOverlay) -> bool {
+        match view {
+            SubagentOverlay::Tree => self.motion_enabled && self.advance_camera(now),
+            SubagentOverlay::Transcript(id) => self.node_mut(id).is_some_and(|node| {
+                node.transcript
+                    .update(TranscriptEvent::AnimationFrame(now))
+                    .render
+                    != super::node::RenderRequest::None
+            }),
+        }
     }
 
     pub(super) fn finish_camera_animation(&mut self) {
@@ -433,6 +457,9 @@ impl SubagentTree {
             .center(focused)
             .expect("focused agent should have a layout position");
         self.sync_camera_target(focus_center, Instant::now());
+        if !self.motion_enabled {
+            self.finish_camera_animation();
+        }
         let camera_center = self.camera.center.unwrap_or(focus_center);
 
         render_edges(frame, canvas, theme, &tree_layout, camera_center);
@@ -1278,6 +1305,25 @@ mod tests {
     }
 
     #[test]
+    fn hidden_child_transcripts_do_not_schedule_tree_frames() {
+        let mut tree = SubagentTree::new(crate::app::config::ReasoningEffort::Medium);
+        tree.apply(AgentUpdate::Added(descriptor()));
+        assert!(
+            tree.animation_deadline(super::SubagentOverlay::Tree)
+                .is_none()
+        );
+        assert!(
+            tree.animation_deadline(super::SubagentOverlay::Transcript(AgentId::new(1)))
+                .is_some()
+        );
+        tree.set_render_preferences(false, false);
+        assert!(
+            tree.animation_deadline(super::SubagentOverlay::Transcript(AgentId::new(1)))
+                .is_none()
+        );
+    }
+
+    #[test]
     fn changing_effort_preserves_active_subagents() {
         let mut tree = SubagentTree::new(ReasoningEffort::Medium);
         assert!(tree.apply(AgentUpdate::Added(descriptor())));
@@ -1734,12 +1780,17 @@ mod tests {
             Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
             start,
         );
-        let first_deadline = tree.animation_deadline().unwrap();
-        assert!(!tree.advance(first_deadline - Duration::from_millis(1)));
+        let first_deadline = tree
+            .animation_deadline(super::SubagentOverlay::Tree)
+            .unwrap();
+        assert!(!tree.advance(
+            first_deadline - Duration::from_millis(1),
+            super::SubagentOverlay::Tree
+        ));
 
         let first_duration = tree.camera.animation.as_ref().unwrap().duration;
         let interruption = start + first_duration / 2;
-        assert!(tree.advance(interruption));
+        assert!(tree.advance(interruption, super::SubagentOverlay::Tree));
         let interrupted_center = tree.camera.center.unwrap();
 
         tree.update_tree_at(
@@ -1750,7 +1801,10 @@ mod tests {
         assert_eq!(retargeted.from, interrupted_center);
         assert_eq!(tree.focused, Some(AgentId::new(3)));
 
-        assert!(tree.advance(interruption + Duration::from_secs(1)));
+        assert!(tree.advance(
+            interruption + Duration::from_secs(1),
+            super::SubagentOverlay::Tree
+        ));
         assert_eq!(tree.camera.center, tree.layout().center(AgentId::new(3)));
         assert!(tree.camera.animation.is_none());
     }

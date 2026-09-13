@@ -82,6 +82,8 @@ pub(crate) struct Transcript {
     viewport_height: u16,
     new_updates: u64,
     tool_spinner: Option<Spinner>,
+    motion_enabled: bool,
+    last_duration_refresh: Instant,
     running_tool_timers: HashMap<EntryId, RunningToolTimer>,
     retry_timer: Option<RetryTimer>,
     expandables_focused: bool,
@@ -263,6 +265,8 @@ impl Transcript {
             viewport_height: 0,
             new_updates: 0,
             tool_spinner: None,
+            motion_enabled: true,
+            last_duration_refresh: Instant::now(),
             running_tool_timers: HashMap::new(),
             retry_timer: None,
             expandables_focused: false,
@@ -341,14 +345,28 @@ impl Transcript {
     }
 
     pub(crate) fn animation_deadline(&self) -> Option<Instant> {
-        let empty = self.is_empty().then(|| self.empty_logo.deadline());
+        let empty = self
+            .is_empty()
+            .then(|| self.empty_logo.deadline())
+            .flatten();
         self.tool_spinner
-            .map(Spinner::deadline)
+            .map(|spinner| {
+                if self.motion_enabled {
+                    spinner.deadline()
+                } else {
+                    self.last_duration_refresh + Duration::from_secs(1)
+                }
+            })
             .into_iter()
             .chain(empty)
             .chain(self.retry_timer.and_then(|timer| timer.next_frame))
             .chain(self.cache.images.animation_deadline())
             .min()
+    }
+
+    pub(super) fn set_render_preferences(&mut self, motion: bool, ascii: bool) {
+        self.motion_enabled = motion;
+        self.empty_logo.set_preferences(motion, ascii);
     }
 
     fn update_record(
@@ -472,10 +490,12 @@ impl Transcript {
             .as_mut()
             .is_some_and(|timer| timer.refresh(now));
         let timer_changed = self.refresh_running_tool_durations(now);
-        let tool_changed = self
-            .tool_spinner
-            .as_mut()
-            .is_some_and(|spinner| spinner.advance(now));
+        self.last_duration_refresh = now;
+        let tool_changed = self.motion_enabled
+            && self
+                .tool_spinner
+                .as_mut()
+                .is_some_and(|spinner| spinner.advance(now));
         let logo_changed = self.is_empty() && self.empty_logo.advance(now);
         let images_changed = self.cache.poll_images(now);
         let activity = self.activity();
@@ -1603,7 +1623,7 @@ impl Component for Transcript {
         self.selection_rows.clear();
         Clear.render(area, frame.buffer_mut());
         if self.is_empty() {
-            self.empty_logo.render(frame, area, theme, self.effort);
+            self.empty_logo.render(frame, area, theme);
             return;
         }
         let mut plan = self.render_plan(area.width, area.height, theme);
@@ -3102,7 +3122,7 @@ mod tests {
                 .iter()
                 .map(|cell| cell.symbol())
                 .collect::<String>()
-                .contains(r"/--\  |--\")
+                .contains("████")
         );
         let deadline = transcript
             .animation_deadline()
@@ -3123,7 +3143,7 @@ mod tests {
                 .iter()
                 .map(|cell| cell.symbol())
                 .collect::<String>()
-                .contains(r"/--\  |--\")
+                .contains("████")
         );
         assert!(transcript.animation_deadline().is_none());
     }
