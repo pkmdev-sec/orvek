@@ -157,14 +157,15 @@ impl ActionsMenu {
     }
 
     fn refresh_matches(&mut self) {
-        self.matches.clear();
-        self.matches.extend(
-            ACTIONS
-                .iter()
-                .enumerate()
-                .filter(|(_, action)| action.matches(&self.query))
-                .map(|(index, _)| index),
-        );
+        self.matches = ACTIONS
+            .iter()
+            .enumerate()
+            .filter(|(_, action)| {
+                action.matches(&self.query)
+                    || contains_ignore_ascii_case(self.display_label(**action), &self.query)
+            })
+            .map(|(index, _)| index)
+            .collect();
         self.selected = 0;
     }
 
@@ -704,6 +705,21 @@ mod tests {
             disabled.update(key(KeyCode::Char(character)));
         }
         assert!(disabled.update(key(KeyCode::Enter)).effects.is_empty());
+    }
+
+    #[test]
+    fn fast_mode_search_matches_visible_original_and_alias_labels() {
+        for query in ["disable fast mode", "enable fast mode", "priority"] {
+            let mut availability = available();
+            availability.fast_mode = true;
+            let mut menu = ActionsMenu::new(availability);
+            menu.update(ActionsEvent::Terminal(Event::Paste(query.to_owned())));
+            assert_eq!(
+                menu.update(key(KeyCode::Enter)).effects,
+                [ActionsEffect::Trigger(Action::FastMode)],
+                "{query}"
+            );
+        }
     }
 
     #[test]
