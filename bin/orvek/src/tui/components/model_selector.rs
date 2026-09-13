@@ -5,11 +5,13 @@ use super::{
     node::{Component, ComponentUpdate, RenderRequest},
 };
 use crate::tui::theme::Theme;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
+};
 use nanocodex::Model;
 use ratatui::{
     Frame,
-    layout::{Alignment, Rect},
+    layout::{Alignment, Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
@@ -17,7 +19,7 @@ use ratatui::{
 use std::time::{Duration, Instant};
 
 const MODELS: [Model; 3] = [Model::Luna, Model::Terra, Model::Sol];
-const ANIMATION_DURATION: Duration = Duration::from_millis(280);
+const ANIMATION_DURATION: Duration = Duration::from_millis(180);
 const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 const KEY_BINDINGS: [(&str, &str); 3] = [("←/→", "model"), ("enter", "apply"), ("esc", "cancel")];
 
@@ -34,6 +36,9 @@ pub(super) enum ModelSelectorEffect {
 
 pub(super) struct ModelSelector {
     selected: usize,
+    current: Model,
+    motion_enabled: bool,
+    targets: [Rect; 3],
     displayed_position: f64,
     animation: Option<Animation>,
 }
@@ -50,9 +55,38 @@ impl ModelSelector {
         let selected = model_index(initial);
         Self {
             selected,
+            current: initial,
+            motion_enabled: true,
+            targets: [Rect::default(); 3],
             displayed_position: selected as f64,
             animation: None,
         }
+    }
+
+    pub(super) fn set_motion_enabled(&mut self, enabled: bool) {
+        self.motion_enabled = enabled;
+        if !enabled {
+            self.displayed_position = self.selected as f64;
+            self.animation = None;
+        }
+    }
+
+    fn update_mouse(
+        &mut self,
+        mouse: MouseEvent,
+        now: Instant,
+    ) -> ComponentUpdate<ModelSelectorEffect> {
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return ComponentUpdate::none();
+        }
+        let Some(index) = self
+            .targets
+            .iter()
+            .position(|target| target.contains(Position::new(mouse.column, mouse.row)))
+        else {
+            return ComponentUpdate::none();
+        };
+        self.select_relative(index as isize - self.selected as isize, now)
     }
 
     pub(super) fn animation_deadline(&self) -> Option<Instant> {
@@ -95,6 +129,11 @@ impl ModelSelector {
             return ComponentUpdate::none();
         }
         self.selected = next;
+        if !self.motion_enabled {
+            self.displayed_position = next as f64;
+            self.animation = None;
+            return ComponentUpdate::render(RenderRequest::Immediate);
+        }
         self.animation = Some(Animation {
             from: self.displayed_position,
             to: next as f64,
@@ -121,8 +160,8 @@ impl ModelSelector {
         true
     }
 
-    fn render_slider(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        if area.width < 5 || area.height < 2 {
+    fn render_slider(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+        if area.width < 14 || area.height < 2 {
             return;
         }
         let left = area.x.saturating_add(2);
@@ -134,21 +173,11 @@ impl ModelSelector {
         let selected_color = theme.model(MODELS[self.selected]);
         let buffer = frame.buffer_mut();
         for column in left..=right {
-            let color = if column <= indicator_column {
-                selected_color
-            } else {
-                theme.muted()
-            };
-            buffer.set_string(column, area.y, "━", Style::default().fg(color));
+            buffer.set_string(column, area.y, "─", Style::default().fg(theme.border()));
         }
         for index in 0..MODELS.len() {
             let column = model_column(left, width, index);
-            let color = if column <= indicator_column {
-                selected_color
-            } else {
-                theme.muted()
-            };
-            buffer.set_string(column, area.y, "●", Style::default().fg(color));
+            buffer.set_string(column, area.y, "●", Style::default().fg(theme.muted()));
         }
         buffer.set_string(
             indicator_column,
@@ -164,9 +193,16 @@ impl ModelSelector {
             (model_column(left, width, 1), Model::Terra, "Terra"),
             (model_column(left, width, 2), Model::Sol, "Sol"),
         ];
-        for (column, model, label) in labels {
+        for (index, (column, model, label)) in labels.into_iter().enumerate() {
             let label_width = u16::try_from(label.len()).unwrap_or(u16::MAX);
             let start = column.saturating_sub(label_width / 2).max(area.x);
+            self.targets[index] = Rect::new(
+                start.saturating_sub(1).max(area.x),
+                area.y,
+                label_width + 2,
+                2,
+            )
+            .intersection(area);
             buffer.set_string(
                 start,
                 area.y.saturating_add(1),
@@ -193,6 +229,10 @@ impl Component for ModelSelector {
                 event: Event::Key(key),
                 now,
             } => self.update_key(key, now),
+            ModelSelectorEvent::Terminal {
+                event: Event::Mouse(mouse),
+                now,
+            } => self.update_mouse(mouse, now),
             ModelSelectorEvent::Terminal { .. } => ComponentUpdate::none(),
             ModelSelectorEvent::AnimationFrame(now) => {
                 if self.advance_animation(now) {
@@ -205,7 +245,8 @@ impl Component for ModelSelector {
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        let layout = Floating::new("Select model", 52, 7, &KEY_BINDINGS).render(frame, area, theme);
+        self.targets = [Rect::default(); 3];
+        let layout = Floating::new("Select model", 52, 9, &KEY_BINDINGS).render(frame, area, theme);
         if layout.body.is_empty() {
             return;
         }
@@ -226,7 +267,20 @@ impl Component for ModelSelector {
                 ..layout.body
             },
         );
-        let slider_offset = if layout.body.height >= 4 { 2 } else { 1 };
+        let slider_offset = if layout.body.height >= 5 { 3 } else { 1 };
+        if layout.body.height >= 5 {
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("Current: ", Style::default().fg(theme.muted())),
+                    Span::styled(
+                        model_name(self.current),
+                        Style::default().fg(theme.model(self.current)),
+                    ),
+                ]))
+                .alignment(Alignment::Center),
+                Rect::new(layout.body.x, layout.body.y + 1, layout.body.width, 1),
+            );
+        }
         self.render_slider(
             frame,
             Rect {
@@ -346,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn filled_bar_uses_the_selected_model_color() {
+    fn rail_is_neutral_while_selection_keeps_the_model_color() {
         let mut selector = ModelSelector::new(Model::Sol);
         let terminal = render(&mut selector);
         let rail = terminal
@@ -354,26 +408,26 @@ mod tests {
             .buffer()
             .content
             .iter()
-            .filter(|cell| cell.symbol() == "━")
+            .filter(|cell| cell.symbol() == "─")
             .collect::<Vec<_>>();
 
         assert!(!rail.is_empty());
-        assert!(rail.iter().all(|cell| cell.fg == Color::Yellow));
+        assert!(rail.iter().all(|cell| cell.fg == Theme::default().border()));
     }
 
     #[test]
-    fn stops_use_the_filled_bar_color_only_when_covered() {
+    fn unselected_stops_remain_muted() {
         assert_eq!(
             rendered_stop_colors(&mut ModelSelector::new(Model::Luna)),
             [Color::DarkGray, Color::DarkGray]
         );
         assert_eq!(
             rendered_stop_colors(&mut ModelSelector::new(Model::Terra)),
-            [Color::Green, Color::DarkGray]
+            [Color::DarkGray, Color::DarkGray]
         );
         assert_eq!(
             rendered_stop_colors(&mut ModelSelector::new(Model::Sol)),
-            [Color::Yellow, Color::Yellow]
+            [Color::DarkGray, Color::DarkGray]
         );
     }
 
@@ -438,5 +492,54 @@ mod tests {
 
         assert_eq!(selector.displayed_position, 1.0);
         assert!(selector.animation_deadline().is_none());
+    }
+    #[test]
+    fn click_changes_pending_choice_and_motion_can_snap_without_a_deadline() {
+        let now = Instant::now();
+        let mut selector = ModelSelector::new(Model::Luna);
+        selector.set_motion_enabled(false);
+        let mut terminal = render(&mut selector);
+        let target = selector.targets[2];
+        let update = selector.update(ModelSelectorEvent::Terminal {
+            now,
+            event: Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: target.x,
+                row: target.y,
+                modifiers: KeyModifiers::NONE,
+            }),
+        });
+        assert!(update.effects.is_empty());
+        assert_eq!(selector.animation_deadline(), None);
+        assert_eq!(selector.displayed_position, 2.0);
+        terminal
+            .draw(|frame| selector.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("Selected: Sol"));
+        assert!(text.contains("Current: Luna"));
+        assert_eq!(
+            selector.update_key(key(KeyCode::Enter), now).effects,
+            [ModelSelectorEffect::Apply(Model::Sol)]
+        );
+    }
+
+    #[test]
+    fn tiny_rectangles_do_not_write_outside_the_selector() {
+        for width in 0..18 {
+            for height in 0..10 {
+                let mut selector = ModelSelector::new(Model::Terra);
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| selector.render(frame, frame.area(), &Theme::default()))
+                    .unwrap();
+            }
+        }
     }
 }
