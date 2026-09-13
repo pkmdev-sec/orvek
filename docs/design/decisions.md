@@ -1,11 +1,12 @@
 # Component design decisions
 
-Review one component at a time. Open its HTML proposal with macOS `open`, then wait for the user's
-explicit approval. Feedback revises that component only. An approval locks the named version and
-scope; changes to it need another review. Design approval does not authorize native implementation.
+The user approved the component designs below, then authorized completing the remaining design,
+implementing the full TUI refinement, pushing to main, and reinstalling Orvek on this system.
+The component-by-component approval gate has ended. Keep approved preview bytes as design references;
+record justified native adjustments and verification in the implementation plan.
 
-Components through notifications and review status are approved. The current review is
-**Recent prompt picker, proposal 1**.
+Current phase: native implementation and verification. Existing colors, clean layout, fast input,
+and the thinking wave after context remain requirements.
 
 Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
 colors. The HTML uses approximate samples; those values are not a proposed replacement palette.
@@ -28,12 +29,12 @@ welcome-logo colors stay fixed.
 | 12 | Child-agent view | Approved and locked | [Proposal 1](components/agents-v1.html) |
 | 13 | Review download dialog | Approved and locked | [Proposal 1](components/review-v1.html) |
 | 14 | Notifications and review status | Approved and locked | [Proposal 1](components/notifications-v1.html) |
-| 15 | Recent prompt picker | Awaiting approval | [Proposal 1](components/prompts-v1.html) |
-| 16 | Memory browser | Not started | Preserve existing data and actions. |
-| 17 | Context diagnostics | Not started | Preserve measured values and recovery details. |
-| 18 | Theme selector | Not started | Preserve theme roles and overrides. |
-| 19 | Keyboard help | Not started | Show the actual bindings. |
-| 20 | Welcome placement and final consistency | Not started | Check approved components together, including light and narrow layouts. |
+| 15 | Recent prompt picker | Approved and locked | [Proposal 1](components/prompts-v1.html) |
+| 16 | Memory browser | Implementation authorized | [Proposal 1](components/memory-v1.html) |
+| 17 | Context diagnostics | Implementation authorized | Preserve measured values and recovery details. |
+| 18 | Theme selector | Implementation authorized | Preserve theme roles and overrides. |
+| 19 | Keyboard help | Implementation authorized | Show the actual bindings. |
+| 20 | Welcome placement and final consistency | Implementation authorized | Check approved components together, including light and narrow layouts. |
 
 ## Chat bar, proposal 1
 
@@ -578,7 +579,7 @@ Its pending-review label is historical; this registry records approval.
 ## Recent prompt picker, proposal 1
 
 The [HTML](components/prompts-v1.html) keeps the 82 × 22 rounded picker, numbered list, search,
-scope switch, and scrollable preview. No approval recorded yet. Sources:
+scope switch, and scrollable preview. Approved by the user. Sources:
 `components/recent_prompt_picker.rs`; Root's `load_recent_prompts`, `recent_prompts_loaded`, and
 `update_recent_prompt_picker`; `Composer::replace_draft`; `RecentPrompt` and
 `load_recent_prompts_async` in `sessions/checkpoint.rs`; `SessionStorage::recent_prompts` in
@@ -649,3 +650,40 @@ views, preview scroll bounds, resize and mouse regions. Preserve the existing oc
 in-memory merge tests. Add cold-load cancellation and stale-result/pane-generation tests. Run the
 project checks only during later authorized implementation; browser fixture checks are not native
 rendering, async-loading, persistence, or performance proof. Memory browser is next after approval.
+
+
+Locked artifact: `prompts-v1.html` at `db87a30`, SHA-256
+`7271034ca49b29fea626b408cf329091bad3e4ee449e7a7c91ab8ff87a7bea65`.
+Its pending-review label is historical; the user approved this version.
+
+## Remaining components and delivery
+
+The user authorized completing these components without further review pauses.
+
+Memory browser keeps its 88 × 28 frame, two-row records, substring filter, four sort orders,
+local/remote ownership, full versioned keys, refresh and explicit deletion. Give filtering its own
+row, put full content before metadata in inspection, and show the complete namespace/ID/version
+when confirming deletion. Preserve repeat-key suppression, loading/error states, exact-key removal,
+conflict-triggered reload, and return-view selection/scroll. Do not turn browsing into agent memory
+use, add writes on inspection, or fall back from remote to local on an error. The HTML is a sample
+of this design, not proof of storage behavior. Display counts refer to the loaded inspection window,
+which can contain up to 512 records. Preserve all scan/use/probation fields and their meanings.
+
+Context diagnostics keeps its existing measured values and refresh action. Group related fields,
+wrap long explanations, keep unknown values explicit, and make all details scrollable at narrow
+sizes. Do not estimate provider accounting from the UI or add a second source of context state.
+
+Theme selection keeps Auto, Dark, and Light with the existing theme roles and overrides. Distinguish
+selected and current values, show a small native color sample, and preserve apply/cancel behavior.
+Keyboard help uses the real active bindings, readable wrapped descriptions, and bounded scrolling;
+update it for the new notification details and mouse interactions. Keep unrelated input routes.
+
+Welcome uses the approved 29 × 5 block-letter logo and purple/cyan colors. Center it in the empty
+transcript, use a brief entrance, stop once settled, and keep input immediately available. The
+persistent activity mark follows its approved shape/state contract and never competes with the
+composer's thinking wave. Use static reduced-motion and compact terminal fallbacks.
+
+Implement all previously recorded contracts, then run focused behavioral checks and the project
+commands. Review actual native frames, keep performance evidence local, push the verified main
+branch, install that revision, verify the installed binary, and remove task-owned build output.
+No paid model evaluations are needed for this TUI work.
