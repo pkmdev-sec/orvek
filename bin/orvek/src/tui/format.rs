@@ -122,7 +122,10 @@ pub(crate) fn wrap_display_lines(text: &str, width: usize) -> Vec<String> {
             }
             line.push_str(grapheme);
             used += cells;
-            if grapheme.chars().all(char::is_whitespace) && !line.trim().is_empty() {
+            if grapheme.chars().all(char::is_whitespace)
+                && !matches!(grapheme, "\u{a0}" | "\u{202f}")
+                && !line.trim().is_empty()
+            {
                 last_break = Some(line.len());
             }
         }
@@ -208,8 +211,8 @@ pub(crate) fn format_age(started_at_unix_ms: u64) -> String {
 mod tests {
     use super::{
         duration_display_tick, format_duration, format_turn_duration, normalize_line_endings,
-        sanitize_terminal_text, sanitize_terminal_text_inline, terminal_text_width, truncate_display,
-        wrap_display_lines,
+        sanitize_terminal_text, sanitize_terminal_text_inline, terminal_text_width,
+        truncate_display, wrap_display_lines,
     };
     use unicode_width::UnicodeWidthStr;
 
@@ -222,8 +225,15 @@ mod tests {
             assert_eq!(rows.concat(), text.replace('\n', ""));
             assert!(rows.iter().any(String::is_empty));
         }
-        assert_eq!(wrap_display_lines("one two three", 7), ["one ", "two ", "three"]);
+        assert_eq!(
+            wrap_display_lines("one two three", 7),
+            ["one ", "two ", "three"]
+        );
         assert_eq!(wrap_display_lines("", 7), [""]);
+        assert_eq!(
+            wrap_display_lines("X O\u{a0}reopen", 9),
+            ["X ", "O\u{a0}reopen"]
+        );
         assert!(wrap_display_lines("content", 0).is_empty());
     }
 

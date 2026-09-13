@@ -70,6 +70,15 @@ impl Submission {
         &self.text
     }
 
+    pub(crate) fn into_parts(self) -> (String, impl Iterator<Item = (Range<usize>, String)>) {
+        (
+            self.text,
+            self.images
+                .into_iter()
+                .map(|image| (image.range, image.data_url)),
+        )
+    }
+
     pub(crate) fn agent_prompt(&self) -> Prompt {
         let mut content = Vec::new();
         let mut cursor = 0;

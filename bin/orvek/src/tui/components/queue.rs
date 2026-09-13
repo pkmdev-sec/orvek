@@ -32,7 +32,7 @@ impl QueueId {
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum QueueEffect {
     Blur,
-    Edit { id: QueueId, text: String },
+    Edit { id: QueueId, prompt: Submission },
     Steer { id: QueueId, prompt: Submission },
 }
 
@@ -89,16 +89,16 @@ impl MessageQueue {
         self.selected = self.items.len() - 1;
     }
 
-    pub(super) fn finish_edit(&mut self, id: QueueId, text: String) -> bool {
+    pub(super) fn finish_edit(&mut self, id: QueueId, prompt: Submission) -> bool {
         let Some(index) = self.items.iter().position(|item| item.id == id) else {
             return false;
         };
-        if text.trim().is_empty() {
+        if prompt.display_text().trim().is_empty() {
             self.items.remove(index);
             self.repair_selection();
             return true;
         }
-        self.items[index].prompt = text.into();
+        self.items[index].prompt = prompt;
         self.items[index].state = QueueItemState::Queued;
         self.selected = index;
         true
@@ -366,7 +366,7 @@ impl MessageQueue {
                 return ComponentUpdate {
                     effects: vec![QueueEffect::Edit {
                         id: item.id,
-                        text: item.prompt.display_text().to_owned(),
+                        prompt: item.prompt.clone(),
                     }],
                     render: RenderRequest::Immediate,
                 };
@@ -750,7 +750,7 @@ mod tests {
             update.effects,
             [QueueEffect::Edit {
                 id: QueueId::new(0),
-                text: "edit me".to_owned(),
+                prompt: "edit me".to_owned().into(),
             }]
         );
     }
@@ -765,7 +765,7 @@ mod tests {
 
         queue.update(key(KeyCode::Char('e'), KeyModifiers::NONE));
         queue.cancel_steers();
-        assert!(queue.finish_edit(QueueId::new(1), "edited".to_owned()));
+        assert!(queue.finish_edit(QueueId::new(1), "edited".to_owned().into()));
 
         let prompts = queue
             .drain_ready()

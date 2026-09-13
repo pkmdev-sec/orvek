@@ -425,6 +425,11 @@ impl RootNode {
         root.memory_enabled = self.memory_enabled;
         root.theme_mode = self.theme_mode;
         root.context_diagnostics = self.context_diagnostics.clone();
+        root.composer
+            .component_mut()
+            .update(ComposerEvent::ContextLimit(
+                root.context_diagnostics.model_window_tokens,
+            ));
         root.interactive = false;
         root.composer
             .component_mut()
@@ -600,6 +605,11 @@ impl RootNode {
         projection.transcript.set_workspace(workspace);
         self.transcript = Node::new(projection.transcript);
         self.context_diagnostics = projection.context_diagnostics;
+        self.composer
+            .component_mut()
+            .update(ComposerEvent::ContextLimit(
+                self.context_diagnostics.model_window_tokens,
+            ));
         self.recent_prompts = projection.recent_prompts;
         if let Some(tokens) = projection.context_tokens {
             let _ = self
@@ -702,19 +712,7 @@ impl RootNode {
             ..area
         };
         self.transcript_area = transcript_area;
-        self.composer_content_area = if composer_area.width >= 2 && composer_area.height >= 3 {
-            Rect::new(
-                composer_area.x + 1,
-                composer_area.y + 1,
-                composer_area.width - 2,
-                composer_area.height - 2,
-            )
-        } else {
-            Rect {
-                height: composer_area.height.min(1),
-                ..composer_area
-            }
-        };
+        self.composer_content_area = self.composer.component_mut().editor_area(composer_area);
         self.transcript.render(frame, transcript_area, theme);
         self.queue.render(frame, queue_area, theme);
         let composer_selection = (self.selection.surface() == Some(Surface::Composer))
@@ -2093,8 +2091,8 @@ impl RootNode {
         for effect in update.effects {
             match effect {
                 QueueEffect::Blur => {}
-                QueueEffect::Edit { id, text } => {
-                    let edit = self.begin_queue_edit(id, text);
+                QueueEffect::Edit { id, prompt } => {
+                    let edit = self.begin_queue_edit(id, prompt);
                     effects.extend(edit.effects);
                     render = render.max(edit.render);
                 }
@@ -2106,14 +2104,14 @@ impl RootNode {
         ComponentUpdate { effects, render }
     }
 
-    fn begin_queue_edit(&mut self, id: QueueId, text: String) -> ComponentUpdate<RootEffect> {
+    fn begin_queue_edit(&mut self, id: QueueId, prompt: Submission) -> ComponentUpdate<RootEffect> {
         let original_input_mode = self
             .composer
             .component()
             .input_mode()
             .map(ToOwned::to_owned);
         let original_draft = self.composer.component_mut().take_draft();
-        self.composer.component_mut().replace_draft(text);
+        self.composer.component_mut().replace_submission(prompt);
         let _ = self
             .composer
             .component_mut()
@@ -2142,7 +2140,7 @@ impl RootNode {
         let Some(edit) = self.queue_edit.take() else {
             return ComponentUpdate::none();
         };
-        let text = save.then(|| self.composer.component().draft().to_owned());
+        let prompt = save.then(|| self.composer.component_mut().take_submission());
         self.composer.component_mut().replace_draft(String::new());
         if let Some(draft) = edit.original_draft {
             self.composer.component_mut().restore_draft(draft);
@@ -2152,8 +2150,11 @@ impl RootNode {
             .component_mut()
             .update(ComposerEvent::InputMode(edit.original_input_mode));
 
-        let restored = match text {
-            Some(text) => self.queue.component_mut().finish_edit(edit.id, text),
+        let restored = match prompt {
+            Some(prompt) => self
+                .queue
+                .component_mut()
+                .finish_edit(edit.id, prompt.unwrap_or_else(|| String::new().into())),
             None => self.queue.component_mut().cancel_edit(edit.id),
         };
         if !restored {
@@ -2593,7 +2594,15 @@ impl Component for RootNode {
                 let steer_applied = record.kind() == "run.steered";
                 let turn_finished = matches!(record.kind(), "run.completed" | "run.failed");
                 let turn_timer = turn_timer_event(&record);
+                let previous_limit = self.context_diagnostics.model_window_tokens;
                 let observation = self.context_diagnostics.observe(&record);
+                if previous_limit != self.context_diagnostics.model_window_tokens {
+                    self.composer
+                        .component_mut()
+                        .update(ComposerEvent::ContextLimit(
+                            self.context_diagnostics.model_window_tokens,
+                        ));
+                }
                 if let Some(Overlay::ContextDiagnostics(panel)) = &mut self.overlay {
                     panel
                         .component_mut()
@@ -3606,9 +3615,9 @@ mod tests {
             .unwrap();
 
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 7)].symbol(), "╭");
+        assert_eq!(buffer[(0, 6)].symbol(), "╭");
         assert_eq!(buffer[(0, 11)].symbol(), "╰");
-        assert_eq!(buffer[(0, 6)].symbol(), " ");
+        assert_eq!(buffer[(0, 5)].symbol(), " ");
     }
 
     #[test]
@@ -3938,8 +3947,8 @@ mod tests {
             .unwrap();
 
         let buffer = terminal.backend().buffer();
-        assert!((0..7).any(|y| buffer[(0, y)].symbol() == "┃"));
-        assert_eq!(buffer[(0, 7)].symbol(), "╭");
+        assert!((0..6).any(|y| buffer[(0, y)].symbol() == "┃"));
+        assert_eq!(buffer[(0, 6)].symbol(), "╭");
     }
 
     #[test]
@@ -4886,6 +4895,39 @@ mod tests {
     }
 
     #[test]
+    fn queue_edit_preserves_images_in_the_queue_and_original_draft() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.in_flight_turns = 1;
+        root.update(RootEvent::PasteImage(
+            "data:image/png;base64,draft".to_owned(),
+        ));
+        let queued = crate::tui::prompt::Submission::multimodal(
+            "check [Image #1]".to_owned(),
+            [(6..16, "data:image/png;base64,queued".to_owned())],
+        );
+        root.queue.component_mut().push(queued.clone());
+        root.queue.component_mut().set_focused(true);
+        root.update(key(KeyCode::Char('e'), KeyModifiers::NONE));
+        root.update(key(KeyCode::Char('!'), KeyModifiers::NONE));
+        root.update(key(KeyCode::Enter, KeyModifiers::NONE));
+        let edited = root.queue.component_mut().drain_ready();
+        assert_eq!(
+            edited,
+            [crate::tui::prompt::Submission::multimodal(
+                "check [Image #1]!".to_owned(),
+                [(6..16, "data:image/png;base64,queued".to_owned())],
+            )]
+        );
+        assert_eq!(
+            root.composer.component_mut().take_submission(),
+            Some(crate::tui::prompt::Submission::multimodal(
+                "[Image #1]".to_owned(),
+                [(0..10, "data:image/png;base64,draft".to_owned())],
+            ))
+        );
+    }
+
+    #[test]
     fn queue_edit_uses_the_composer_and_restores_its_draft_after_saving() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         root.in_flight_turns = 1;
@@ -5149,11 +5191,11 @@ mod tests {
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
 
-        root.update(mouse(MouseEventKind::Down(MouseButton::Left), 1, 8));
+        root.update(mouse(MouseEventKind::Down(MouseButton::Left), 2, 8));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        let update = root.update(mouse(MouseEventKind::Up(MouseButton::Left), 7, 8));
+        let update = root.update(mouse(MouseEventKind::Up(MouseButton::Left), 8, 8));
 
         assert_eq!(update.effects, [RootEffect::Copy("copy me".to_owned())]);
         assert_eq!(update.render, super::RenderRequest::Immediate);
@@ -5633,7 +5675,7 @@ mod tests {
 
     #[test]
     fn transcript_selection_survives_scrolling_beyond_the_viewport() {
-        let mut terminal = Terminal::new(TestBackend::new(32, 13)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(32, 15)).unwrap();
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         for sequence in 1..=10 {
             let record = TranscriptRecord::from_local(
@@ -5694,7 +5736,7 @@ mod tests {
 
     #[test]
     fn dragging_at_the_viewport_edge_keeps_extending_the_selection() {
-        let mut terminal = Terminal::new(TestBackend::new(32, 13)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(32, 15)).unwrap();
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         for sequence in 1..=12 {
             let record = TranscriptRecord::from_local(
