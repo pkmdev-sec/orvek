@@ -3019,6 +3019,7 @@ dependencies = [
  "miette",
  "minisign-verify",
  "nanocodex",
+ "orvek-harness",
  "orvek-memory",
  "orvek-subagents",
  "png",

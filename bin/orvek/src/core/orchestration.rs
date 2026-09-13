@@ -7,6 +7,7 @@ use nanocodex::{
         AgentEvent, AgentEventData, AgentEventKind, EventUsage, RunEvent, RunTerminal,
     },
 };
+use orvek_harness::Digest;
 use orvek_subagents::{
     AgentDescriptor, AgentId, AgentMessageUpdate, AgentStatus, AgentUpdate, ScopedAgentUpdate,
 };
@@ -115,6 +116,52 @@ enum SummaryRecord {
     },
 }
 
+/// A child status as it appears in the run's evidence record.
+///
+/// This mirrors `AgentStatus` in every state except `Completed`, which
+/// references the child's structured result by digest instead of embedding it.
+/// A schema-valid child result is not behavioral verification, so this record —
+/// which exists to document what a run established — must not carry a child's
+/// self-report in a position that reads as a proven outcome. The value itself
+/// stays available to the parent through `wait_agent`, where it is the child's
+/// work product rather than evidence.
+///
+/// This is deliberately a separate enum rather than a `serialize_with` on
+/// `AgentStatus`: the exhaustive match below fails to compile if a new status is
+/// added, which is the point. A new state cannot silently reach the record.
+#[derive(Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+enum SummaryAgentStatus {
+    Pending,
+    Running,
+    Completed { output_digest: Digest },
+    Interrupted,
+    Failed { error: String },
+    Closing,
+    Closed,
+}
+
+impl From<&AgentStatus> for SummaryAgentStatus {
+    fn from(status: &AgentStatus) -> Self {
+        match status {
+            AgentStatus::Pending => Self::Pending,
+            AgentStatus::Running => Self::Running,
+            // `Value::to_string` is infallible and byte-identical to the
+            // `serde_json::to_vec` that `Digest::of_value` performs, so this
+            // agrees with digests computed elsewhere without an unwrap.
+            AgentStatus::Completed { output } => Self::Completed {
+                output_digest: Digest::of(output.to_string().as_bytes()),
+            },
+            AgentStatus::Interrupted => Self::Interrupted,
+            AgentStatus::Failed { error } => Self::Failed {
+                error: error.clone(),
+            },
+            AgentStatus::Closing => Self::Closing,
+            AgentStatus::Closed => Self::Closed,
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct AgentSummary {
     id: AgentId,
@@ -122,9 +169,9 @@ struct AgentSummary {
     role: String,
     parent_id: Option<AgentId>,
     origin: AgentOrigin,
-    final_status: AgentStatus,
+    final_status: SummaryAgentStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
-    outcome: Option<AgentStatus>,
+    outcome: Option<SummaryAgentStatus>,
 }
 
 #[derive(Clone, Default, Serialize)]
@@ -290,8 +337,8 @@ impl Recorder {
                 role: agent.descriptor.role.clone(),
                 parent_id: agent.descriptor.parent,
                 origin: AgentOrigin::Spawn,
-                final_status: agent.final_status.clone(),
-                outcome: agent.outcome.clone(),
+                final_status: SummaryAgentStatus::from(&agent.final_status),
+                outcome: agent.outcome.as_ref().map(SummaryAgentStatus::from),
             })
             .collect::<Vec<_>>();
         self.write(
@@ -404,6 +451,7 @@ mod tests {
         Model,
         agent::events::{AgentEvent, AgentEventKind},
     };
+    use orvek_harness::Digest;
     use orvek_subagents::{AgentDescriptor, AgentId, AgentStatus, AgentUpdate, ScopedAgentUpdate};
     use serde_json::{Value, json, value::to_raw_value};
     use std::{fs, sync::Arc};
@@ -525,6 +573,15 @@ mod tests {
         assert_eq!(records[5]["failed_agent_ids"], serde_json::json!([]));
         assert_eq!(records[5]["agents"][0]["final_status"]["state"], "closed");
         assert_eq!(records[5]["agents"][0]["outcome"]["state"], "completed");
+        // The child's own result is referenced here, never embedded. This record
+        // documents what the run established, and a schema-valid child result is
+        // not behavioral verification, so the payload must not sit in a position
+        // that reads as a proven outcome.
+        assert!(records[5]["agents"][0]["outcome"]["output"].is_null());
+        assert_eq!(
+            records[5]["agents"][0]["outcome"]["output_digest"],
+            Digest::of(serde_json::json!("done").to_string().as_bytes()).to_string()
+        );
         assert_eq!(records[5]["child_metrics"]["turns"], 1);
         assert_eq!(records[5]["child_metrics"]["model_calls"], 2);
         assert_eq!(records[5]["child_metrics"]["cost_usd"], 0.25);
