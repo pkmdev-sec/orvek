@@ -31,6 +31,15 @@ pub(super) struct TreeLayout {
     parents: HashMap<AgentId, AgentId>,
     children: HashMap<AgentId, Vec<AgentId>>,
     roots: Vec<AgentId>,
+    order: Vec<(AgentId, usize)>,
+    bounds: Option<LayoutBounds>,
+}
+
+struct LayoutBounds {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
 }
 
 impl TreeLayout {
@@ -93,12 +102,69 @@ impl TreeLayout {
             left += width + HORIZONTAL_GAP;
         }
 
+        let bounds = positions
+            .values()
+            .fold(None::<LayoutBounds>, |bounds, position| {
+                let left = position.center_x - NODE_WIDTH / 2;
+                let right = left + NODE_WIDTH;
+                let bottom = position.top + NODE_HEIGHT;
+                Some(match bounds {
+                    None => LayoutBounds {
+                        left,
+                        top: position.top,
+                        right,
+                        bottom,
+                    },
+                    Some(bounds) => LayoutBounds {
+                        left: bounds.left.min(left),
+                        top: bounds.top.min(position.top),
+                        right: bounds.right.max(right),
+                        bottom: bounds.bottom.max(bottom),
+                    },
+                })
+            });
+        let mut order = Vec::with_capacity(positions.len());
+        let mut stack = roots.iter().rev().map(|id| (*id, 0)).collect::<Vec<_>>();
+        let mut visited = HashSet::new();
+        while let Some((id, depth)) = stack.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            order.push((id, depth));
+            stack.extend(
+                children
+                    .get(&id)
+                    .into_iter()
+                    .flatten()
+                    .rev()
+                    .map(|child| (*child, depth + 1)),
+            );
+        }
         Self {
             positions,
             parents,
             children,
             roots,
+            order,
+            bounds,
         }
+    }
+
+    pub(super) fn overview_center(&self, width: u16, height: u16) -> Option<WorldPoint> {
+        let bounds = self.bounds.as_ref()?;
+        let forest_width = bounds.right - bounds.left;
+        let forest_height = bounds.bottom - bounds.top;
+        if forest_width > i32::from(width) || forest_height > i32::from(height) {
+            return None;
+        }
+        Some(WorldPoint {
+            x: f64::from(bounds.left + forest_width / 2),
+            y: f64::from(bounds.top + forest_height / 2),
+        })
+    }
+
+    pub(super) fn ordered_nodes(&self) -> &[(AgentId, usize)] {
+        &self.order
     }
 
     pub(super) fn position(&self, id: AgentId) -> Option<NodePosition> {
@@ -325,5 +391,55 @@ mod tests {
         assert_eq!(layout.positioned_nodes().count(), 3);
         let root = layout.roots()[0];
         assert!(layout.parent(root).is_none());
+    }
+    #[test]
+    fn overview_uses_the_complete_forest_and_exact_terminal_cell_bounds() {
+        let layout = TreeLayout::new(&[
+            node(1, None),
+            node(2, Some(1)),
+            node(3, Some(1)),
+            node(4, Some(1)),
+        ]);
+        assert_eq!(
+            layout.overview_center(84, 13),
+            Some(super::WorldPoint { x: 0.0, y: 6.0 })
+        );
+        assert!(layout.overview_center(83, 13).is_none());
+        assert!(layout.overview_center(84, 12).is_none());
+        assert!(TreeLayout::new(&[]).overview_center(100, 100).is_none());
+    }
+
+    #[test]
+    fn compact_order_keeps_parents_before_children_after_cycle_and_orphan_repair() {
+        let layout = TreeLayout::new(&[
+            node(7, Some(99)),
+            node(3, Some(2)),
+            node(2, Some(1)),
+            node(1, Some(3)),
+            node(8, Some(7)),
+        ]);
+        let order = layout.ordered_nodes();
+        assert_eq!(order.len(), 5);
+        for (position, (id, depth)) in order.iter().enumerate() {
+            if let Some(parent) = layout.parent(*id) {
+                let (parent_position, (_, parent_depth)) = order
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (id, _))| *id == parent)
+                    .unwrap();
+                assert!(parent_position < position);
+                assert_eq!(*depth, parent_depth + 1);
+            } else {
+                assert_eq!(*depth, 0);
+            }
+        }
+        assert_eq!(
+            order
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            5
+        );
     }
 }

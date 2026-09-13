@@ -11,14 +11,17 @@ use super::{
 use crate::{
     app::config::DEFAULT_MAX_SUBAGENTS,
     sessions::record::TranscriptRecord,
-    tui::{format::sanitize_terminal_text_inline, theme::Theme},
+    tui::{
+        format::{sanitize_terminal_text_inline, truncate_display, wrap_display_lines},
+        theme::Theme,
+    },
 };
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use nanocodex::Model;
 use orvek_subagents::{AgentDescriptor, AgentId, AgentStatus, AgentUpdate, MessageSender};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph, Wrap},
@@ -138,6 +141,11 @@ pub(super) struct SubagentTree {
     workspace: std::path::PathBuf,
     motion_enabled: bool,
     ascii_art: bool,
+    cached_layout: Option<Arc<TreeLayout>>,
+    canvas: Rect,
+    compact: bool,
+    compact_offset: usize,
+    hit_targets: Vec<(Rect, AgentId)>,
 }
 
 impl SubagentTree {
@@ -153,6 +161,11 @@ impl SubagentTree {
             workspace: std::env::current_dir().unwrap_or_default(),
             motion_enabled: true,
             ascii_art: false,
+            cached_layout: None,
+            canvas: Rect::default(),
+            compact: false,
+            compact_offset: 0,
+            hit_targets: Vec::new(),
         }
     }
 
@@ -185,6 +198,9 @@ impl SubagentTree {
     pub(super) fn apply(&mut self, update: AgentUpdate) -> bool {
         match update {
             AgentUpdate::Added(descriptor) => {
+                let hierarchy_changed = self
+                    .node(descriptor.id)
+                    .is_none_or(|node| node.descriptor.parent != descriptor.parent);
                 if let Some(node) = self.node_mut(descriptor.id) {
                     node.descriptor = descriptor;
                 } else {
@@ -199,6 +215,10 @@ impl SubagentTree {
                     });
                     self.focused.get_or_insert(id);
                 }
+                if hierarchy_changed {
+                    self.cached_layout = None;
+                    self.hit_targets.clear();
+                }
                 true
             }
             AgentUpdate::Event { id, event } => {
@@ -211,13 +231,19 @@ impl SubagentTree {
                 true
             }
             AgentUpdate::Status { id, status } => {
+                let filter = self.filter;
                 let Some(node) = self.node_mut(id) else {
                     return false;
                 };
                 if node.status == status {
                     return false;
                 }
+                let membership_changed = filter.includes(&node.status) != filter.includes(&status);
                 node.status = status;
+                if membership_changed {
+                    self.cached_layout = None;
+                    self.hit_targets.clear();
+                }
                 true
             }
             AgentUpdate::Message(update) => {
@@ -315,7 +341,11 @@ impl SubagentTree {
     }
 
     pub(super) fn open_tree(&mut self) {
+        if self.filter != AgentFilter::Active {
+            self.cached_layout = None;
+        }
         self.filter = AgentFilter::Active;
+        self.hit_targets.clear();
         let layout = self.layout();
         self.focus_oldest(&layout);
     }
@@ -325,6 +355,23 @@ impl SubagentTree {
     }
 
     fn update_tree_at(&mut self, event: Event, now: Instant) -> Option<SubagentEffect> {
+        if let Event::Mouse(mouse) = &event {
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                && let Some((_, id)) = self
+                    .hit_targets
+                    .iter()
+                    .find(|(area, _)| area.contains(Position::new(mouse.column, mouse.row)))
+            {
+                let id = *id;
+                let layout = self.layout();
+                self.focused = Some(id);
+                if let Some(parent) = layout.parent(id) {
+                    self.remembered_children.insert(parent, id);
+                }
+                self.recenter_on_focus(&layout, now);
+            }
+            return None;
+        }
         let Event::Key(key) = event else {
             return None;
         };
@@ -356,6 +403,8 @@ impl SubagentTree {
             }
             KeyCode::Char('f') if key.modifiers.is_empty() => {
                 self.filter = self.filter.toggled();
+                self.cached_layout = None;
+                self.hit_targets.clear();
                 let layout = self.layout();
                 self.focus_oldest(&layout);
                 None
@@ -416,16 +465,44 @@ impl SubagentTree {
     }
 
     pub(super) fn render_tree(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+        self.hit_targets.clear();
+        self.canvas = Rect::default();
+        self.compact = area.width < 80;
+        if self.compact {
+            self.finish_camera_animation();
+        }
         let mut keys = TREE_KEYS;
         keys[5].1 = self.filter.helper();
         let layout = Floating::new("Sub-agent tree", area.width, area.height, &keys)
             .render(frame, area, theme);
         if layout.body.is_empty() {
+            self.finish_camera_animation();
             return;
         }
 
         let tree_layout = self.layout();
         self.ensure_focus(&tree_layout);
+        let summary = format!(
+            "Active: {}   Limit: {}   View: {} ({}/{})",
+            self.active_count(),
+            self.max_subagents,
+            self.filter.label(),
+            tree_layout.ordered_nodes().len(),
+            self.nodes.len()
+        );
+        frame.render_widget(
+            Paragraph::new(truncate_display(
+                &summary,
+                usize::from(layout.body.width.saturating_sub(2)),
+            ))
+            .style(Style::default().fg(theme.muted())),
+            Rect::new(
+                layout.body.x + 1.min(layout.body.width),
+                layout.body.y,
+                layout.body.width.saturating_sub(2),
+                1,
+            ),
+        );
         let Some(focused) = self.focused else {
             let message = if self.nodes.is_empty() {
                 format!(
@@ -449,36 +526,64 @@ impl SubagentTree {
             return;
         };
 
-        let (canvas, inspector) = split_inspector(layout.body);
+        let (canvas, inspector) = split_inspector(layout.body, self.compact);
+        let canvas = inset(
+            Rect::new(
+                canvas.x,
+                canvas.y + 2.min(canvas.height),
+                canvas.width,
+                canvas.height.saturating_sub(2),
+            ),
+            1,
+            0,
+        );
+        self.canvas = canvas;
         if canvas.is_empty() {
+            self.finish_camera_animation();
+            self.render_inspector(frame, inspector, theme, focused, &tree_layout);
             return;
         }
-        let focus_center = tree_layout
-            .center(focused)
-            .expect("focused agent should have a layout position");
-        self.sync_camera_target(focus_center, Instant::now());
-        if !self.motion_enabled {
-            self.finish_camera_animation();
-        }
-        let camera_center = self.camera.center.unwrap_or(focus_center);
-
-        render_edges(frame, canvas, theme, &tree_layout, camera_center);
-        for (id, position) in tree_layout.positioned_nodes() {
-            let Some(node) = self.node(id) else {
-                continue;
-            };
-            render_node(
-                frame,
-                canvas,
-                theme,
-                camera_center,
-                NodeRender {
-                    node,
-                    position,
-                    focused: id == focused,
-                    child_count: tree_layout.children(id).len(),
-                },
-            );
+        if self.compact {
+            self.render_compact(frame, canvas, theme, &tree_layout, focused);
+        } else {
+            let target = self
+                .camera_target(&tree_layout)
+                .expect("focused agent has a camera target");
+            if tree_layout
+                .overview_center(canvas.width, canvas.height)
+                .is_some()
+            {
+                self.camera.center = Some(target);
+                self.camera.animation = None;
+            } else {
+                self.sync_camera_target(target, Instant::now());
+                if !self.motion_enabled {
+                    self.finish_camera_animation();
+                }
+            }
+            let camera = self.camera.center.unwrap_or(target);
+            render_edges(frame, canvas, theme, &tree_layout, camera);
+            for (id, position) in tree_layout.positioned_nodes() {
+                let Some(node) = self.node(id) else {
+                    continue;
+                };
+                render_node(
+                    frame,
+                    canvas,
+                    theme,
+                    camera,
+                    NodeRender {
+                        node,
+                        position,
+                        focused: id == focused,
+                        child_count: tree_layout.children(id).len(),
+                    },
+                );
+                let target = node_hit_area(canvas, position, camera);
+                if !target.is_empty() {
+                    self.hit_targets.push((target, id));
+                }
+            }
         }
         self.render_inspector(frame, inspector, theme, focused, &tree_layout);
     }
@@ -510,20 +615,25 @@ impl SubagentTree {
         node.transcript.render(frame, layout.body, theme);
     }
 
-    fn layout(&self) -> TreeLayout {
-        let visible = self.visible_ids();
+    fn layout(&mut self) -> Arc<TreeLayout> {
+        if let Some(layout) = &self.cached_layout {
+            return Arc::clone(layout);
+        }
         let nodes = self
             .nodes
             .iter()
-            .filter(|node| visible.contains(&node.descriptor.id))
+            .filter(|node| self.filter.includes(&node.status))
             .map(|node| LayoutNode {
                 id: node.descriptor.id,
                 parent: node.descriptor.parent,
             })
             .collect::<Vec<_>>();
-        TreeLayout::new(&nodes)
+        let layout = Arc::new(TreeLayout::new(&nodes));
+        self.cached_layout = Some(Arc::clone(&layout));
+        layout
     }
 
+    #[cfg(test)]
     fn visible_ids(&self) -> Vec<AgentId> {
         self.nodes
             .iter()
@@ -602,12 +712,28 @@ impl SubagentTree {
         self.recenter_on_focus(&layout, now);
     }
 
+    fn camera_target(&self, layout: &TreeLayout) -> Option<WorldPoint> {
+        layout
+            .overview_center(self.canvas.width, self.canvas.height)
+            .or_else(|| self.focused.and_then(|id| layout.center(id)))
+    }
+
     fn recenter_on_focus(&mut self, layout: &TreeLayout, now: Instant) {
         self.advance_camera(now);
-        let Some(target) = self.focused.and_then(|id| layout.center(id)) else {
+        let Some(target) = self.camera_target(layout) else {
             return;
         };
-        self.start_camera_animation(target, now);
+        if self.compact
+            || !self.motion_enabled
+            || layout
+                .overview_center(self.canvas.width, self.canvas.height)
+                .is_some()
+        {
+            self.camera.center = Some(target);
+            self.camera.animation = None;
+        } else {
+            self.start_camera_animation(target, now);
+        }
     }
 
     fn sync_camera_target(&mut self, target: WorldPoint, now: Instant) {
@@ -676,6 +802,76 @@ impl SubagentTree {
         true
     }
 
+    fn render_compact(
+        &mut self,
+        frame: &mut Frame<'_>,
+        canvas: Rect,
+        theme: &Theme,
+        layout: &TreeLayout,
+        focused: AgentId,
+    ) {
+        let order = layout.ordered_nodes();
+        let capacity = usize::from(canvas.height / 2);
+        if capacity == 0 {
+            return;
+        }
+        let selected = order.iter().position(|(id, _)| *id == focused).unwrap_or(0);
+        self.compact_offset = self
+            .compact_offset
+            .min(order.len().saturating_sub(capacity))
+            .min(selected);
+        if selected >= self.compact_offset + capacity {
+            self.compact_offset = selected + 1 - capacity;
+        }
+        for (row, (id, depth)) in order
+            .iter()
+            .skip(self.compact_offset)
+            .take(capacity)
+            .enumerate()
+        {
+            let Some(node) = self.node(*id) else {
+                continue;
+            };
+            let indent = ((*depth * 2).min(6) as u16).min(canvas.width.saturating_sub(4));
+            let area = Rect::new(
+                canvas.x + indent,
+                canvas.y + row as u16 * 2,
+                canvas.width - indent,
+                2,
+            );
+            let style = if *id == focused {
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.text())
+            };
+            let (symbol, color, status) = state_style(&node.status);
+            let name = truncate_display(
+                &format!("#{} {}", id, node.descriptor.role),
+                usize::from(area.width.saturating_sub(2)),
+            );
+            let detail = truncate_display(
+                &format!(
+                    "{symbol} {status} · {} children",
+                    layout.children(*id).len()
+                ),
+                usize::from(area.width.saturating_sub(2)),
+            );
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(vec![
+                        Span::styled(if *id == focused { "› " } else { "  " }, style),
+                        Span::styled(name, style),
+                    ]),
+                    Line::styled(format!("  {detail}"), Style::default().fg(color)),
+                ]),
+                area,
+            );
+            self.hit_targets.push((area, *id));
+        }
+    }
+
     fn render_inspector(
         &self,
         frame: &mut Frame<'_>,
@@ -693,7 +889,8 @@ impl SubagentTree {
         let (symbol, color, status) = state_style(&node.status);
         let title = format!(
             " {symbol} #{} · {} · {status} ",
-            focused, node.descriptor.role
+            focused,
+            sanitize_terminal_text_inline(&node.descriptor.role)
         );
         let block = Block::new()
             .borders(Borders::ALL)
@@ -707,51 +904,81 @@ impl SubagentTree {
             return;
         }
 
-        let parent = layout
-            .parent(focused)
-            .map_or_else(|| "root".to_owned(), |id| format!("parent #{id}"));
-        let children = layout.children(focused).len();
-        let task = truncate_with_ellipsis(&node.descriptor.task, inner.width.saturating_sub(6));
-        let lines = vec![
-            Line::from(vec![
-                Span::styled("Task  ", Style::default().fg(theme.muted())),
-                Span::styled(task, Style::default().fg(theme.text())),
-            ]),
-            Line::from(vec![
-                Span::styled("Tree  ", Style::default().fg(theme.muted())),
-                Span::raw(format!("{parent} · {children} children")),
+        let parent = node.descriptor.parent.map_or_else(
+            || "root".to_owned(),
+            |id| {
+                format!(
+                    "#{id}{}",
+                    if layout.position(id).is_none() {
+                        " (hidden)"
+                    } else {
+                        ""
+                    }
+                )
+            },
+        );
+        let visible_children = layout.children(focused).len();
+        let total_children = self
+            .nodes
+            .iter()
+            .filter(|child| child.descriptor.parent == Some(focused))
+            .count();
+        let width = usize::from(inner.width);
+        let mut task = wrap_display_lines(&format!("Task: {}", node.descriptor.task), width);
+        if task.len() > 2 {
+            task[1] = truncate_display(&format!("{}…", task[1].trim_end()), width);
+        }
+        let mut lines = vec![
+            Line::styled(
+                task.first().cloned().unwrap_or_default(),
+                Style::default().fg(theme.text()),
+            ),
+            Line::styled(
+                task.get(1).cloned().unwrap_or_default(),
+                Style::default().fg(theme.text()),
+            ),
+        ];
+        if let AgentStatus::Failed { error } = &node.status {
+            lines[1] = Line::styled(
+                truncate_display(&format!("Error: {error}"), width),
+                Style::default().fg(Color::Red),
+            );
+        }
+        let model = model_name(node.descriptor.model);
+        let model_style = Style::default()
+            .fg(theme.model(node.descriptor.model))
+            .add_modifier(Modifier::BOLD);
+        if self.compact {
+            lines.push(Line::styled(
+                truncate_display(&format!("Parent: {parent}"), width),
+                Style::default().fg(theme.muted()),
+            ));
+            lines.push(Line::from(vec![
+                Span::styled(model, model_style),
                 Span::styled(
-                    format!(
-                        "    Concurrency  {} / {} active",
-                        self.active_count(),
-                        self.max_subagents
+                    truncate_display(
+                        &format!(" · {visible_children}/{total_children} children shown"),
+                        width.saturating_sub(model.width()),
                     ),
                     Style::default().fg(theme.muted()),
                 ),
-            ]),
-            Line::from(vec![
-                Span::styled("View  ", Style::default().fg(theme.muted())),
-                Span::raw(format!(
-                    "{} agents · {} filter",
-                    self.nodes.len(),
-                    self.filter.label()
-                )),
-                Span::styled("    Model  ", Style::default().fg(theme.muted())),
-                Span::styled(
-                    model_name(node.descriptor.model),
-                    Style::default()
-                        .fg(theme.model(node.descriptor.model))
-                        .add_modifier(Modifier::BOLD),
+            ]));
+        } else {
+            let prefix = truncate_display(
+                &format!(
+                    "Parent: {parent} · {visible_children}/{total_children} children shown · Model: "
                 ),
-            ]),
-            Line::from(vec![
-                Span::styled("Session  ", Style::default().fg(theme.muted())),
-                Span::raw(truncate_with_ellipsis(
-                    &node.descriptor.session_id,
-                    inner.width.saturating_sub(9),
-                )),
-            ]),
-        ];
+                width.saturating_sub(model.width()),
+            );
+            lines.push(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(theme.muted())),
+                Span::styled(model, model_style),
+            ]));
+        }
+        lines.push(Line::styled(
+            truncate_display(&format!("Session: {}", node.descriptor.session_id), width),
+            Style::default().fg(theme.muted()),
+        ));
         frame.render_widget(Paragraph::new(lines), inner);
     }
 
@@ -797,11 +1024,12 @@ fn previous_or_next_on_level(
     }
 }
 
-fn split_inspector(area: Rect) -> (Rect, Rect) {
+fn split_inspector(area: Rect, compact: bool) -> (Rect, Rect) {
     if area.height <= 4 {
         return (area, Rect::default());
     }
-    let inspector_height = INSPECTOR_HEIGHT.min(area.height.saturating_sub(3));
+    let inspector_height =
+        (INSPECTOR_HEIGHT + u16::from(compact)).min(area.height.saturating_sub(3));
     let canvas = Rect {
         height: area.height - inspector_height,
         ..area
@@ -1011,6 +1239,35 @@ const fn edge_symbol(connections: u8) -> &'static str {
     }
 }
 
+fn world_to_screen(canvas: Rect, world_x: i32, world_y: i32, camera: WorldPoint) -> (i32, i32) {
+    (
+        i32::from(canvas.x) + i32::from(canvas.width) / 2 + world_x - camera.x.round() as i32,
+        i32::from(canvas.y) + i32::from(canvas.height) / 2 + world_y - camera.y.round() as i32,
+    )
+}
+
+fn node_hit_area(canvas: Rect, position: NodePosition, camera: WorldPoint) -> Rect {
+    let (x, y) = world_to_screen(
+        canvas,
+        position.center_x - NODE_WIDTH / 2,
+        position.top,
+        camera,
+    );
+    let left = x.max(i32::from(canvas.x));
+    let top = y.max(i32::from(canvas.y));
+    let right = (x + NODE_WIDTH).min(i32::from(canvas.right()));
+    let bottom = (y + NODE_HEIGHT).min(i32::from(canvas.bottom()));
+    if left >= right || top >= bottom {
+        return Rect::default();
+    }
+    Rect::new(
+        left as u16,
+        top as u16,
+        (right - left) as u16,
+        (bottom - top) as u16,
+    )
+}
+
 fn draw_world_string(
     frame: &mut Frame<'_>,
     canvas: Rect,
@@ -1020,12 +1277,7 @@ fn draw_world_string(
     text: &str,
     style: Style,
 ) {
-    let screen_x = i32::from(canvas.x)
-        + i32::from(canvas.width) / 2
-        + (f64::from(world_x) - camera.x).round() as i32;
-    let screen_y = i32::from(canvas.y)
-        + i32::from(canvas.height) / 2
-        + (f64::from(world_y) - camera.y).round() as i32;
+    let (screen_x, screen_y) = world_to_screen(canvas, world_x, world_y, camera);
     if screen_y < i32::from(canvas.y) || screen_y >= i32::from(canvas.bottom()) {
         return;
     }
@@ -1543,7 +1795,7 @@ mod tests {
         tree.open_tree();
         assert_eq!(tree.filter, AgentFilter::Active);
         assert_eq!(tree.focused, Some(AgentId::new(2)));
-        assert_eq!(tree.camera.center, tree.layout().center(AgentId::new(2)));
+        assert_eq!(tree.layout().center(AgentId::new(2)), tree.camera.center);
         assert!(tree.camera.animation.is_none());
 
         tree.update_tree(Event::Key(KeyEvent::new(
@@ -1552,7 +1804,7 @@ mod tests {
         )));
         assert_eq!(tree.filter, AgentFilter::All);
         assert_eq!(tree.focused, Some(AgentId::new(1)));
-        assert_eq!(tree.camera.center, tree.layout().center(AgentId::new(1)));
+        assert_eq!(tree.layout().center(AgentId::new(1)), tree.camera.center);
 
         tree.update_tree(Event::Key(KeyEvent::new(
             KeyCode::Right,
@@ -1570,7 +1822,7 @@ mod tests {
         )));
         assert_eq!(tree.filter, AgentFilter::Active);
         assert_eq!(tree.focused, Some(AgentId::new(2)));
-        assert_eq!(tree.camera.center, tree.layout().center(AgentId::new(2)));
+        assert_eq!(tree.layout().center(AgentId::new(2)), tree.camera.center);
         assert!(tree.camera.animation.is_none());
     }
 
@@ -1596,7 +1848,7 @@ mod tests {
         assert!(rendered.contains("researcher"));
         assert!(rendered.contains("running · 0 children"));
         assert!(rendered.contains("Trace the event lifecycle"));
-        assert!(rendered.contains("Model  Luna"));
+        assert!(rendered.contains("Model: Luna"));
         let buffer = terminal.backend().buffer();
         let luna = buffer
             .content
@@ -1773,6 +2025,9 @@ mod tests {
         tree.apply(AgentUpdate::Added(tree_descriptor(1, None, "root")));
         tree.apply(AgentUpdate::Added(tree_descriptor(2, Some(1), "left")));
         tree.apply(AgentUpdate::Added(tree_descriptor(3, Some(1), "right")));
+        tree.apply(AgentUpdate::Added(tree_descriptor(4, Some(2), "deep")));
+        tree.apply(AgentUpdate::Added(tree_descriptor(5, Some(4), "deeper")));
+        tree.apply(AgentUpdate::Added(tree_descriptor(6, Some(5), "deepest")));
         render_tree(&mut tree);
         let start = Instant::now();
 
@@ -1805,7 +2060,7 @@ mod tests {
             interruption + Duration::from_secs(1),
             super::SubagentOverlay::Tree
         ));
-        assert_eq!(tree.camera.center, tree.layout().center(AgentId::new(3)));
+        assert_eq!(tree.layout().center(AgentId::new(3)), tree.camera.center);
         assert!(tree.camera.animation.is_none());
     }
 
@@ -1893,6 +2148,9 @@ mod tests {
         let mut tree = SubagentTree::new(ReasoningEffort::Medium);
         tree.apply(AgentUpdate::Added(tree_descriptor(1, None, "root")));
         tree.apply(AgentUpdate::Added(tree_descriptor(2, Some(1), "child")));
+        tree.apply(AgentUpdate::Added(tree_descriptor(4, Some(2), "deep")));
+        tree.apply(AgentUpdate::Added(tree_descriptor(5, Some(4), "deeper")));
+        tree.apply(AgentUpdate::Added(tree_descriptor(6, Some(5), "deepest")));
         render_tree(&mut tree);
         tree.update_tree_at(
             Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
@@ -1903,7 +2161,7 @@ mod tests {
         tree.finish_camera_animation();
 
         assert!(tree.camera.animation.is_none());
-        assert_eq!(tree.camera.center, tree.layout().center(AgentId::new(2)));
+        assert_eq!(tree.layout().center(AgentId::new(2)), tree.camera.center);
     }
 
     #[test]
@@ -1959,5 +2217,307 @@ mod tests {
             tree.update_transcript(AgentId::new(1), escape()),
             Some(SubagentEffect::Back)
         ));
+    }
+    #[test]
+    fn regression_filtered_parent_identity_is_not_relabelled_as_root() {
+        let mut tree = SubagentTree::new(ReasoningEffort::Medium);
+        tree.apply(AgentUpdate::Added(tree_descriptor(1, None, "parent")));
+        tree.apply(AgentUpdate::Added(tree_descriptor(2, Some(1), "child")));
+        tree.apply(AgentUpdate::Status {
+            id: AgentId::new(1),
+            status: AgentStatus::Completed { output: json!({}) },
+        });
+        tree.open_tree();
+        assert!(rendered_text(&render_tree(&mut tree)).contains("#1 (hidden)"));
+    }
+    #[test]
+    fn regression_fractional_camera_keeps_nodes_exactly_four_rows_high() {
+        let mut tree = SubagentTree::new(ReasoningEffort::Medium);
+        tree.apply(AgentUpdate::Added(descriptor()));
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        terminal
+            .draw(|frame| {
+                super::render_node(
+                    frame,
+                    frame.area(),
+                    &Theme::default(),
+                    super::WorldPoint { x: 0.5, y: 1.5 },
+                    super::NodeRender {
+                        node: &tree.nodes[0],
+                        position: super::NodePosition {
+                            center_x: 0,
+                            top: 0,
+                        },
+                        focused: true,
+                        child_count: 0,
+                    },
+                )
+            })
+            .unwrap();
+        let positions = (0..12)
+            .flat_map(|y| (0..40).map(move |x| (x, y)))
+            .filter(|position| terminal.backend().buffer()[*position].fg == Color::Green)
+            .collect::<Vec<_>>();
+        let first = positions.iter().map(|(_, y)| *y).min().unwrap();
+        let last = positions.iter().map(|(_, y)| *y).max().unwrap();
+        assert_eq!(last - first + 1, 4);
+    }
+    fn render_tree_size(tree: &mut SubagentTree, width: u16, height: u16) -> TestBackend {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| tree.render_tree(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        terminal.backend().clone()
+    }
+
+    #[test]
+    fn layout_cache_survives_metadata_streaming_and_rebuilds_for_hierarchy_or_filter() {
+        let mut tree = SubagentTree::new(ReasoningEffort::Medium);
+        tree.apply(AgentUpdate::Added(descriptor()));
+        tree.apply(AgentUpdate::Added(tree_descriptor(2, None, "second")));
+        let initial = tree.layout();
+        let mut changed = descriptor();
+        changed.role = "renamed".into();
+        changed.task = "Updated task".into();
+        changed.session_id = "updated-session".into();
+        tree.apply(AgentUpdate::Added(changed.clone()));
+        assert!(std::sync::Arc::ptr_eq(&initial, &tree.layout()));
+        tree.apply(event(AgentEventKind::RunStarted, json!({})));
+        tree.apply(AgentUpdate::Status {
+            id: AgentId::new(1),
+            status: AgentStatus::Closing,
+        });
+        assert!(std::sync::Arc::ptr_eq(&initial, &tree.layout()));
+        assert!(rendered_text(&render_tree(&mut tree)).contains("Updated task"));
+        assert!(std::sync::Arc::ptr_eq(&initial, &tree.layout()));
+        tree.apply(AgentUpdate::Status {
+            id: AgentId::new(1),
+            status: AgentStatus::Completed { output: json!({}) },
+        });
+        let filtered = tree.layout();
+        assert!(!std::sync::Arc::ptr_eq(&initial, &filtered));
+        assert!(filtered.position(AgentId::new(1)).is_none());
+        tree.update_tree(Event::Key(KeyEvent::new(
+            KeyCode::Char('f'),
+            KeyModifiers::NONE,
+        )));
+        let all = tree.layout();
+        tree.apply(AgentUpdate::Status {
+            id: AgentId::new(1),
+            status: AgentStatus::Failed {
+                error: "sample failure".into(),
+            },
+        });
+        assert!(std::sync::Arc::ptr_eq(&all, &tree.layout()));
+        changed.parent = Some(AgentId::new(2));
+        tree.apply(AgentUpdate::Added(changed));
+        let reparented = tree.layout();
+        assert!(!std::sync::Arc::ptr_eq(&all, &reparented));
+        assert_eq!(reparented.parent(AgentId::new(1)), Some(AgentId::new(2)));
+    }
+
+    #[test]
+    fn a_fitting_forest_has_no_camera_motion_and_mouse_only_changes_focus() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mut tree = SubagentTree::new(ReasoningEffort::Medium);
+        for (id, parent) in [(1, None), (2, Some(1)), (3, Some(1))] {
+            tree.apply(AgentUpdate::Added(tree_descriptor(id, parent, "sample")));
+        }
+        render_tree(&mut tree);
+        let camera = tree.camera.center;
+        assert_eq!(tree.hit_targets.len(), 3);
+        assert!(
+            tree.hit_targets
+                .iter()
+                .all(|(area, _)| area.width == 24 && area.height == 4)
+        );
+        let target = tree
+            .hit_targets
+            .iter()
+            .find(|(_, id)| *id == AgentId::new(3))
+            .unwrap()
+            .0;
+        let click = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: target.x,
+            row: target.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(tree.update_tree(click), None);
+        assert_eq!(tree.focused, Some(AgentId::new(3)));
+        assert_eq!(tree.camera.center, camera);
+        assert_eq!(tree.animation_deadline(super::SubagentOverlay::Tree), None);
+        assert_eq!(
+            tree.update_tree(Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE
+            ))),
+            Some(SubagentEffect::Inspect(AgentId::new(3)))
+        );
+        tree.update_tree(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)));
+        tree.update_tree(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+        assert_eq!(tree.focused, Some(AgentId::new(3)));
+        assert_eq!(tree.camera.center, camera);
+    }
+
+    #[test]
+    fn exact_fit_forest_and_compact_hierarchy_keep_all_node_hits_in_bounds() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mut tree = SubagentTree::new(ReasoningEffort::Medium);
+        for (id, parent) in [(1, None), (2, Some(1)), (3, Some(1)), (4, Some(1))] {
+            tree.apply(AgentUpdate::Added(tree_descriptor(id, parent, "sample")));
+        }
+        render_tree_size(&mut tree, 88, 25);
+        assert_eq!(tree.hit_targets.len(), 4);
+        assert!(
+            tree.hit_targets
+                .iter()
+                .all(|(area, _)| area.width == 24 && area.height == 4)
+        );
+        render_tree_size(&mut tree, 32, 26);
+        assert!(tree.compact);
+        let root = tree
+            .hit_targets
+            .iter()
+            .find(|(_, id)| *id == AgentId::new(1))
+            .unwrap()
+            .0;
+        let child = tree
+            .hit_targets
+            .iter()
+            .find(|(_, id)| *id == AgentId::new(2))
+            .unwrap()
+            .0;
+        assert_eq!(child.x - root.x, 2);
+        assert_eq!(
+            tree.update_tree(Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: child.x,
+                row: child.y,
+                modifiers: KeyModifiers::NONE
+            })),
+            None
+        );
+        assert_eq!(tree.focused, Some(AgentId::new(2)));
+        assert_eq!(tree.animation_deadline(super::SubagentOverlay::Tree), None);
+        for width in 0..84 {
+            for height in 0..20 {
+                render_tree_size(&mut tree, width, height);
+                assert!(
+                    tree.hit_targets
+                        .iter()
+                        .all(|(area, _)| area.intersection(tree.canvas) == *area)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn inspector_uses_two_task_rows_and_replaces_only_the_second_with_failure() {
+        let mut tree = SubagentTree::new(ReasoningEffort::Medium);
+        let mut parent = tree_descriptor(1, None, "parent");
+        parent.task = "First part\nSecond part\nThird part".into();
+        tree.apply(AgentUpdate::Added(parent));
+        tree.apply(AgentUpdate::Added(tree_descriptor(
+            2,
+            Some(1),
+            "active child",
+        )));
+        tree.apply(AgentUpdate::Added(tree_descriptor(
+            3,
+            Some(1),
+            "finished child",
+        )));
+        tree.apply(AgentUpdate::Status {
+            id: AgentId::new(3),
+            status: AgentStatus::Closed,
+        });
+        let normal = rendered_text(&render_tree(&mut tree));
+        assert!(normal.contains("Task: First part"));
+        assert!(normal.contains("Second part…"));
+        assert!(normal.contains("1/2 children shown"));
+        let compact = render_tree_size(&mut tree, 32, 22)
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(compact.contains("1/2 children shown"));
+        assert!(compact.contains("Session: agent-1"));
+        tree.apply(AgentUpdate::Status {
+            id: AgentId::new(1),
+            status: AgentStatus::Failed {
+                error: "Missing sample fixture".into(),
+            },
+        });
+        tree.update_tree(Event::Key(KeyEvent::new(
+            KeyCode::Char('f'),
+            KeyModifiers::NONE,
+        )));
+        let failed = rendered_text(&render_tree(&mut tree));
+        assert!(failed.contains("Task: First part"));
+        assert!(failed.contains("Error: Missing sample fixture"));
+        assert!(!failed.contains("Second part"));
+        assert!(failed.contains("2/2 children shown"));
+    }
+
+    #[test]
+    fn lowering_the_limit_keeps_pending_running_and_closing_agents_active() {
+        let mut tree = SubagentTree::new(ReasoningEffort::Medium);
+        for id in 1..=3 {
+            tree.apply(AgentUpdate::Added(tree_descriptor(id, None, "active")));
+        }
+        tree.apply(AgentUpdate::Status {
+            id: AgentId::new(1),
+            status: AgentStatus::Pending,
+        });
+        tree.apply(AgentUpdate::Status {
+            id: AgentId::new(3),
+            status: AgentStatus::Closing,
+        });
+        tree.set_max_subagents(0);
+        assert_eq!(tree.active_count(), 3);
+        assert_eq!(tree.visible_ids().len(), 3);
+        let text = rendered_text(&render_tree(&mut tree));
+        assert!(text.contains("Active: 3   Limit: 0"));
+        assert_eq!(
+            tree.update_tree(Event::Key(KeyEvent::new(
+                KeyCode::Char('-'),
+                KeyModifiers::NONE
+            ))),
+            Some(SubagentEffect::SetMaxSubagents(0))
+        );
+        assert_eq!(tree.active_count(), 3);
+    }
+    #[test]
+    fn compact_and_empty_tree_areas_stop_camera_deadlines() {
+        let mut tree = SubagentTree::new(ReasoningEffort::Medium);
+        for id in 1..=6 {
+            tree.apply(AgentUpdate::Added(tree_descriptor(
+                id,
+                (id > 1).then_some(id - 1),
+                "deep",
+            )));
+        }
+        render_tree(&mut tree);
+        tree.update_tree(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+        assert!(
+            tree.animation_deadline(super::SubagentOverlay::Tree)
+                .is_some()
+        );
+        render_tree_size(&mut tree, 100, 0);
+        assert_eq!(tree.animation_deadline(super::SubagentOverlay::Tree), None);
+        render_tree(&mut tree);
+        tree.update_tree(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+        assert!(
+            tree.animation_deadline(super::SubagentOverlay::Tree)
+                .is_some()
+        );
+        render_tree_size(&mut tree, 32, 22);
+        assert_eq!(tree.animation_deadline(super::SubagentOverlay::Tree), None);
+        tree.set_render_preferences(false, false);
+        render_tree(&mut tree);
+        tree.update_tree(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+        assert_eq!(tree.animation_deadline(super::SubagentOverlay::Tree), None);
     }
 }
