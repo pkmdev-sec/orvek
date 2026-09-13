@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Conversation and execution · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:740px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.toggle{display:flex;gap:8px;align-items:center;min-height:36px}.toggle input{accent-color:#aebfcb}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--rail:#58636b;--accent:#76a9df;--user:#8ad0c5;--success:#89c789;--error:#e99292;--command:#e6ba74;--code:#262626;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 22px 22px;overflow:auto}.canvas.light{--base:#f7f8f9;--text:#283441;--muted:#627180;--rail:#909a9f;--accent:#265f99;--user:#007878;--success:#30763c;--error:#ac3c3c;--command:#9a6700;--code:#eee}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:25px;gap:12px}.viewport{max-height:540px;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--rail) transparent;outline:none}.transcript{font:15px/23px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:auto}.line{white-space:pre;min-height:23px;line-height:23px}.row-button{display:block;color:var(--text);background:transparent;border:0;border-radius:0;padding:0;margin:0;min-height:23px;text-align:left;font:inherit;width:100%;white-space:pre;line-height:23px}.row-button:focus-visible{outline:none}.row-button:focus-visible .disclosure{color:var(--accent);font-weight:bold}.row-button:hover .title{text-decoration:underline;text-decoration-color:var(--rail);text-underline-offset:3px}.title{font-weight:600}.muted{color:var(--muted)}.rail,.disclosure{color:var(--rail);user-select:none}.user{color:var(--user)}.success{color:var(--success)}.error{color:var(--error)}.accent{color:var(--accent)}.command{color:var(--command)}.code{background:var(--code)}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}.note{font-size:11px;color:var(--muted);margin:24px 0 0}.sr-only{position:absolute;width:1px;height:1px;clip-path:inset(50%);overflow:hidden}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:16px 8px}.explanation{grid-template-columns:1fr;gap:16px}.transcript{font-size:13px}h1{font-size:27px}}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>Conversation and execution</h1>
+<p class="intro">One proposal: keep the current compact conversation, with clear outcomes and full details available on expansion.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Task state<select id="state"><option value="running">Running</option><option value="completed" selected>Completed</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option></select></label>
+<label>Terminal width<select id="width"><option value="110">Wide · 110 columns</option><option value="80" selected>Normal · 80 columns</option><option value="60">Compact · 60 columns</option><option value="40">Narrow · 40 columns</option><option value="32">Small · 32 columns</option></select></label>
+<button id="expand" type="button">Expand all tools</button>
+<button id="replay" type="button">Replay sample task</button>
+<label class="toggle"><input id="light" type="checkbox">Light</label>
+<label class="toggle"><input id="reduce" type="checkbox">Reduce motion</label>
+</div>
+<section class="canvas" id="canvas" aria-label="Conversation preview">
+<div class="caption"><span>CONVERSATION / INTERACTIVE PREVIEW</span><span id="dimensions"></span></div>
+<div class="viewport" id="viewport" tabindex="0" aria-label="Sample conversation"><div class="transcript" id="transcript"></div></div>
+<div id="announcement" class="sr-only" role="status"></div>
+<p class="note">Click a tool row to expand it. With a row focused: ↑/↓ move, Enter toggles, Ctrl+O toggles all, Esc clears focus. Commands and results are fictional samples. Native theme colors will be preserved.</p>
+</section>
+<div class="explanation">
+<div><h2>Keep the clean flow</h2><p>User messages retain the colored rail. Replies remain plain text. Tool summaries stay compact, without cards or extra role headings.</p></div>
+<div><h2>Details stay attached</h2><p>Expansion reveals the full command and selectable output below the same row. The tool stays identifiable as its state changes.</p></div>
+<div><h2>Failures stay understandable</h2><p>Outcome and duration stay visible. If a useful error excerpt cannot fit on the summary, one short line appears below it.</p></div>
+</div>
+<div class="foot"><span>Review this section only. The approved chat bar is unchanged.</span><span><a href="composer-v1.html">Approved chat bar</a> · <a href="../decisions.md">Review order</a></span></div>
+</main>
+<script>
+const transcriptStudy=(()=>{
+ const s=(text,role='text')=>({text,role});
+ const text=spans=>spans.map(span=>span.text).join('');
+ function wrap(value,width){const lines=[];for(const paragraph of value.split('\n')){let rest=paragraph;while(rest.length>width){let end=rest.lastIndexOf(' ',width);if(end<1)end=width;lines.push(rest.slice(0,end));rest=rest.slice(end).replace(/^ /,'');}lines.push(rest);}return lines;}
+ function cut(value,width){return value.length<=width?value:value.slice(0,Math.max(0,width-1))+'…';}
+ function tool(id,state,seconds){
+  if(id==='search')return {id,title:'Shell',command:"rg -n 'restore' bin/orvek/src/tui/session.rs",state:'completed',outcome:'exit 0',duration:'0.2s',output:['42: fn restore_session(...)','87: fn restore_working_directory(...)'],error:''};
+  return {id,title:'Shell',command:'cargo test -p orvek session -- --nocapture',state,outcome:state==='completed'?'exit 0':state==='failed'?'exit 1':state==='cancelled'?'cancelled':'running',duration:state==='running'?`${seconds.toFixed(1)}s`:'1.8s',output:state==='failed'?['Running session checks','error: saved working directory is missing','Session check failed.']:state==='cancelled'?['Running session checks','Interrupted by user.']:state==='running'?['Running session checks','Checking saved working directory...']:['Running session checks','Saved working directory: present','Conversation history: restored','Session checks completed.'],error:state==='failed'?'saved working directory is missing':''};
+ }
+ function summary(item,columns,expanded){
+  const symbol=item.state==='completed'?'✓':item.state==='running'?'◌':'×';
+  const role=item.state==='completed'?'success':item.state==='running'?'accent':item.state==='cancelled'?'muted':'error';
+  const prefix=[s('  '),s(expanded?'▼ ':'▶ ','disclosure'),s(symbol+' ',role),s(item.title+'  ','title')];
+  const subject='$ '+item.command,error=item.error?' · '+item.error:'';
+  let suffix=` · ${item.outcome} · ${item.duration}`;
+  if(columns-text(prefix).length-suffix.length<4)suffix=` · ${item.outcome}`;
+  const available=columns-text(prefix).length-suffix.length;
+  const fullFits=subject.length+error.length<=available;
+  const content=fullFits?subject+error:cut(subject,Math.max(1,available));
+  const spans=[...prefix,s(content,'command'),s(suffix,'muted')];
+  if(item.error&&fullFits){spans.splice(prefix.length,1,s(subject,'command'),s(error,'error'));}
+  const result=[{kind:'summary',toolId:item.id,spans,state:item.state,expanded}];
+  if(item.error&&!fullFits)result.push({kind:'error',spans:[s('    · ','rail'),s(cut(item.error,columns-6),'error')]});
+  return result;
+ }
+ function scene({columns=80,state='completed',expanded=[],seconds=1.2}={}){
+  if(columns<32)throw new Error('This study supports at least 32 columns.');
+  const rows=[];
+  const paragraph=(value,role='text',prefix='')=>wrap(value,columns-prefix.length).forEach(line=>rows.push({kind:'message',spans:[s(prefix,role==='user'?'user':'rail'),s(line,role)]}));
+  const blank=()=>rows.push({kind:'space',spans:[]});
+  paragraph('Check how sessions restore their state.','user','┃ ');blank();
+  paragraph('I’ll inspect the restore path and check that the saved working directory is kept.');blank();
+  for(const id of ['search','check']){
+   const item=tool(id,state,seconds),open=expanded.includes(id);rows.push(...summary(item,columns,open));
+   if(open){
+    const detail=(value,role='text')=>wrap(value,columns-6).forEach(line=>rows.push({kind:'detail',toolId:id,spans:[s('    │ ','rail'),s(line,role)]}));
+    detail('cwd ~/orvek','muted');detail('$ '+item.command,'command');
+    item.output.forEach(line=>detail(line,line.startsWith('error:')?'error':'text'));
+    const bytes=new TextEncoder().encode(item.output.join('\n')).length;
+    rows.push({kind:'footer',spans:[s('    └ ','rail'),s(`${item.output.length} lines · ${bytes} B`,'muted')]});
+   }
+  }
+  blank();
+  if(state==='completed'){paragraph('The saved working directory is restored before the conversation resumes. The session checks completed.');blank();paragraph('◇ Turn completed · 2.0s','muted');}
+  if(state==='failed')paragraph('The check failed because the saved working directory is missing. The error is shown with its command above.');
+  if(state==='cancelled')paragraph('Cancelled. The completed inspection remains in the conversation.','muted');
+  return {rows,columns,active:state==='running'};
+ }
+ return {scene,tool,summary,text};
+})();
+if(typeof document!=='undefined'){
+ const id=x=>document.getElementById(x),transcript=id('transcript'),viewport=id('viewport'),canvas=id('canvas');
+ const expanded=new Set();let columns=80,ticket=0,started=performance.now(),replayTimer=0;
+ id('reduce').checked=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ function rowElement(row){
+  const element=document.createElement(row.kind==='summary'?'button':'div');element.className=row.kind==='summary'?'row-button':'line';
+  row.spans.forEach(span=>{const node=document.createElement('span');node.className=span.role;node.textContent=span.text;element.append(node);});
+  if(row.kind==='summary'){
+   element.type='button';element.dataset.tool=row.toolId;element.setAttribute('aria-expanded',String(row.expanded));element.setAttribute('aria-label',`${row.expanded?'Collapse':'Expand'} ${row.toolId==='search'?'inspection command':'session check'} details`);
+   if(row.state==='running')element.children[2].dataset.spinner='true';
+   element.addEventListener('click',()=>toggle(row.toolId));
+  }
+  return element;
+ }
+ function current(){return transcriptStudy.scene({columns,state:id('state').value,expanded:[...expanded],seconds:Math.max(.1,(performance.now()-started)/1000)});}
+ function render(){
+  const scroll=viewport.scrollTop,focus=document.activeElement?.dataset?.tool;
+  const fragment=document.createDocumentFragment();current().rows.forEach(row=>fragment.append(rowElement(row)));transcript.replaceChildren(fragment);
+  if(focus)transcript.querySelector(`[data-tool="${focus}"]`)?.focus({preventScroll:true});viewport.scrollTop=scroll;
+  id('expand').textContent=expanded.size===2?'Collapse all tools':'Expand all tools';arm();
+ }
+ function toggle(tool){const before=transcript.querySelector(`[data-tool="${tool}"]`).getBoundingClientRect().top;expanded.has(tool)?expanded.delete(tool):expanded.add(tool);render();const next=transcript.querySelector(`[data-tool="${tool}"]`);viewport.scrollTop+=next.getBoundingClientRect().top-before;next.focus({preventScroll:true});}
+ function toggleAll(){if(expanded.size===2)expanded.clear();else{expanded.add('search');expanded.add('check');}render();}
+ function resize(){const probe=document.createElement('span');probe.textContent='M';transcript.append(probe);const width=probe.getBoundingClientRect().width;probe.remove();columns=Math.max(32,Math.min(Number(id('width').value),Math.floor(viewport.clientWidth/width)));transcript.style.width=`${columns}ch`;id('dimensions').textContent=`${columns} columns`;render();}
+ function tick(){
+  if(id('state').value!=='running'||document.hidden)return;
+  const now=performance.now(),node=transcript.querySelector('[data-tool="check"]');
+  if(node){
+   const item=transcriptStudy.tool('check','running',Math.max(.1,(now-started)/1000));
+   const row=transcriptStudy.summary(item,columns,expanded.has('check'))[0];
+   row.spans.forEach((span,index)=>{node.children[index].textContent=span.text;node.children[index].className=span.role;});
+   if(!id('reduce').checked){const frames=['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];node.children[2].textContent=frames[Math.floor(now/140)%frames.length]+' ';}
+  }
+  ticket=setTimeout(tick,id('reduce').checked?1000:140);
+ }
+ function arm(){clearTimeout(ticket);if(id('state').value==='running'&&!document.hidden)ticket=setTimeout(tick,id('reduce').checked?1000:140);}
+ function changeState(){started=performance.now();id('announcement').textContent=id('state').selectedOptions[0].textContent;render();}
+ id('state').addEventListener('change',()=>{clearTimeout(replayTimer);replayTimer=0;id('replay').textContent='Replay sample task';changeState();});
+ id('width').addEventListener('change',resize);id('expand').addEventListener('click',toggleAll);
+ id('light').addEventListener('change',()=>canvas.classList.toggle('light',id('light').checked));id('reduce').addEventListener('change',render);
+ id('replay').addEventListener('click',()=>{if(replayTimer){clearTimeout(replayTimer);replayTimer=0;id('state').value='cancelled';id('replay').textContent='Replay sample task';changeState();return;}id('state').value='running';changeState();id('replay').textContent='Cancel sample task';replayTimer=setTimeout(()=>{replayTimer=0;id('state').value='completed';id('replay').textContent='Replay sample task';changeState();},6500);});
+ viewport.addEventListener('keydown',event=>{const tools=[...transcript.querySelectorAll('[data-tool]')],index=tools.indexOf(document.activeElement);if(event.ctrlKey&&event.key.toLowerCase()==='o'){event.preventDefault();toggleAll();}else if(['ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();const target=index<0?0:Math.max(0,Math.min(tools.length-1,index+(event.key==='ArrowDown'?1:-1)));tools[target]?.focus();}else if(event.key==='Escape'){event.preventDefault();viewport.focus({preventScroll:true});}});
+ document.addEventListener('visibilitychange',arm);new ResizeObserver(resize).observe(canvas);resize();
+}
+</script>
+</body>
+</html>
