@@ -1599,7 +1599,10 @@ mod tests {
             &["endpoint", "namespace", "bearer_token", "workspace_roots"],
         );
         assert_table_fields(&rendered["subagents"], &["enabled", "allow_luna"]);
-        assert_table_fields(&rendered["theme"], &["mode", "light", "dark"]);
+        assert_table_fields(
+            &rendered["theme"],
+            &["mode", "motion", "glyphs", "light", "dark"],
+        );
         let palette_fields = [
             "text",
             "border",
