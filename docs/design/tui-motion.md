@@ -1,316 +1,146 @@
-# TUI components and motion
+# TUI refinement plan
 
-Status: proposed. Branch: `design/tui-motion`, based on `59bef36`.
+Status: design only, on `design/tui-motion`. Native source baseline: `59bef36`.
 
-[Open the interactive study](tui-motion-preview.html). It contains sample content and independent
-rendering code. Application code, the installed binary, and `main` are unchanged.
+**Approved:** the new welcome logo in the [logo preview](tui-motion-preview.html).
+**Baseline for everything else:** the existing native Orvek interface.
 
-## Direction
+The chat bar, execution presentation, and Actions menu need focused improvements. Their current
+structure stays. The proposed shaded editor, tool cards, extra badges, and replacement palette are
+out of scope. Crush and the [interactive TUI references](tui-references.md) supply ideas for specific
+interactions; they do not define Orvek's layout.
 
-Use Crush as the component and interaction reference. Build a cleaner Orvek interface around
-readable content, a distinct input surface, compact activity, and consistent event colors.
-The design covers the welcome screen, composer, tool output, queue, agents, and existing pickers.
-It does not change model execution, permissions, memory, or context compaction behavior.
+## Design rules
 
-- Use a compact Orvek wordmark with a brief opening light sweep. Input works immediately.
-- Place a small persistent activity strip beside the composer status. It remains visible when idle.
-- Keep animated **Thinking** text immediately after the context meter when it fits. Wrap longer
-  phrases within the status area. Model metadata cannot displace the active status.
-- Give the editor its own shaded surface and a clear focus edge. Put model and effort below it.
-- Use expandable tool surfaces, compact queue/agent badges, and searchable pickers. Show these
-  components when the corresponding state exists.
-- Use quiet neutral surfaces, violet for focus, cyan for work, amber for required input, green for
-  completion, and red for failure. Labels and symbols carry the same meaning without color.
+| Principle | Requirement |
+| --- | --- |
+| UX | Preserve the familiar layout. Fix unreadable text, inconsistent spacing, and unclear states. |
+| DX | Keep rendering ownership explicit; reuse current components, caches, tests, and scheduler. |
+| AX | Preserve tool IDs, event order, result visibility, cancellation, queued input, and child-agent state. |
+| Performance | Input remains immediate. No new startup dependency or idle decorative work. |
 
-The preview is a direction for review, not a final logo or a claim of improved native performance.
-Its sample command palette and tool output do not execute actions.
+Every proposed change needs a concrete benefit across UX, DX, and AX. Check the actual native
+result against these requirements before expanding scope. A new component is not an improvement
+by itself. Keep the current theme and density unless a specific visual change is approved.
 
-## Decision rule: UX, DX, and AX
+## Current behavior to preserve
 
-Every change must improve the user experience (UX), developer experience (DX), and agent experience
-(AX). Record a concrete benefit in each area before implementation. Simplify or omit changes that
-only add decoration, another abstraction, or another source of state.
+| Area | Source and contract |
+| --- | --- |
+| Composer | [composer.rs](../../bin/orvek/src/tui/components/composer.rs), `render_focused_with_selection` / `render_chrome`: thin rounded border; context and animated activity at top left; model/effort at top right; hints and workspace on the bottom edge. |
+| Text editing | [composer/layout.rs](../../bin/orvek/src/tui/components/composer/layout.rs): cached wrapping and grapheme-aware caret mapping. Keep multiline input, paste, attachments, selection, and current keys. |
+| Actions | [actions.rs](../../bin/orvek/src/tui/components/actions.rs), `ActionsMenu`: centered rounded 58 × 19 popup, clamped to the screen; search, compact rows, aliases, selection marker, and keyboard footer. |
+| Action behavior | `/` opens from an empty draft. Search is case-insensitive substring matching. Enter/Tab activate; Escape dismisses. Disabled actions remain visible with reasons and cannot execute. |
+| Execution | [transcript/tool.rs](../../bin/orvek/src/tui/components/transcript/tool.rs): compact semantic summaries; shell command, status, outcome, and duration on one line when possible. |
+| Expanded tools | [tool/shell.rs](../../bin/orvek/src/tui/components/transcript/tool/shell.rs): indented details, full command, process substeps, output, and counts. Keep selectable text and the existing expansion markers. |
+| Continuity | [transcript/mod.rs](../../bin/orvek/src/tui/components/transcript/mod.rs): entry-ID expansion state, anchored rows, focused-tool navigation, and Ctrl+O expansion. [transcript/model.rs](../../bin/orvek/src/tui/transcript/model.rs) links ordinary process polling to the original shell entry. |
+| Activity | [root.rs](../../bin/orvek/src/tui/components/root.rs), `refresh_activity`: actual transcript, turn, shell, compaction, and child-agent state drive presentation. |
 
-| Area | Required benefit | Evidence |
-| --- | --- | --- |
-| UX | Readable content, immediate input, useful motion, and fast startup. | Native narrow-screen, typing, streaming, and startup checks. |
-| DX | Clear ownership, fewer competing render paths, and predictable maintenance. | One composer geometry owner, existing scheduler, deterministic fixtures, bounded caches. |
-| AX | Accurate task state and reliable tool interaction without extra agent work. | Event replay preserves tool IDs, ordering, results, cancellation, queues, and child-agent state. |
+These observations come from source and existing tests. Native visual and performance checks have
+not been run in this phase.
 
-For example, fixing composer geometry makes status readable, removes duplicated layout rules, and
-keeps agent work distinguishable from required user input. A shared activity clock makes motion
-smooth, keeps scheduling in one place, and prevents a completed task from appearing active.
+## Composer: fix first, then polish
 
-Use Crush's component patterns selectively. Keep the existing Rust runtime, Ratatui renderer,
-input pipeline, and event contracts. The initial slice needs no new runtime dependency, sidecar,
-asset download, or background service. Restyle existing controls before introducing new controls.
-Visual effects never enter model context, create tool calls, or delay agent event handling.
+Keep the current border, input surface, and wide-screen information placement. Preserve the animated
+thinking text after the context meter. Do not add a separate permanent status panel.
 
-## Performance contract
+Observed issue: `render_chrome` reserves timer/model/effort width first, then clips status to the
+remaining cells. The review wave uses a different prefix offset from the activity wave. This
+explains truncation and identifies an overlap case to test. The reported bleed still needs a native
+frame-sequence reproduction before its cause is considered confirmed.
 
-- Add no blocking startup work. The first editable frame must not wait for the welcome effect,
-  filesystem scans, network requests, or generated assets introduced by this design.
-- Stop decorative timers when idle, hidden, or in motion-off mode. Keep the idle presence mark
-  static. Advance visible active effects at a proposed 20 FPS; input and outcomes remain immediate.
-- Reuse static layouts and rendered content. A color tick must not rewrap the draft, reparse the
-  transcript, reload configuration, or invalidate all message caches.
-- Keep effects within small, fixed regions. Bound caches by visible components and theme variants;
-  do not retain an animation history for each tool call.
-- Under rendering pressure, skip decorative frames. Preserve input, text updates, and task state.
-  Never replay missed animation frames in a burst.
+Proposed fix:
 
-Before editing native code, record launch-to-first-editable-frame time, input-to-paint latency,
-streaming frame time, idle wakeups, memory use, and binary size on the same machine and fixtures.
-Compare cold and warm startup separately. Measure input latency during long-session streaming and
-multiple tool updates, not only on the empty screen. Keep these measurements in local task evidence.
+1. Measure context, status, metadata, and mode badges in terminal cell widths before painting.
+2. Allocate disjoint regions. The active status must remain readable; shorten optional metadata
+   first. Only when needed, reserve an extra chrome row inside the existing box for overflow.
+3. Keep that row outside the editable text region. Root must use composer-owned editor and hit
+   rectangles, rather than reconstructing them from border thickness.
+4. Clear owned chrome cells and paint each region once. Apply the existing wave within its region.
+5. Check long-to-short-to-idle transitions, including `Running in background` and combined review,
+   input-mode, timer, model, and child-agent labels. Never truncate a grapheme halfway.
 
-Set tolerances from repeated baseline runs before judging changes. Reject measurable regressions
-outside that tolerance. No fixed latency target or speed improvement is established by this HTML
-study. Removing an effect is preferable to slowing typing or agent output.
-
-## Grounding
-
-Current source inspected at `59bef36`:
-
-| Owner | Observed behavior | Planned change |
-| --- | --- | --- |
-| [empty.rs](../../bin/orvek/src/tui/components/transcript/empty.rs), `EmptyLogo` | Outline emblem and separate wordmark; animation changes the emphasized row. | Compact wordmark, short entrance, useful workspace information. |
-| [activity_mark.rs](../../bin/orvek/src/tui/components/activity_mark.rs), `ActivityMark` | Nine-column mark; four frames for active states. | Small gradient strip with distinct state behavior. |
-| [root.rs](../../bin/orvek/src/tui/components/root.rs), `render_root` | Reserves a top row for the mark and `ORVEK / <state>`; independently calculates the editor rectangle. | Put activity beside input; use composer-owned geometry for rendering and hit testing. |
-| [composer.rs](../../bin/orvek/src/tui/components/composer.rs), `render_chrome` | Reserves timer/model/effort width before status; clips waves to the remainder. Context denominator is fixed at `272k`. | Separate status, editor, and metadata. Wire the available context budget into display. |
-| [waved_text.rs](../../bin/orvek/src/tui/components/waved_text.rs), `WavedText` | Produces animated color spans per character. | Preserve the wave; measure graphemes and paint only its allocated cells. |
-| [root.rs](../../bin/orvek/src/tui/components/root.rs), `refresh_activity`, `activity_outcome` | Combines transcript, turn, shell, compaction, and child-agent state. | Keep this event ownership; derive presentation once. |
-| [scheduler.rs](../../bin/orvek/src/tui/scheduler.rs) | Coalesces streaming redraws; input can request an immediate frame. | Keep input priority and add no independent animation loop. |
-| [context.rs](../../bin/orvek/src/tui/context.rs), `ContextDiagnostics::observe` | Reads an optional input budget from `run.started`. | Reuse observed budget; distinguish unknown budget from a measured value. |
-
-The width allocation explains status truncation. It does **not** prove the reported text bleed is
-caused by stale cells. Reproduce consecutive frames before deciding whether clearing, overlapping
-spans, cursor geometry, or several causes need fixes. The review wave also uses a different prefix
-offset from the activity wave; test combined input-mode/review/status states.
-
-Preserve the cached draft wrapping and grapheme-aware caret mapping in
-[composer/layout.rs](../../bin/orvek/src/tui/components/composer/layout.rs), transcript selection,
-streaming Markdown caches, and current keyboard actions.
-
-## What to adapt from Crush
-
-Reference snapshot: [`d333e04385f9e1d1523cea7b417cb5e8798a713a`][crush], inspected 2026-09-13.
-These are source observations; Crush was not installed or run during this investigation.
-
-| Source pattern | Evidence | Orvek application |
-| --- | --- | --- |
-| Compact gradient animation with labels and cached frames | [`anim.Settings`, `Anim.Advance`, `Anim.Render`][anim] | Use a bounded activity strip and cached palettes. Keep Orvek's readable thinking wave. |
-| One clock for visible active items | [`Chat.EnsureAnimating`, `Chat.Tick`][clock] | Extend the existing scheduler; skip hidden items and stop when nothing visible is moving. |
-| Tool-specific output and explicit lifecycle states | [`baseToolMessageItem`, `toolEarlyStateContent`][tools] | Restyle existing expandable tool rows; distinguish pending, running, failed, and cancelled. |
-| Different labels for model work | [`renderSpinning`, `isSpinning`][assistant] | Show actual thinking/compaction state. Do not leave a spinner after a finished or restored turn. |
-| Queue and task badges with expansion | [`queuePill`, `todoPill`, `renderPills`][pills] | Reuse Orvek's queue and agent counts. Add a task-progress badge only if a real task-state source exists. |
-| Separate attachments and editor | [`renderEditorView`][ui] | Keep attachment rows outside draft text and status; preserve image input and selection. |
-| Consistent semantic colors | [`CharmtonePantera`][theme] | Add Orvek theme roles for focus, busy, waiting, success, error, and surfaces. |
-| Searchable commands and bounded review panels | [`Commands`][commands], [`Permissions`][permissions] | Restyle existing pickers and review UI; preserve their actual actions and authorization semantics. |
-
-Crush uses Go, Bubble Tea, and Lip Gloss. These components are not Rust widgets. Recommend fresh
-Ratatui implementations of the selected interaction patterns, with independent artwork and
-animation logic. A Go sidecar or full TUI rewrite adds runtime and input ownership problems without
-solving the composer bug.
-
-The inspected application source uses [FSL-1.1-MIT][license], including restrictions on competing
-commercial use and redistribution terms. Direct code or artwork reuse is a separate licensing
-decision. No Crush source or assets are included in this design's public artifacts.
-
-[TachyonFX](https://github.com/ratatui/tachyonfx) remains an optional Rust effects candidate if later
-component transitions justify it. Do not add it for a six-cell indicator. The
-[TerminalTextEffects showroom](https://chrisbuilds.github.io/terminaltexteffects/showroom/)
-provides motion references, not a Python runtime dependency.
-
-## Layout contract
-
-The composer owns measurement, painting rectangles, cursor coordinates, and hit areas. Root places
-the remaining transcript and queue around its returned bounds. No caller reconstructs editor
-geometry from border thickness.
-
-Priority, from highest to lowest:
-
-1. Editable text, caret, selection, and required user action.
-2. Full active status and context information.
-3. Mode/effort badges, model name, and elapsed time.
-4. Optional counts, hints, and decorative space.
-
-At 80 columns, context and status normally share one row. At 32–50 columns, status can occupy the
-following one or two rows. Metadata stays below the editor and can use a short model label whose
-picker exposes the full identifier. Required mode badges remain visible. Long secondary labels
-wrap or use explicit ellipses; they never overwrite another component.
-
-Below 32 columns or with very little height, use a compact status label such as `Background` and
-one editor row. Hide the welcome artwork and optional hints first. Below a usable input size, show
-a concise resize message. Avoid width arithmetic underflow and off-screen cursor placement.
-
-Clear each owned surface before painting. Allocate the context, review, activity, counts, and
-metadata before producing color spans. Animation only changes foreground styles or cells inside
-its assigned region. It cannot modify draft text, move the caret, or paint over a popup.
-
-## Proposed interfaces
-
-The caller shape comes first. These are design sketches, not existing APIs:
+Use the smallest geometry helper justified by these callers. A possible private type is:
 
 ```rust
-let presentation = self.activity_presentation();
-let layout = self.composer.component_mut().layout(available, &presentation);
-self.composer_content_area = layout.editor;
-// Root allocates transcript and queue above layout.bounds.
-self.composer.component_mut().render_with_layout(
-    frame, &layout, &presentation, theme, focused, selection,
-);
-```
-
-Keep existing `ActivityState` as the semantic state owner. Extend it only for distinctions that
-real events support. Place composer geometry in proposed `components/composer/chrome.rs`, leaving
-`composer/layout.rs` responsible for draft wrapping.
-
-```rust
-struct ComposerLayout {
-    bounds: Rect,
-    presence: Rect,
+// Proposed shape; not an existing API.
+struct ComposerChromeLayout {
     context: Rect,
-    status_lines: Vec<Rect>,
-    attachments: Option<Rect>,
+    status: Vec<Rect>,
+    metadata: Vec<Rect>,
     editor: Rect,
-    metadata_lines: Vec<Rect>,
-    // Named hit areas for visible model, effort, queue, and agent controls.
 }
-
-struct ActivityPresentation {
-    state: ActivityState,
-    label: String,
-    active_agents: usize,
-    queued_prompts: usize,
-}
-
-enum MotionMode { Full, Reduced, Off }
-
-// Signatures added to the existing ActivityMark, not a second event owner.
-fn set_state(&mut self, state: ActivityState, now: Instant) -> bool;
-fn deadline(&self) -> Option<Instant>;
-fn advance(&mut self, now: Instant) -> bool;
-fn render(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme);
 ```
 
-Reuse `RootNode::refresh_activity` and transcript projection as inputs. Recognize reading/editing
-only from known tool metadata. Unknown tools use `Working`. Never infer a successful edit, task
-percentage, or completion from elapsed time or animation position.
+Keep existing draft-layout caching separate. No widget framework, second event model, or rewritten
+editor is needed. The fixed `272k` denominator is a separate display issue: use the budget already
+observed by [ContextDiagnostics](../../bin/orvek/src/tui/context.rs), and label unknown values honestly.
 
-```mermaid
-sequenceDiagram
-    participant Events as Existing event handlers
-    participant Root as Root activity state
-    participant Layout as Composer layout
-    participant Clock as Existing scheduler
-    participant Paint as Visible components
-    Events->>Root: turn / tool / queue / child / compaction update
-    Root->>Layout: current status and available area
-    Layout-->>Root: bounds, text regions, editor and hit areas
-    Root->>Clock: immediate semantic change; optional motion deadline
-    Clock->>Paint: frame at monotonic time
-    Paint->>Paint: clear owned regions; render content and local effects
-    Events->>Root: completion / failure / cancellation
-    Root->>Clock: show outcome immediately; retire active motion
-```
+Polish candidates for later native comparison: consistent edge padding, restrained focus contrast,
+and better metadata spacing. These are not approval for a new chat-bar design.
 
-## Motion and event rules
+## Actions: improve the current menu
 
-| State | Visual behavior | End condition |
-| --- | --- | --- |
-| Opening | Brief light sweep across a compact wordmark. | Settle within about 800 ms; typing bypasses it. |
-| Ready | Small static presence mark. | A real task starts. |
-| Thinking | Gentle violet strip plus the preserved text wave. | Model phase changes or turn ends. |
-| Tool work | Cyan movement in the active tool header; edit accent when known. | Tool result arrives. |
-| Background work | Slower movement and an active-count badge. | Last relevant worker exits. |
-| Compaction | Inward movement with the full compaction label. | Completed, failed, or cancelled event. |
-| Required input | Amber mark and a clear actionable panel. | User resolves or dismisses the actual request. |
-| Complete | Brief green settle, then still. | New task starts. |
-| Failed / cancelled | Immediate red / muted symbol and text; stop busy motion. | New task starts. |
+Keep the current popup, search row, ordering, aliases, disabled explanations, and key behavior.
+Two source-backed improvements are worth testing before cosmetic work:
 
-When states coexist, required input leads, then blocking compaction, then foreground work.
-Background activity remains visible as a separate count. Errors stay on the affected tool row even
-if another tool is still running. A child result cannot mark the whole session complete.
+- Show a small `No matching actions` message when filtering produces an empty list.
+- Match the displayed state-dependent label. `display_label` can show `Disable fast mode`, while
+  `Action::matches` currently searches the static `Enable fast mode` label.
 
-Update text immediately. Interpolate visual changes over a proposed 180–240 ms; interrupted
-transitions start from their current visual state. Use monotonic time and deterministic frames.
-Target 20 frames per second for active decorative motion. Input redraws remain independent.
-This is a proposed budget, not a measured result.
+After those fixes, compare modest changes to row alignment and selected-item contrast. Do not
+replace substring search with fuzzy search or add categories, previews, or new panels without a
+separate behavioral decision. External examples are references, not an instruction to copy their keys.
 
-Use the existing scheduler as the only clock. Cache static wordmarks, gradients, and completed tool
-content. Avoid reparsing Markdown or measuring unchanged draft text on animation ticks. Preserve
-viewport position when the user has scrolled away. Suppress hidden/covered animations and retire
-old session deadlines when switching or forking. Resume historical terminal states without a live
-spinner unless current runtime state confirms work is active.
+## Execution: preserve its clean structure
 
-Add proposed `ui.motion = "full" | "reduced" | "off"` and
-`ui.characters = "auto" | "unicode" | "ascii"` through
-[app/config.rs](../../bin/orvek/src/app/config.rs). These keys are not implemented. Reduced motion
-uses static symbols and immediate state changes. Keep light/dark/custom themes and add terminal
-color fallbacks through [theme.rs](../../bin/orvek/src/tui/theme.rs). Do not infer motion preference
-from `NO_COLOR`; honor color and motion settings separately.
+Keep the current one-line summaries and indented expanded output. Do not wrap each tool in a card,
+add role headings to every row, or duplicate running state across new panels.
 
-No icon font, image protocol, browser, Go process, or network access is required by the native UI.
-Use known-width Unicode cells with an ASCII fallback. Preserve sanitization of terminal controls.
-Diagnostics contain state, region sizes, and timing only, not credentials, prompts, or tool output.
+A focused candidate: long failed-shell summaries currently preserve outcome/duration but can lose
+the first error fragment. Compare a bounded error excerpt within the existing summary, with full
+details still available on expansion. Preserve command identity and process continuity.
 
-## Implementation order
+Keep the timer optimization that replaces summary lines without rebuilding expanded details.
+Color and animation must never hide errors, imply successful completion early, or move the viewport.
+The small persistent activity mark still needs design review; neither its proposed shape nor its
+new placement is approved. Do not add competing spinners around the composer.
 
-| Phase | Affected modules | Acceptance behavior |
-| --- | --- | --- |
-| 1. Reproduce and fix geometry | `composer.rs`, proposed `composer/chrome.rs`, `root.rs`, `waved_text.rs` | Full statuses remain visible; no old text survives long-to-short transitions; cursor and selection match the editor. |
-| 2. Theme and input surface | `theme.rs`, `app/config.rs`, composer chrome | New focus/surface roles, separated metadata, required mode badges, light/low-color/reduced-motion support. |
-| 3. Welcome and activity | `transcript/empty.rs`, `activity_mark.rs`, `root.rs`, `scheduler.rs` | Short entrance, persistent presence, correct event colors, no idle clock or input delay. Remove superseded emblem and frame tables. |
-| 4. Tool, queue, and agent components | `components/transcript/mod.rs`, `queue.rs`, `subagents.rs` | Compact expandable output and counts backed by existing state; no duplicate completion, lost tool details, or scroll jumps. |
-| 5. Pickers and review surfaces | `session_picker.rs`, `model_selector.rs`, existing completion/action/review components | Shared spacing/focus/selection styles; existing navigation and action semantics remain intact. |
-| 6. Native review and cleanup | Existing TUI benches, fixtures, user documentation | Review real terminal recordings, pass required checks, then remove task-owned build output after any authorized installation. |
+## Welcome logo and motion
 
-Keep each phase small. First complete composer correctness, shared styling, and bounded activity.
-Proceed to tool surfaces and pickers only after that native slice meets the UX/DX/AX and performance
-contracts. Those phases adapt existing interactions; they do not authorize a new widget framework
-or unrelated feature work. Each revision must preserve usable input and the existing agent flow.
+Preserve the approved glyph shapes and colors. Placement and the brief entrance effect remain
+review choices. Input must work immediately; typing can bypass the entrance. Keep the logo as
+terminal cells, with an ASCII and reduced-motion fallback.
 
-For regressions, follow AGENTS.md: failing regression test revision, child fix revision, verification,
-then squash the fix into the test revision. New components and their behavioral tests belong together.
-Do not keep both old and new chrome paths after callers migrate. Saved session payloads need no
-migration: visual state is derived from existing records and current runtime state.
+Reuse [EmptyLogo](../../bin/orvek/src/tui/components/transcript/empty.rs) and the existing
+[scheduler](../../bin/orvek/src/tui/scheduler.rs). Render only visible effects. Cache static art and
+palettes; stop decorative deadlines when settled, hidden, or disabled. A proposed 20 FPS limit applies
+to decorative motion, not to input or semantic updates. No extra process, network request, font
+install, asset download, or effects dependency is required.
 
-## Verification and remaining decisions
+## Phases and checks
 
-Later native checks must cover:
+1. **Native baseline and reproduction.** Capture current composer, running shell, expanded output,
+   and Actions popup at 40/80/120 columns. Record startup, input-to-paint latency, streaming frame
+   time, idle wakeups, memory, and binary size. Keep measurements in local task evidence.
+2. **Composer correctness.** Add failing tests for visible status, region isolation, and transition
+   clearing; fix allocation and shared editor geometry. Keep the current appearance where it fits.
+3. **Approved logo.** Replace only the welcome artwork; verify immediate input and a settled clock.
+4. **Small menu/output improvements.** Evaluate the specific candidates above, one native
+   before/after comparison at a time. Preserve existing tests for disabled actions and tool continuity.
+5. **Review and verify.** Accept visual changes only after checking real terminal frames and
+   interactions. Reject performance regressions beyond baseline measurement noise. Remove task-owned
+   build output after any later authorized build/installation work is complete.
 
-- Widths 32, 40, 50, 60, 80, 100, and 120; heights 8, 12, 24, and 40; tiny dimensions never panic.
-- Thinking, Running in background, compaction, review, long model names, pro/fast badges, timers,
-  multiple agents, queued input, and attachment rows in combination.
-- Long-to-short-to-idle frames on a reused buffer versus a fresh render; no text outside its region.
-- Unicode graphemes, wide characters, multiline drafts, selection, copy, paste, resize, and mouse hits.
-- Visible/hidden tool animations, live tool completion, cancellation, failed compaction, session
-  switching, resume, and forks. Input and semantic outcomes cannot wait for an animation.
-- Dark/light/custom/16-color/monochrome/ASCII/reduced-motion views. Meaning remains readable without color.
-- Streaming under long transcripts, input latency during animation, frame time, allocations, and
-  idle CPU. Set numerical acceptance thresholds from the existing bench and a real terminal baseline.
+Test 32/40/50/60/80/100/120-column widths and small heights; long model/status strings; multiline and
+wide-character input; selection/copy/paste; attachments; overlays; light/dark/low-color/reduced-motion
+modes; cancellation; compaction failure; session switching; resume; forks; and child-agent completion.
+Compare reused-buffer transitions with fresh renders, and verify no cells outside the assigned
+region change. Animation ticks must not rewrap the draft or reparse the transcript.
 
-Required implementation checks: `cargo check --all-features`, `just check-fmt`, `just clippy`,
-`just test`. These were **not run in this planning phase**. No model evaluations were run.
+Follow AGENTS.md: regression test revision, child fix revision, verification, then squash the fix into
+the test revision. New features include their behavioral tests in the same revision.
 
-Preview-only verification: JavaScript syntax and 2,464 layout combinations checked; full status
-text and non-overlapping status/editor regions verified in that model. Native rendering and browser
-interaction automation remain unverified. The preview was opened with macOS `open` for visual review.
-
-Before implementation, settle the visual direction with the preview and then review an equivalent
-native terminal fixture. The wordmark, palette, indicator geometry, and transition timing remain
-review choices. Actual text-bleed reproduction and the available granularity of tool phase events
-remain implementation investigations. Direct source reuse from Crush is not part of this plan.
-
-[crush]: https://github.com/charmbracelet/crush/tree/d333e04385f9e1d1523cea7b417cb5e8798a713a
-[anim]: https://github.com/charmbracelet/crush/blob/d333e04385f9e1d1523cea7b417cb5e8798a713a/internal/ui/anim/anim.go
-[clock]: https://github.com/charmbracelet/crush/blob/d333e04385f9e1d1523cea7b417cb5e8798a713a/internal/ui/model/chat.go
-[tools]: https://github.com/charmbracelet/crush/blob/d333e04385f9e1d1523cea7b417cb5e8798a713a/internal/ui/chat/tools.go
-[assistant]: https://github.com/charmbracelet/crush/blob/d333e04385f9e1d1523cea7b417cb5e8798a713a/internal/ui/chat/assistant.go
-[pills]: https://github.com/charmbracelet/crush/blob/d333e04385f9e1d1523cea7b417cb5e8798a713a/internal/ui/model/pills.go
-[ui]: https://github.com/charmbracelet/crush/blob/d333e04385f9e1d1523cea7b417cb5e8798a713a/internal/ui/model/ui.go
-[theme]: https://github.com/charmbracelet/crush/blob/d333e04385f9e1d1523cea7b417cb5e8798a713a/internal/ui/styles/themes.go
-[commands]: https://github.com/charmbracelet/crush/blob/d333e04385f9e1d1523cea7b417cb5e8798a713a/internal/ui/dialog/commands.go
-[permissions]: https://github.com/charmbracelet/crush/blob/d333e04385f9e1d1523cea7b417cb5e8798a713a/internal/ui/dialog/permissions.go
-[license]: https://github.com/charmbracelet/crush/blob/d333e04385f9e1d1523cea7b417cb5e8798a713a/LICENSE.md
+Later implementation checks: `cargo check --all-features`, `just check-fmt`, `just clippy`, `just test`.
+None were run in this design phase. No model evaluations, installs, or native code changes were made.
+The HTML now demonstrates the welcome logo only; it does not validate composer layout or performance.

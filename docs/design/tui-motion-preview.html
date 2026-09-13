@@ -3,196 +3,53 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Orvek — component study</title>
+<title>Orvek welcome logo</title>
 <style>
-*{box-sizing:border-box}body{margin:0;padding:28px;background:#131219;color:#eeeaf4;font:14px/1.5 system-ui,sans-serif}main{max-width:1120px;margin:auto}h1{font-size:22px;font-weight:600;margin:0 0 6px}p{color:#a9a4b5;margin:0 0 20px}.controls{display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin:22px 0}label{display:grid;gap:5px;font-size:12px;color:#c2bbcf}select,button{background:#24212e;color:#f1ecf6;border:1px solid #494254;border-radius:6px;padding:9px 12px;font:inherit;min-height:40px}button{cursor:pointer}button[aria-pressed=true]{border-color:#a998ea}button:focus-visible,select:focus-visible{outline:2px solid #c4acf8;outline-offset:3px}.terminal{padding:18px;border:1px solid #3b3546;border-radius:10px;background:#121118;box-shadow:0 14px 48px #0003;overflow:auto}.terminal.light{background:#f6f4f8;border-color:#d9d2e0}.caption{display:flex;justify-content:space-between;gap:10px;color:#8f859f;font-size:11px;margin-bottom:18px}pre{font:13px/18px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre;margin:0}.cell{display:inline-block;width:1ch;height:18px;vertical-align:top}.note{font-size:12px;margin-top:18px;max-width:780px}a{color:#c4acf8}.links{display:flex;gap:20px;font-size:12px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}@media(max-width:520px){body{padding:12px}.terminal{padding:9px}.controls{gap:8px}}
+*{box-sizing:border-box}body{margin:0;padding:28px;background:#131219;color:#eeeaf4;font:14px/1.5 system-ui,sans-serif}main{max-width:900px;margin:auto}h1{font-size:22px;font-weight:600;margin:0 0 8px}p{color:#b7b0c2;margin:0 0 20px;max-width:720px}.controls{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0}button{background:#24212e;color:#f1ecf6;border:1px solid #494254;border-radius:6px;padding:9px 12px;font:inherit;cursor:pointer;min-height:40px}button:focus-visible{outline:2px solid #c4acf8;outline-offset:3px}.stage{min-height:240px;display:grid;place-items:center;overflow:auto;background:#121118;border:1px solid #3b3546;border-radius:8px;padding:32px}.stage.light{background:#f6f4f8;border-color:#d9d2e0}pre{font:13px/18px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre;margin:0}.cell{display:inline-block;width:1ch;height:18px;vertical-align:top}a{color:#c4acf8}.links{display:flex;flex-wrap:wrap;gap:20px;font-size:13px}.note{margin-top:20px;font-size:13px}@media(max-width:520px){body{padding:12px}.stage{padding:12px}}
 </style>
 </head>
 <body>
 <main>
-<h1>Orvek / component study</h1>
-<p>Cleaner surfaces, compact activity, and readable status text. All content below is a sample.</p>
+<h1>Orvek / welcome logo</h1>
+<p>Approved visual direction: this logo. The native chat bar, execution view, and actions palette remain the baseline for further design.</p>
 <div class="controls">
-<label>Scene<select id="scene"><option value="welcome">Welcome</option><option value="thinking">Thinking</option><option value="reading">Reading files</option><option value="editing">Applying edits</option><option value="background">Running in background</option><option value="compacting">Compacting context</option><option value="waiting">Needs your input</option><option value="done">Complete</option><option value="error">Command failed</option><option value="cancelled">Cancelled</option><option value="commands">Command palette</option></select></label>
-<label>Width<select id="width"><option value="120">120 columns</option><option value="80">80 columns</option><option value="50">50 columns</option><option value="40">40 columns</option><option value="32">32 columns</option></select></label>
-<label>Characters<select id="characters"><option value="unicode">Unicode</option><option value="ascii">ASCII fallback</option></select></label>
-<button id="details" aria-pressed="false">Expand tool details</button>
-<button id="sequence">Play event sequence</button>
-<button id="pause" aria-pressed="false">Pause motion</button>
+<button id="replay">Replay entrance</button>
 <button id="theme" aria-pressed="false">Light theme</button>
+<button id="ascii" aria-pressed="false">ASCII fallback</button>
+<button id="motion" aria-pressed="false">Reduce motion</button>
 </div>
-<div class="terminal" id="terminal">
-<div class="caption"><span>DESIGN PREVIEW / sample workspace</span><span id="dimensions"></span></div>
-<pre id="screen" aria-hidden="true"></pre>
-<span id="announcement" class="sr-only" role="status"></span>
-</div>
-<p class="note">The activity mark stays beside the input. “Thinking” keeps its animated text after the context meter. Longer status phrases wrap above the editor. Tool details, queue badges, and commands appear when relevant.</p>
-<div class="links"><a href="tui-motion.md">Technical plan</a><a href="https://github.com/charmbracelet/crush">Component reference: Crush</a></div>
-<p class="note">This is an independent layout study. It does not run Orvek, prove native rendering performance, or reproduce Crush source or artwork.</p>
+<div id="stage" class="stage"><pre id="logo" role="img" aria-label="Orvek"></pre></div>
+<p class="note">Logo study only. Placement and entrance timing remain proposed. Input will never wait for this effect. Other component designs will be reviewed against native terminal captures.</p>
+<div class="links"><a href="tui-motion.md">Revised plan</a><a href="tui-references.md">TUI research and examples</a></div>
 </main>
 <script>
-const motionStudy = (() => {
-  const states = {
-    welcome:{label:'Ready',tone:'accent',motion:false},
-    thinking:{label:'Thinking',tone:'accent',motion:true},
-    reading:{label:'Reading files',tone:'info',motion:true},
-    editing:{label:'Applying edits',tone:'accent',motion:true},
-    background:{label:'Running in background',tone:'info',motion:true},
-    compacting:{label:'Compacting context',tone:'accent',motion:true},
-    waiting:{label:'Needs your input',tone:'warning',motion:false},
-    done:{label:'Complete',tone:'success',motion:false},
-    error:{label:'Command failed',tone:'error',motion:false},
-    cancelled:{label:'Cancelled',tone:'muted',motion:false},
-    commands:{label:'Ready',tone:'accent',motion:false}
-  };
-  const palettes = {
-    dark:{base:'#121118',surface:'#201d29',raised:'#292434',selected:'#373047',text:'#eeeaf3',muted:'#a39aad',line:'#4c435a',accent:'#b6a0f7',info:'#78c9d0',warning:'#e6b56a',success:'#9bc9a7',error:'#eb969e'},
-    light:{base:'#f6f4f8',surface:'#ebe6f0',raised:'#e2d9ec',selected:'#d7c8e8',text:'#2b2535',muted:'#6c6078',line:'#9b8ba9',accent:'#6b41a8',info:'#226c76',warning:'#85520a',success:'#326745',error:'#a03047'}
-  };
-  const glyphs={
-    O:['01110','11011','11011','11011','01110'],
-    R:['11110','11011','11110','11010','11011'],
-    V:['11011','11011','11011','01010','00100'],
-    E:['11111','11000','11110','11000','11111'],
-    K:['11011','11010','11100','11010','11011']
-  };
-  function wrap(text,width) {
-    const lines=[];let line='';
-    for(let word of text.split(' ')) {
-      if(line && line.length+word.length+1>width){lines.push(line);line='';}
-      while(word.length>width){if(line){lines.push(line);line='';}lines.push(word.slice(0,width));word=word.slice(width);}
-      if(word)line+=(line?' ':'')+word;
-    }
-    if(line)lines.push(line);
-    return lines;
+const welcomeStudy=(()=>{
+  const glyphs={O:['01110','11011','11011','11011','01110'],R:['11110','11011','11110','11010','11011'],V:['11011','11011','11011','01010','00100'],E:['11111','11000','11110','11000','11111'],K:['11011','11010','11100','11010','11011']};
+  function frame({elapsed=1,ascii=false,light=false,reduced=false}={}){
+    const rows=Array.from({length:5},()=>Array.from({length:29},()=>({ch:' ',color:light?'#6b41a8':'#b6a0f7',opacity:1})));
+    [...'ORVEK'].forEach((letter,index)=>glyphs[letter].forEach((line,y)=>[...line].forEach((bit,x)=>{
+      const column=index*6+x;
+      if(bit==='1')rows[y][column]={ch:ascii?'#':'█',color:light?(index<3?'#6b41a8':'#226c76'):(index<3?'#b6a0f7':'#78c9d0'),opacity:!reduced&&elapsed<.8?.4+.6*Math.max(0,1-Math.abs(column-elapsed*45)/10):1};
+    })));
+    return rows;
   }
-  function render({columns=100,rows=30,state='welcome',time=0,entranceTime=1,theme='dark',characters='unicode',expanded=false,reduced=false}) {
-    if(columns<32||rows<30)throw new Error('This study needs 32 columns and 30 rows.');
-    const palette=palettes[theme], phase=states[state], ascii=characters==='ascii';
-    const grid=Array.from({length:rows},()=>Array.from({length:columns},()=>({ch:' ',fg:'text',bg:'base',bold:false,glow:1})));
-    const regions={};
-    function write(text,x,y,fg='text',width=columns-x-2,bold=false) {
-      if(y<0||y>=rows)return;
-      [...text].slice(0,Math.max(0,width)).forEach((ch,dx)=>{if(grid[y][x+dx])Object.assign(grid[y][x+dx],{ch,fg,bold});});
-    }
-    function paragraph(text,x,y,width,fg='text') {const lines=wrap(text,width);lines.forEach((line,i)=>write(line,x,y+i,fg,width));return lines.length;}
-    function fill(x,y,width,height,bg){for(let dy=0;dy<height;dy++)for(let dx=0;dx<width;dx++)if(grid[y+dy]?.[x+dx])grid[y+dy][x+dx].bg=bg;}
-    function chip(label,x,y,fg='muted'){const width=label.length+2;fill(x,y,width,1,'raised');write(' '+label+' ',x,y,fg,width);return width+2;}
-    const rail=rows-8, editorY=rows-4;
-    if(state==='welcome') {
-      const start=2;
-      [...'ORVEK'].forEach((letter,index)=>glyphs[letter].forEach((line,y)=>[...line].forEach((bit,x)=>{
-        if(bit==='1'){
-          const column=start+index*6+x;
-          write(ascii?'#':'█',column,3+y,index<3?'accent':'info',1);
-          if(!reduced&&entranceTime<0.8)grid[3+y][column].glow=0.4+0.6*Math.max(0,1-Math.abs(column-entranceTime*45)/10);
-        }
-      })));
-      write('WORKSPACE',2,11,'muted',columns-4,true);
-      write('~/orvek',2,13,'text');
-      write('gpt-5.6-sol / medium',2,15,'muted');
-      write('/ commands   @@ sessions',2,18,'muted');
-    } else {
-      write('YOU',2,1,'muted',columns-4,true);
-      const end=3+paragraph('Check the session restore path.',2,3,columns-4);
-      if(state==='thinking') {
-        write('ORVEK',2,end+1,'accent',columns-4,true);
-        paragraph('Tracing how saved sessions restore their state.',2,end+3,columns-4,'muted');
-      } else if(state==='commands') {
-        const width=Math.min(62,columns-4),height=12,x=2,y=3;
-        fill(x,y,width,height,'surface');
-        write('Commands',x+2,y+1,'accent',width-4,true);
-        write('> session',x+2,y+3,'text',width-4);
-        fill(x+1,y+5,width-2,1,'selected');
-        write('Continue session',x+2,y+5,'text',width-4);
-        write('New session',x+2,y+7,'muted',width-4);
-        write('Esc close',x+2,y+10,'muted',width-4);
-      } else {
-        const cardY=end+1, cardWidth=Math.min(86,columns-4);
-        const detail=state==='editing'?'+ preserve the saved context':state==='error'?'Process exited with code 1.':state==='waiting'?'Review the proposed edit before continuing.':state==='done'?'Session state restored.':state==='cancelled'?'No further work is running.':'bin/orvek/src/tui/session.rs';
-        const detailLines=wrap(detail,cardWidth-4);
-        const height=3+detailLines.length+(expanded?3:0);
-        fill(2,cardY,cardWidth,height,'surface');
-        for(let y=cardY;y<cardY+height;y++)write(ascii?'|':'▏',2,y,phase.tone,1);
-        const icon=state==='done'?(ascii?'+':'✓'):state==='error'?(ascii?'x':'×'):state==='waiting'?'?':state==='cancelled'?'-':ascii?'>':'›';
-        const title=state==='editing'?'Edit':state==='background'?'Background task':state==='compacting'?'Context':state==='error'?'Command':state==='waiting'?'Review':'Read';
-        write(`${icon} ${title}`,4,cardY+1,phase.tone,cardWidth-4,true);
-        detailLines.forEach((line,i)=>write(line,4,cardY+3+i,'muted',cardWidth-4));
-        if(expanded){write('Details',4,cardY+height-2,'text',cardWidth-4);write('Sample tool output',4,cardY+height-1,'muted',cardWidth-4);}
-      }
-    }
-    if(state==='background'){let x=2;x+=chip('2 agents',x,rail-2,'info');chip('1 queued',x,rail-2,'accent');}
-    if(state==='editing')chip('1 file changed',2,rail-2,'accent');
-    if(state==='waiting')chip('Review required',2,rail-2,'warning');
-    const statusX=11, statusWidth=columns-statusX-2, context='12% / 272k';
-    regions.presence={x:2,y:rail,width:6,height:1};
-    const stops=ascii?' .-=#':' ·▪▰▮';
-    for(let i=0;i<6;i++) {
-      let signal=Math.sin(i*0.9-time*4);
-      if(state==='thinking')signal=Math.sin(i*0.5-time*2);
-      if(state==='editing')signal=Math.sin(Math.floor(time*4)+i%2*Math.PI);
-      if(state==='background')signal=Math.sin(i*0.9-time);
-      if(state==='compacting')signal=Math.sin(Math.abs(i-2.5)*1.8+time*4);
-      let level=phase.motion&&!reduced?Math.floor((signal+1)*2):i===2||i===3?3:1;
-      level=Math.max(0,Math.min(4,level));write(stops[level],2+i,rail,phase.tone,1);
-    }
-    if(['done','error','cancelled','waiting'].includes(state))write(state==='done'?(ascii?'+':'✓'):state==='error'?'!':state==='waiting'?'?':'-',4,rail,phase.tone,1,true);
-    write(context,statusX,rail,'muted',statusWidth);
-    let phaseX=statusX+context.length+2, phaseY=rail;
-    let phaseRows=[phase.label];
-    if(phaseX+phase.label.length>columns-2){phaseX=statusX;phaseY++;phaseRows=wrap(phase.label,statusWidth);}
-    regions.status={x:phaseX,y:phaseY,width:columns-phaseX-2,height:phaseRows.length};
-    phaseRows.forEach((line,dy)=>[...line].forEach((ch,dx)=>{
-      write(ch,phaseX+dx,phaseY+dy,phase.tone,1);
-      if(phase.motion&&!reduced)grid[phaseY+dy][phaseX+dx].glow=0.65+0.35*(Math.sin(dx*0.4-time*3)+1)/2;
-    }));
-    regions.editor={x:2,y:editorY,width:columns-4,height:2};
-    fill(2,editorY,columns-4,2,'surface');
-    for(let y=editorY;y<editorY+2;y++)write(ascii?'|':'▏',2,y,'accent',1);
-    write('>',4,editorY,'accent',1,true);
-    write('Describe a task',6,editorY,'muted',columns-9);
-    const metadata=columns<65?'sol / medium':'gpt-5.6-sol / medium';
-    write(metadata,2,rows-1,'muted',columns-4);
-    if(columns>=65)write('/ commands  @ files',columns-21,rows-1,'muted',19);
-    return {grid,regions,palette,phase:phase.label,phaseRows};
-  }
-  return {render,states,palettes,wrap};
+  return {frame};
 })();
-if(typeof document!=='undefined') {
-  const byId=id=>document.getElementById(id);
-  const screen=byId('screen'),terminal=byId('terminal'),scene=byId('scene');
-  let light=false,expanded=false,paused=matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let columns=100,cells=[],last=0,request=0,sequence=0,start=performance.now(),entered=start,frozen=0;
-  function size(){
-    const probe=document.createElement('span');probe.className='cell';probe.textContent='M';screen.append(probe);
-    const cellWidth=probe.getBoundingClientRect().width;probe.remove();
-    const style=getComputedStyle(terminal),room=terminal.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);
-    columns=Math.max(32,Math.min(Number(byId('width').value),Math.floor(room/cellWidth)));
-    screen.replaceChildren();cells=[];
-    for(let y=0;y<30;y++){for(let x=0;x<columns;x++){const span=document.createElement('span');span.className='cell';span.textContent=' ';cells.push(span);screen.append(span);}if(y<29)screen.append(document.createTextNode('\n'));}
-    byId('dimensions').textContent=`${columns} × 30 cells`;draw(performance.now(),true);
-  }
-  function draw(now,force=false){
-    if(!force&&now-last<50)return;last=now;
-    const result=motionStudy.render({columns,state:scene.value,time:paused?frozen:(now-start)/1000,entranceTime:(now-entered)/1000,theme:light?'light':'dark',characters:byId('characters').value,expanded,reduced:paused});
-    result.grid.flat().forEach((cell,i)=>{const span=cells[i];span.textContent=cell.ch;span.style.color=result.palette[cell.fg];span.style.background=result.palette[cell.bg];span.style.fontWeight=cell.bold?'700':'400';span.style.opacity=cell.glow;});
-  }
-  function moving(now){return motionStudy.states[scene.value].motion||(scene.value==='welcome'&&now-entered<850);}
-  function tick(now){draw(now);if(!paused&&!document.hidden&&moving(now))request=requestAnimationFrame(tick);}
-  function arm(){cancelAnimationFrame(request);if(!paused&&!document.hidden&&moving(performance.now()))request=requestAnimationFrame(tick);}
-  function changed(){entered=performance.now();byId('announcement').textContent=motionStudy.states[scene.value].label;draw(performance.now(),true);arm();}
-  scene.addEventListener('change',changed);byId('width').addEventListener('change',size);byId('characters').addEventListener('change',()=>draw(performance.now(),true));
-  byId('details').addEventListener('click',()=>{expanded=!expanded;byId('details').textContent=expanded?'Collapse tool details':'Expand tool details';byId('details').setAttribute('aria-pressed',String(expanded));draw(performance.now(),true);});
-  byId('theme').addEventListener('click',()=>{light=!light;terminal.classList.toggle('light',light);byId('theme').textContent=light?'Dark theme':'Light theme';byId('theme').setAttribute('aria-pressed',String(light));draw(performance.now(),true);});
-  byId('pause').addEventListener('click',()=>{if(!paused)frozen=(performance.now()-start)/1000;else start=performance.now()-frozen*1000;paused=!paused;byId('pause').textContent=paused?'Resume motion':'Pause motion';byId('pause').setAttribute('aria-pressed',String(paused));draw(performance.now(),true);arm();});
-  byId('sequence').addEventListener('click',()=>{
-    if(sequence){clearInterval(sequence);sequence=0;byId('sequence').textContent='Play event sequence';return;}
-    const events=['welcome','thinking','reading','editing','background','compacting','waiting','done'];let index=0;scene.value=events[index];changed();byId('sequence').textContent='Stop sequence';
-    sequence=setInterval(()=>{index++;if(index===events.length){clearInterval(sequence);sequence=0;byId('sequence').textContent='Play event sequence';return;}scene.value=events[index];changed();},2400);
-  });
-  document.addEventListener('visibilitychange',arm);new ResizeObserver(size).observe(terminal);
-  if(paused){byId('pause').textContent='Resume motion';byId('pause').setAttribute('aria-pressed','true');}
-  size();changed();
+if(typeof document!=='undefined'){
+  const byId=id=>document.getElementById(id),logo=byId('logo');
+  let light=false,ascii=false,reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let started=performance.now(),request=0,last=0;
+  const cells=[];
+  for(let y=0;y<5;y++){for(let x=0;x<29;x++){const cell=document.createElement('span');cell.className='cell';logo.append(cell);cells.push(cell);}if(y<4)logo.append(document.createTextNode('\n'));}
+  function draw(now){welcomeStudy.frame({elapsed:(now-started)/1000,light,ascii,reduced}).flat().forEach((cell,i)=>{cells[i].textContent=cell.ch;cells[i].style.color=cell.color;cells[i].style.opacity=cell.opacity;});}
+  function tick(now){if(now-last>=50){draw(now);last=now;}if(!reduced&&!document.hidden&&now-started<850)request=requestAnimationFrame(tick);else draw(now);}
+  function arm(){cancelAnimationFrame(request);draw(performance.now());if(!reduced&&!document.hidden&&performance.now()-started<850)request=requestAnimationFrame(tick);}
+  byId('replay').addEventListener('click',()=>{started=performance.now();arm();});
+  byId('theme').addEventListener('click',()=>{light=!light;byId('stage').classList.toggle('light',light);byId('theme').textContent=light?'Dark theme':'Light theme';byId('theme').setAttribute('aria-pressed',String(light));draw(performance.now());});
+  byId('ascii').addEventListener('click',()=>{ascii=!ascii;byId('ascii').textContent=ascii?'Unicode logo':'ASCII fallback';byId('ascii').setAttribute('aria-pressed',String(ascii));draw(performance.now());});
+  byId('motion').addEventListener('click',()=>{reduced=!reduced;byId('motion').textContent=reduced?'Enable entrance motion':'Reduce motion';byId('motion').setAttribute('aria-pressed',String(reduced));arm();});
+  if(reduced){byId('motion').textContent='Enable entrance motion';byId('motion').setAttribute('aria-pressed','true');}
+  document.addEventListener('visibilitychange',arm);arm();
 }
 </script>
 </body>
