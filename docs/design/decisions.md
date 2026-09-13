@@ -4,7 +4,7 @@ Review one component at a time. Open its HTML proposal with macOS `open`, then w
 explicit approval. Feedback revises that component only. An approval locks the named version and
 scope; changes to it need another review. Design approval does not authorize native implementation.
 
-Components through the skill picker are approved. The current review is **Message queue,
+Components through the message queue are approved. The current review is **Child-agent view,
 proposal 1**.
 
 Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
@@ -24,8 +24,8 @@ welcome-logo colors stay fixed.
 | 8 | Session picker | Approved and locked | [Proposal 1](components/sessions-v1.html) |
 | 9 | File picker | Approved and locked | [Proposal 1](components/files-v1.html) |
 | 10 | Skill picker | Approved and locked | [Proposal 1](components/skills-v1.html) |
-| 11 | Message queue | Awaiting approval | [Proposal 1](components/queue-v1.html) |
-| 12 | Child-agent views | Not started | Review separately from the queue. |
+| 11 | Message queue | Approved and locked | [Proposal 1](components/queue-v1.html) |
+| 12 | Child-agent view | Awaiting approval | [Proposal 1](components/agents-v1.html) |
 | 13 | Review prompts and notifications | Not started | Preserve existing actions and event meaning. |
 | 14 | Welcome placement and final consistency | Not started | Check approved components together, including light and narrow layouts. |
 
@@ -315,8 +315,8 @@ Its pending-review label is historical; this registry records approval.
 
 ## Message queue, proposal 1
 
-The [HTML](components/queue-v1.html) keeps the bordered stack above the approved composer. No
-approval recorded yet. Source: `components/queue.rs`, Root's queue/edit/steer handlers, and
+The [HTML](components/queue-v1.html) keeps the bordered stack above the approved composer. Approved
+by the user. Source: `components/queue.rs`, Root's queue/edit/steer handlers, and
 `Submission` in `tui/prompt.rs`.
 
 - Keep rounded borders and separators between messages. Use the existing accent color and a
@@ -359,3 +359,51 @@ cover callback order, late events after cancellation, promotion, failed steering
 selected-ID stability, bounded rendering, click/viewport mapping, multimodal payloads, draft
 restoration, and idle CPU. No native queue or agent implementation changed. Child-agent views are
 next after approval.
+
+Locked artifact: `queue-v1.html` at `1f8b578`, SHA-256
+`8406b2aba5080217576c019e768ee3448ad22ada4d2980f92bc49b05b1afcee2`.
+Its pending-review label is historical; this registry records approval.
+
+## Child-agent view, proposal 1
+
+The [HTML](components/agents-v1.html) keeps the tree and read-only transcript inspector. No approval
+recorded yet. Source: `components/subagents.rs`, `subagent_tree_layout.rs`, Root's subagent effects,
+and `crates/subagents/src/model.rs` / `capacity.rs`.
+
+- Keep rounded 24 × 4 nodes, the green focus border, and current status/model colors. Keep agent
+  IDs and roles on nodes. Node child counts refer to the filtered tree; the inspector distinguishes
+  visible and total children.
+- Wrap the selected task into two fixed rows. For a failed agent, use the second row for a bounded
+  error excerpt from the existing status value. Keep model and session identity in the inspector.
+- Show the descriptor's actual parent. If filtering hides that parent, label it hidden rather than
+  implying the child belongs directly to the root. Preserve the native visible-tree promotion rule.
+- Keep the active filter's exact meaning: Pending, Running, Closing. All retains completed,
+  interrupted, failed, and closed agents for inspection. Opening or changing filters selects the
+  oldest matching AgentId, as the current implementation does.
+- Keep parent/child and same-level navigation, h/j/k/l aliases, Home, F filter, Enter inspect,
+  +/- limit, and Escape. Preserve remembered-child navigation. Mouse focus is a proposed addition;
+  clicking a node does not start, stop, or message an agent.
+- If the visible tree fits, show the whole tree without moving the camera between its nodes.
+  Otherwise keep the focus visible using the current bounded camera approach. Reduced motion
+  snaps. Below 80 columns, use a compact indented hierarchy with the same navigation semantics.
+- Keep the active count and concurrency limit distinct. Lowering the limit may leave more active
+  agents than the new limit; do not terminate or relabel them. Preserve `SetMaxSubagents` and the
+  current runtime capacity policy. Preview limit changes affect only sample state.
+- Enter opens the selected agent's transcript full-screen, using the approved conversation style.
+  Keep scrolling, expansion, selection, links, and Escape's blur-before-back behavior. The browser
+  transcript is illustrative and does not replace the native transcript component.
+
+Performance requirement: the current `animation_deadline` / `advance` iterate over every child
+transcript. Restrict recurring rendering work to the visible tree/camera or selected inspector.
+Continue ingesting and storing all hidden agent events and messages. Do not pause agents to reduce
+UI work. Cache layout by hierarchy/filter changes and update metadata without relaying out the tree.
+
+Keep AgentId scoped to the existing root/runtime routing; ignore stale updates through the current
+ownership boundary. Retain native cycle/orphan handling, reusable-session semantics, and typed
+status updates. Do not infer completion from assistant text or add kill/restart/send controls.
+
+The browser uses a valid fixed hierarchy, not a replacement layout engine. Native checks must cover
+filter promotion, real parent identity, focus repair, cousin navigation, interrupted camera motion,
+status updates during inspection, links/selection, limit changes below active count, empty views,
+small dimensions, and hidden-transcript wakeups. Review dialogs and remaining utility views follow
+after approval.
