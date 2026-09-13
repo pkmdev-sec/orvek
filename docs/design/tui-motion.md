@@ -6,13 +6,13 @@ Status: design only, on `design/tui-motion`. Native source baseline: `59bef36`.
 [conversation and execution](components/transcript-v1.html), [Actions](components/actions-v1.html),
 [activity indicator](components/activity-v1.html), [model selector](components/model-v1.html), and
 [effort selector](components/effort-v1.html), [session picker](components/sessions-v1.html), and
-[file picker](components/files-v1.html),
+[file picker](components/files-v1.html), and [skill picker](components/skills-v1.html),
 with the existing native color scheme.
 **Baseline for everything else:** the existing native Orvek interface.
 
 Follow the [component review order](decisions.md): present one HTML proposal, open it for the user,
 and wait for explicit approval before starting the next component. The current proposal is
-[skill picker](components/skills-v1.html). Approved versions stay fixed unless
+[message queue](components/queue-v1.html). Approved versions stay fixed unless
 the user reopens them.
 
 The chat bar, execution presentation, and Actions menu need focused improvements. Their current

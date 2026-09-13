@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Message queue · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:740px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.toggle{display:flex;gap:8px;align-items:center;min-height:36px}.toggle input{accent-color:#aebfcb}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--border:#59646e;--accent:#76a9df;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 22px 22px;overflow:auto}.canvas.light{--base:#f7f8f9;--text:#283441;--muted:#627180;--border:#909ba5;--accent:#265f99}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:26px;gap:12px}.stage{min-height:185px;display:grid;place-items:start center}.frame{position:relative;font:15px/23px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.grid{font:inherit;white-space:pre;user-select:none;margin:0}.cell{display:inline-block;width:1ch;height:23px;vertical-align:top}.border{color:var(--border)}.muted{color:var(--muted)}.accent{color:var(--accent);font-weight:600}.title{font-weight:600}.search{position:absolute;top:23px;left:11ch;font:inherit;line-height:23px;padding:0;border:0;outline:0;background:var(--base);color:var(--text);height:23px;min-width:0;border-radius:0;caret-color:var(--text)}.hit{position:absolute;left:1ch;min-height:0;height:23px;background:transparent;border:0;border-radius:0;padding:0;margin:0;outline:none}.hit:hover{background:#7a89990b}.note{font-size:11px;color:var(--muted);margin:24px 0 0}.notice{min-height:21px;color:var(--muted);font-size:12px;margin-top:18px}.closed{font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);padding-top:120px}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:16px 8px}.explanation{grid-template-columns:1fr;gap:16px}.frame{font-size:13px}h1{font-size:27px}}
+.italic{font-style:italic}.frame{outline:none}.test-editor{margin:18px 0;padding:16px;border:1px solid #39424d;border-radius:5px}.test-editor textarea{width:100%;min-height:90px;margin:10px 0;background:#1c222b;color:#dbe2eb;border:1px solid #495564;border-radius:4px;padding:10px;font:14px/1.5 ui-monospace,monospace}.test-editor p{font-size:12px;color:#a9b3bf;margin:0}.test-editor[hidden]{display:none}.detail{color:var(--muted);font-size:12px;min-height:20px;margin-top:20px}button:disabled{opacity:.5;cursor:default}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>The message queue</h1>
+<p class="intro">One proposal: keep the compact stack, make pending states explicit, and keep the selected message visible in long queues.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Sample<select id="scenario"><option value="queued">Queued messages</option><option value="pending">Steer accepted</option><option value="retained">Retained after cancellation</option><option value="long">Long queue</option><option value="empty">Empty queue</option></select></label>
+<label>Width<select id="width"><option value="100">100 columns</option><option value="80">80 columns</option><option value="50">50 columns</option><option value="32">32 columns</option></select></label>
+<label>Available queue space<select id="capacity"><option value="3">3 messages</option><option value="2">2 messages</option><option value="1">1 message</option></select></label>
+<button id="focus" type="button">Focus queue</button><button id="advance" type="button">Finish sample turn</button><button id="reject" type="button">Reject sample steer</button><button id="reset" type="button">Reset sample</button>
+<label class="toggle"><input id="reduce" type="checkbox">Reduce motion</label>
+</div>
+<div class="test-editor" id="editor-controls" hidden><p>Test editor only. The native app uses the already approved composer for queue edits.</p><textarea id="edit-text" aria-label="Edit sample queued message" spellcheck="false"></textarea><button id="save-edit" type="button">Save sample edit</button> <button id="cancel-edit" type="button">Cancel sample edit</button></div>
+<section class="canvas" id="canvas" aria-label="Queue preview">
+<div class="caption"><span>QUEUE / ABOVE THE COMPOSER</span><span id="dimensions"></span></div>
+<div class="stage"><div class="frame" id="frame" tabindex="0" aria-label="Pending message queue"><pre class="grid" id="grid" aria-hidden="true"></pre><div id="hits"></div></div></div>
+<div class="detail" id="detail"></div><div class="notice" id="notice" role="status"></div>
+<p class="note">Arrows select. Shift+arrows reorder queued items. E edits; D deletes; Enter steers; Esc returns focus. Pending and retained items cannot be edited, deleted, or steered again. All events are manual samples; nothing is sent to an agent.</p>
+</section>
+<div class="explanation">
+<div><h2>Keep the existing stack</h2><p>One rounded queue with separators. Long queues scroll within the available slots, so the selected message remains visible.</p></div>
+<div><h2>Accepted is not applied</h2><p>Steer requests remain visible through sending and acknowledgement. Only the corresponding application or promotion event removes them.</p></div>
+<div><h2>Editing stays recoverable</h2><p>Cancel restores the original message. Saving keeps its queue identity and position. The approved composer remains the native editor.</p></div>
+</div>
+<div class="foot"><span>Review the queue only. Status explanations and event buttons outside it are test controls.</span><a href="../decisions.md">Review order and approvals</a></div>
+</main>
+<script>
+const queueStudy=(()=>{
+ const states={Queued:'',Editing:'editing',SubmittingSteer:'sending',AdmittedSteer:'accepted',CancelledSteer:'retained'};
+ class Queue{
+  constructor(texts=[]){this.items=texts.map((text,id)=>({id,text,state:'Queued'}));this.selected=Math.max(0,this.items.length-1);this.focused=true;this.waitingAck=0;}
+  repair(){this.selected=Math.min(this.selected,Math.max(0,this.items.length-1));if(!this.items.length)this.focused=false;}
+  lane(){let n=0;for(const item of this.items){if(!['SubmittingSteer','AdmittedSteer','CancelledSteer'].includes(item.state))break;n++;}return n;}
+  pending(){return this.items.some(item=>['SubmittingSteer','AdmittedSteer'].includes(item.state));}
+  removeId(id){const selectedId=this.items[this.selected]?.id,i=this.items.findIndex(item=>item.id===id);if(i<0)return null;const [item]=this.items.splice(i,1);const retained=this.items.findIndex(item=>item.id===selectedId);if(retained>=0)this.selected=retained;this.repair();return item;}
+  move(direction){this.selected=Math.max(0,Math.min(this.items.length-1,this.selected+direction));}
+  reorder(direction){const other=Math.max(0,Math.min(this.items.length-1,this.selected+direction));if(!this.items[this.selected]||this.items[this.selected].state!=='Queued'||this.items[other].state!=='Queued')return false;[this.items[this.selected],this.items[other]]=[this.items[other],this.items[this.selected]];this.selected=other;return true;}
+  delete(){const item=this.items[this.selected];return item?.state==='Queued'?this.removeId(item.id):null;}
+  edit(){const item=this.items[this.selected];if(item?.state!=='Queued')return null;item.state='Editing';return {id:item.id,text:item.text};}
+  finishEdit(id,text){const i=this.items.findIndex(item=>item.id===id);if(i<0)return;if(!text.trim()){this.removeId(id);return;}this.items[i].text=text;this.items[i].state='Queued';this.selected=i;}
+  cancelEdit(id){const item=this.items.find(item=>item.id===id);if(item?.state==='Editing')item.state='Queued';}
+  steer(){const item=this.items[this.selected];if(item?.state!=='Queued')return null;this.items.splice(this.selected,1);item.state='SubmittingSteer';const at=this.lane();this.items.splice(at,0,item);this.selected=at;return item.id;}
+  admitted(id){const item=this.items.find(item=>item.id===id);if(!item)return null;item.state='AdmittedSteer';if(!this.waitingAck)return null;this.waitingAck--;return this.removeId(id);}
+  applied(){const item=this.items.find(item=>['AdmittedSteer','CancelledSteer'].includes(item.state));if(item)return this.removeId(item.id);if(this.items.some(item=>item.state==='SubmittingSteer'))this.waitingAck++;return null;}
+  promoted(id){return this.removeId(id);}
+  failed(id){const selectedId=this.items[this.selected]?.id,i=this.items.findIndex(item=>item.id===id);if(i<0)return;const [item]=this.items.splice(i,1);item.state='Queued';this.items.splice(this.lane(),0,item);const next=this.items.findIndex(item=>item.id===selectedId);if(next>=0)this.selected=next;}
+  cancelSteers(){this.items.sort((a,b)=>Number(['Queued','Editing'].includes(a.state))-Number(['Queued','Editing'].includes(b.state)));this.items.forEach(item=>{if(['SubmittingSteer','AdmittedSteer'].includes(item.state))item.state='CancelledSteer';});this.selected=0;this.waitingAck=0;}
+  drain(){const selectedId=this.items[this.selected]?.id;let n=0;while(n<this.items.length&&['Queued','CancelledSteer'].includes(this.items[n].state))n++;const result=this.items.splice(0,n);const retained=this.items.findIndex(item=>item.id===selectedId);if(retained>=0)this.selected=retained;this.repair();return result;}
+ }
+ function sample(kind='queued'){
+  const q=new Queue(kind==='empty'?[]:kind==='long'?Array.from({length:12},(_,i)=>`Follow-up ${i+1}: inspect the next source file.`):['Check the session restore path.','Keep the existing keyboard shortcuts.','Then add focused regression tests.']);
+  if(kind==='pending'){q.selected=0;const id=q.steer();q.admitted(id);}
+  if(kind==='retained'){q.selected=0;q.steer();q.cancelSteers();}
+  return q;
+ }
+ const cut=(s,w)=>w<=0?'':s.length<=w?s:s.slice(0,w-1)+'…';
+ const inline=s=>s.replace(/\r\n|\r|\n/g,' ').replace(/\t/g,'    ').replace(/[\x00-\x1f\x7f-\x9f]/g,'�');
+ function help(q,columns){const item=q.items[q.selected];const variants=!q.focused?['tab manage queue']:item?.state==='Queued'?['↑↓ select · ⇧↑↓ reorder · e edit · enter steer · d delete · esc back','↑↓ select · e edit · enter steer · d delete · esc back','↑↓ select · enter steer · esc back','↑↓ · enter steer · esc']:item?.state==='Editing'?['enter save · esc cancel']:['↑↓ navigate · esc back','↑↓ · esc back'];return variants.find(s=>s.length<=columns-4)||'esc back';}
+ function layout(q,{columns=100,capacity=3}={}){
+  if(columns<32||capacity<1)throw new Error('Preview requires 32 columns and one visible message.');
+  if(!q.items.length)return {grid:[],height:0,hits:[],wave:[],first:0,count:0};
+  const count=Math.min(capacity,q.items.length),first=Math.max(0,Math.min(q.selected-count+1,q.items.length-count)),height=count*2+1;
+  const grid=Array.from({length:height},()=>Array.from({length:columns},()=>({ch:' ',role:'text'}))),hits=[],wave=[];
+  function write(value,x,y,role='text'){[...value].forEach((ch,index)=>{if(x+index>=columns-1||y>=height)throw new Error('Row overflow.');grid[y][x+index]={ch,role};});}
+  for(let x=1;x<columns-1;x++){grid[0][x]={ch:'─',role:'border'};grid[height-1][x]={ch:'─',role:'border'};}
+  for(let y=1;y<height-1;y++){grid[y][0]={ch:'│',role:'border'};grid[y][columns-1]={ch:'│',role:'border'};}
+  [['╭',0,0],['╮',columns-1,0],['╰',0,height-1],['╯',columns-1,height-1]].forEach(([ch,x,y])=>{grid[y][x]={ch,role:'border'};});
+  let title=` queue · ${q.items.length} `;if(q.pending()&&title.length+12<=columns-4){title+='· steering ';const start=2+title.indexOf('steering');for(let i=0;i<8;i++)wave.push(start+i);}write(title,2,0,'muted');
+  const range=` ${first+1}–${first+count}/${q.items.length} `;if(q.items.length>count&&title.length+range.length+5<columns)write(range,columns-range.length-2,0,'muted');
+  q.items.slice(first,first+count).forEach((item,i)=>{
+   const y=1+i*2;if(i){grid[y-1][0]={ch:'├',role:'border'};grid[y-1][columns-1]={ch:'┤',role:'border'};for(let x=1;x<columns-1;x++)grid[y-1][x]={ch:'─',role:'border'};}
+   const selected=q.focused&&first+i===q.selected,readonly=item.state!=='Queued',status=states[item.state];
+   if(selected)write('›',1,y,readonly?'muted':'accent');
+   const available=columns-5-(status?status.length+2:0);write(cut(inline(item.text),available),3,y,readonly?'muted italic':selected?'accent':'text');if(status)write(status,columns-status.length-2,y,'muted');
+   hits.push({id:item.id,index:first+i,y,state:item.state});
+  });
+  const footer=' '+help(q,columns)+' ';write(footer,Math.floor((columns-footer.length)/2),height-1,'muted');
+  return {grid,height,hits,wave,first,count};
+ }
+ return {Queue,states,sample,layout,inline};
+})();
+if(typeof document!=='undefined'){
+ const id=x=>document.getElementById(x),frame=id('frame'),grid=id('grid'),canvas=id('canvas'),hits=id('hits');
+ let q=queueStudy.sample(),columns=100,capacity=3,cells=[],size='',hitKey='',lastLayout,editing=null,ticket=0;
+ id('reduce').checked=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ function setNotice(message){id('notice').textContent=message;}
+ function render(){
+  lastLayout=queueStudy.layout(q,{columns,capacity});frame.hidden=!q.items.length;frame.style.width=`${columns}ch`;
+  const dimension=`${columns}:${lastLayout.height}`;if(size!==dimension){size=dimension;grid.replaceChildren();cells=[];for(let y=0;y<lastLayout.height;y++){for(let x=0;x<columns;x++){const span=document.createElement('span');grid.append(span);cells.push(span);}if(y<lastLayout.height-1)grid.append(document.createTextNode('\n'));}}
+  lastLayout.grid.flat().forEach((cell,index)=>{const span=cells[index],role=`cell ${cell.role}`;if(span.textContent!==cell.ch)span.textContent=cell.ch;if(span.className!==role)span.className=role;span.style.color='';});
+  const key=columns+':'+lastLayout.hits.map(row=>row.id+':'+row.y).join('|');if(key!==hitKey){hitKey=key;hits.replaceChildren();lastLayout.hits.forEach(row=>{const button=document.createElement('button');button.type='button';button.className='hit';button.tabIndex=-1;button.style.top=`${row.y*23}px`;button.style.width=`${columns-2}ch`;button.setAttribute('aria-label','Focus queued message '+(row.index+1));button.addEventListener('click',()=>{if(editing)return;q.selected=q.items.findIndex(item=>item.id===row.id);q.focused=true;render();frame.focus();});hits.append(button);});}
+  id('editor-controls').hidden=!editing;
+  const item=q.items[q.selected];id('detail').textContent=!item?'':item.state==='AdmittedSteer'?'Accepted by the runtime; still waiting for application.':item.state==='SubmittingSteer'?'Steer request sent; acknowledgement is pending.':item.state==='CancelledSteer'?'Retained after cancellation; still held by the queue.':item.state==='Editing'?'The native app edits this message in the approved composer.':'Waiting in the queue. Enter steers the selected message.';
+  const pending=q.items.find(item=>['SubmittingSteer','AdmittedSteer'].includes(item.state));id('advance').textContent=pending?(pending.state==='SubmittingSteer'?'Acknowledge sample steer':'Apply sample steer'):'Finish sample turn';
+  id('reject').disabled=!pending;arm();
+ }
+ function tick(){if(document.hidden||!q.pending()||id('reduce').checked)return;const now=performance.now();lastLayout.wave.forEach((x,i)=>{const shade=Math.round(165+55*(Math.sin(i*.55-now/500)+1)/2);if(cells[x])cells[x].style.color=`rgb(${shade},${shade},${shade})`;});ticket=setTimeout(tick,140);}
+ function arm(){clearTimeout(ticket);if(!document.hidden&&q.pending()&&!id('reduce').checked&&lastLayout.wave.length)ticket=setTimeout(tick,140);}
+ function advance(){const pending=q.items.find(item=>['SubmittingSteer','AdmittedSteer'].includes(item.state));if(pending?.state==='SubmittingSteer'){q.admitted(pending.id);setNotice('Sample acknowledgement received. The message stays visible until applied.');}else if(pending){const applied=q.applied();setNotice(applied?'Sample steer applied: '+applied.text:'Sample application is waiting for acknowledgement.');}else{const batch=q.drain();setNotice(batch.length?`Sample ready batch: ${batch.length} message(s), joined in their queue order. Nothing was sent.`:'No ready prefix can be submitted in this sample state.');}render();}
+ function finishEdit(save){if(!editing)return;const edit=editing;editing=null;if(save)q.finishEdit(edit.id,id('edit-text').value);else q.cancelEdit(edit.id);setNotice(save?'Sample edit saved. The native app restores the previous composer draft.':'Sample edit cancelled; the original queued text remains.');render();if(q.items.length)frame.focus();}
+ function reset(){clearTimeout(ticket);editing=null;q=queueStudy.sample(id('scenario').value);hitKey='';setNotice(q.items.length?'All messages and events are simulated.':'No queue is rendered when empty.');render();}
+ function resize(){const probe=document.createElement('span');probe.className='cell';probe.textContent='M';const hidden=frame.hidden;frame.hidden=false;grid.append(probe);const width=probe.getBoundingClientRect().width;probe.remove();frame.hidden=hidden;const style=getComputedStyle(canvas),available=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);columns=Math.max(32,Math.min(Number(id('width').value),Math.floor(available/width)));capacity=Number(id('capacity').value);id('dimensions').textContent=`${columns} columns · ${capacity} visible slots`;render();}
+ frame.addEventListener('keydown',event=>{if(editing||!q.items.length)return;if(event.key==='Escape'){event.preventDefault();q.focused=false;render();frame.blur();id('focus').focus();return;}if(!q.focused)return;
+  if(event.key==='ArrowUp'||event.key==='ArrowDown'){event.preventDefault();const direction=event.key==='ArrowDown'?1:-1;if(event.shiftKey)q.reorder(direction);else q.move(direction);render();}
+  else if(event.key==='d'||event.key==='Delete'||event.key==='Backspace'){event.preventDefault();q.delete();render();}
+  else if(event.key==='e'){event.preventDefault();editing=q.edit();if(editing){id('edit-text').value=editing.text;render();id('edit-text').focus();}}
+  else if(event.key==='Enter'){event.preventDefault();const sent=q.steer();if(sent!==null)setNotice('Sample steer request sent. Use the event control above to acknowledge and apply it.');render();}
+ });
+ id('focus').addEventListener('click',()=>{if(editing||!q.items.length)return;q.focused=true;render();frame.focus();});id('advance').addEventListener('click',advance);
+ id('reject').addEventListener('click',()=>{const pending=q.items.find(item=>['SubmittingSteer','AdmittedSteer'].includes(item.state));if(pending){q.failed(pending.id);setNotice('Sample steer failed. Its message remains queued after any pending steers.');render();}});
+ id('save-edit').addEventListener('click',()=>finishEdit(true));id('cancel-edit').addEventListener('click',()=>finishEdit(false));
+ id('edit-text').addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();finishEdit(false);}else if(event.key==='Enter'&&!event.shiftKey&&!event.ctrlKey&&!event.altKey){event.preventDefault();finishEdit(true);}});
+ id('scenario').addEventListener('change',reset);id('reset').addEventListener('click',reset);id('width').addEventListener('change',resize);id('capacity').addEventListener('change',resize);id('reduce').addEventListener('change',render);
+ document.addEventListener('visibilitychange',arm);new ResizeObserver(resize).observe(canvas);resize();setNotice('All messages and events are simulated.');frame.focus();
+}
+</script>
+</body>
+</html>

@@ -4,7 +4,7 @@ Review one component at a time. Open its HTML proposal with macOS `open`, then w
 explicit approval. Feedback revises that component only. An approval locks the named version and
 scope; changes to it need another review. Design approval does not authorize native implementation.
 
-Components through the file picker are approved. The current review is **Skill picker,
+Components through the skill picker are approved. The current review is **Message queue,
 proposal 1**.
 
 Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
@@ -23,10 +23,11 @@ welcome-logo colors stay fixed.
 | 7 | Effort selector | Approved and locked | [Proposal 1](components/effort-v1.html) |
 | 8 | Session picker | Approved and locked | [Proposal 1](components/sessions-v1.html) |
 | 9 | File picker | Approved and locked | [Proposal 1](components/files-v1.html) |
-| 10 | Skill picker | Awaiting approval | [Proposal 1](components/skills-v1.html) |
-| 11 | Queue and child-agent views | Not started | Preserve existing workflow. |
-| 12 | Review prompts and notifications | Not started | Preserve existing actions and event meaning. |
-| 13 | Welcome placement and final consistency | Not started | Check approved components together, including light and narrow layouts. |
+| 10 | Skill picker | Approved and locked | [Proposal 1](components/skills-v1.html) |
+| 11 | Message queue | Awaiting approval | [Proposal 1](components/queue-v1.html) |
+| 12 | Child-agent views | Not started | Review separately from the queue. |
+| 13 | Review prompts and notifications | Not started | Preserve existing actions and event meaning. |
+| 14 | Welcome placement and final consistency | Not started | Check approved components together, including light and narrow layouts. |
 
 ## Chat bar, proposal 1
 
@@ -281,8 +282,8 @@ Its pending-review label is historical; this registry records approval.
 
 ## Skill picker, proposal 1
 
-The [HTML](components/skills-v1.html) keeps the 72 × 14 rounded skill picker. No approval recorded
-here yet. Source: `components/skill_picker.rs`, `core/extensions/skills.rs`, and Root's skill-mention
+The [HTML](components/skills-v1.html) keeps the 72 × 14 rounded skill picker. Approved by the user.
+Source: `components/skill_picker.rs`, `core/extensions/skills.rs`, and Root's skill-mention
 trigger and `update_skill_picker` handler.
 
 - Keep `$name` as the primary label, with aligned short descriptions on wide screens. Narrow
@@ -307,3 +308,54 @@ The browser uses fictional skill metadata and only reports an insertion string. 
 must cover scorer parity, exact names, query/cursor ownership, shell `$` variables, empty catalogs,
 mouse routing, description truncation, terminal controls, and cancellation without draft loss.
 The queue is the next review after approval.
+
+Locked artifact: `skills-v1.html` at `7f19562`, SHA-256
+`a37faa63d4d2253e1345d8aa81fb4d917e723e586bdf614425dc39126887d640`.
+Its pending-review label is historical; this registry records approval.
+
+## Message queue, proposal 1
+
+The [HTML](components/queue-v1.html) keeps the bordered stack above the approved composer. No
+approval recorded yet. Source: `components/queue.rs`, Root's queue/edit/steer handlers, and
+`Submission` in `tui/prompt.rs`.
+
+- Keep rounded borders and separators between messages. Use the existing accent color and a
+  selection marker for focus, instead of an inverted text background. Keep non-queued items muted.
+- Show concise row states only when needed: editing, sending, accepted, retained. Ordinary queued
+  messages need no repeated state label. Accepted means acknowledged, not applied.
+- Keep pending steers visible until the existing applied/promoted handling resolves them. Preserve
+  the grayscale steering wave and stop it when no steer is pending or motion is disabled/hidden.
+- Render a viewport of complete message rows. Normal review capacity is three messages; Root may
+  allocate less space to preserve the composer and transcript. Scroll to the selected item and
+  map mouse rows through the visible range. Never draw separators over the footer.
+- Keep selection attached to its QueueId when a different item is removed by a background event.
+  This is a proposed correctness improvement over index-only repair. Explicit deletion of the
+  selected item chooses a nearby remaining item.
+- Keep clamped arrows, Shift+arrows reorder, E edit, Enter steer, D/Delete/Backspace removal, and
+  Escape return. Only Queued items permit edit/delete/steer; reordering cannot cross non-Queued items.
+- Keep submission order within the pending steer portion. Rejected steers return to the waiting
+  portion without splitting pending steers. Cancelled steers remain retained for the existing
+  late-event/drain logic; they are not silently discarded or marked applied.
+- Preserve the acknowledgement-before-application and application-before-acknowledgement paths.
+  Preserve ready-prefix draining and `Submission::join`; do not promise one future turn per row.
+- Unfocused help offers Tab to manage the queue. Preserve Root's existing empty-draft Enter route;
+  do not advertise a different target or change dispatch implicitly.
+- Empty queues render no widget. Rendering uses sanitized display text only; steering and normal
+  submission keep the original structured payload, text, and ordering.
+
+Editing continues through the approved composer. Keep the original draft/input mode, stable queue
+identity, save/cancel behavior, and the existing empty-save removal rule. The HTML's separate text
+editor and event controls are test scaffolding, not proposed native widgets.
+
+Observed correctness issue to resolve during implementation: the native edit path currently passes
+`Submission::display_text()` into a String editor and reconstructs `text.into()` in `finish_edit`.
+That path does not preserve image payloads. Add a focused multimodal edit regression and carry a
+structured submission through the composer's attachment-aware editing path; retaining old image
+ranges after arbitrary text edits is insufficient. Do not claim image-safe editing from this
+text-only preview.
+
+The HTML tests the visible states and a bounded text-only queue simulation. Native checks must
+cover callback order, late events after cancellation, promotion, failed steering, edit barriers,
+selected-ID stability, bounded rendering, click/viewport mapping, multimodal payloads, draft
+restoration, and idle CPU. No native queue or agent implementation changed. Child-agent views are
+next after approval.
