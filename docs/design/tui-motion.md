@@ -1,7 +1,7 @@
 # TUI refinement plan
 
-Status: implementation authorized on `design/tui-motion`, with delivery to `main` and local
-installation requested by the user. Native source baseline: `59bef36`.
+Status: native implementation completed on `design/tui-motion`, pending final delivery. Native
+source baseline: `59bef36`.
 
 The [component registry](decisions.md) records approved designs and the remaining implementation
 scope. The user ended the individual approval workflow. Preserve approved visual contracts and
@@ -38,8 +38,9 @@ by itself. Keep the current theme and density unless a specific visual change is
 | Continuity | [transcript/mod.rs](../../bin/orvek/src/tui/components/transcript/mod.rs): entry-ID expansion state, anchored rows, focused-tool navigation, and Ctrl+O expansion. [transcript/model.rs](../../bin/orvek/src/tui/transcript/model.rs) links ordinary process polling to the original shell entry. |
 | Activity | [root.rs](../../bin/orvek/src/tui/components/root.rs), `refresh_activity`: actual transcript, turn, shell, compaction, and child-agent state drive presentation. |
 
-These observations come from source and existing tests. Native visual and performance checks have
-not been run in this phase.
+These observations came from source and the pre-implementation tests. The completed implementation
+uses native frame tests and the local benchmark harness; see the task-local evidence retained in
+`.codex/tasks/tui-motion/logs/`.
 
 ## Composer: fix first, then polish
 
@@ -122,17 +123,13 @@ install, asset download, or effects dependency is required.
 
 ## Phases and checks
 
-1. **Native baseline and reproduction.** Capture current composer, running shell, expanded output,
-   and Actions popup at 40/80/120 columns. Record startup, input-to-paint latency, streaming frame
-   time, idle wakeups, memory, and binary size. Keep measurements in local task evidence.
-2. **Composer correctness.** Add failing tests for visible status, region isolation, and transition
-   clearing; fix allocation and shared editor geometry. Keep the current appearance where it fits.
-3. **Approved logo.** Replace only the welcome artwork; verify immediate input and a settled clock.
-4. **Small menu/output improvements.** Evaluate the specific candidates above, one native
-   before/after comparison at a time. Preserve existing tests for disabled actions and tool continuity.
-5. **Review and verify.** Accept visual changes only after checking real terminal frames and
-   interactions. Reject performance regressions beyond baseline measurement noise. Remove task-owned
-   build output after any later authorized build/installation work is complete.
+1. **Native baseline and reproduction.** Completed in task-local evidence before implementation.
+2. **Composer correctness.** Implemented with native frame and transition tests.
+3. **Approved logo and motion.** Implemented with immediate-input and settled-clock tests.
+4. **Component completion.** Implemented the approved pickers, queue, child-agent view, notifications,
+   utility overlays, background loading, and failure-state refinements with focused tests.
+5. **Review and verify.** Review the full native diff, run the project checks and benchmark signal,
+   visually inspect isolated native frames, publish, reinstall, and remove task-owned build output.
 
 Test 32/40/50/60/80/100/120-column widths and small heights; long model/status strings; multiline and
 wide-character input; selection/copy/paste; attachments; overlays; light/dark/low-color/reduced-motion
@@ -143,6 +140,7 @@ region change. Animation ticks must not rewrap the draft or reparse the transcri
 Follow AGENTS.md: regression test revision, child fix revision, verification, then squash the fix into
 the test revision. New features include their behavioral tests in the same revision.
 
-Later implementation checks: `cargo check --all-features`, `just check-fmt`, `just clippy`, `just test`.
-None were run in this design phase. No model evaluations, installs, or native code changes were made.
-The HTML now demonstrates the welcome logo only; it does not validate composer layout or performance.
+Final implementation checks: `cargo check --all-features`, `just check-fmt`, `just clippy`,
+`just test`, the documentation/source-tree checks, and the selected TUI benchmark comparison.
+HTML fixtures are design references only; native tests and isolated terminal frames are the
+implementation evidence.

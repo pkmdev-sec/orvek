@@ -4,6 +4,10 @@ The renderer reuses wrapped draft lines for cursor movement, borrows text while 
 caches syntax styles, and avoids repeated layout work for pinned prompts. Unicode handling,
 selection, and the thinking animation remain covered by behavior tests.
 
+The refined TUI also caches notification wrapping, the child-agent tree layout, and queue
+scrolling state. Decorative animation is scheduled only while visible work is unsettled; notices
+use one expiry deadline rather than a polling timer.
+
 The scheduler combines streaming updates and lets keyboard input request an immediate frame.
 Long responses and terminal I/O still add work; a frame-rate limit is not a throughput guarantee.
 
