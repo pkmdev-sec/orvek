@@ -4,8 +4,8 @@ Review one component at a time. Open its HTML proposal with macOS `open`, then w
 explicit approval. Feedback revises that component only. An approval locks the named version and
 scope; changes to it need another review. Design approval does not authorize native implementation.
 
-The welcome logo, chat bar, and execution view are approved. The current review is **Actions menu,
-proposal 1**.
+The welcome logo, chat bar, execution view, Actions menu, and activity indicator are approved.
+The next review is **Model selector, proposal 1**.
 
 Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
 colors. The HTML uses approximate samples; those values are not a proposed replacement palette.
@@ -17,9 +17,10 @@ welcome-logo colors stay fixed.
 | 1 | Welcome logo | Approved: glyphs and colors only | [Logo](tui-motion-preview.html) |
 | 2 | Chat bar | Approved and locked | [Proposal 1](components/composer-v1.html) |
 | 3 | Conversation and execution rows | Approved and locked | [Proposal 1](components/transcript-v1.html) |
-| 4 | Actions menu | Awaiting approval | [Proposal 1](components/actions-v1.html) |
-| 5 | Persistent activity indicator | Not started | Shape and placement need approval. |
-| 6 | Model and effort selectors | Not started | Review each selector separately. |
+| 4 | Actions menu | Approved and locked | [Proposal 1](components/actions-v1.html) |
+| 5 | Persistent activity indicator | Approved and locked | [Proposal 1](components/activity-v1.html) |
+| 6 | Model selector | Preparing proposal | Current native choices and session rules stay. |
+| 7 | Effort selector | Not started | Review separately from model selection. |
 | 7 | Session, file, and skill pickers | Not started | Review each picker separately. |
 | 8 | Queue and child-agent views | Not started | Preserve existing workflow. |
 | 9 | Review prompts and notifications | Not started | Preserve existing actions and event meaning. |
@@ -83,7 +84,7 @@ receive speculative preview changes.
 ## Actions menu, proposal 1
 
 The [HTML](components/actions-v1.html) retains the rounded 58 × 19 popup, title, search row, native
-action order, selection marker, and Enter/Tab/Escape behavior. No approval recorded yet.
+action order, selection marker, and Enter/Tab/Escape behavior. Approved by the user.
 
 - Align existing aliases on the right. At narrow widths, show the selected alias below the list.
 - Keep all actions in their current order. Disabled actions remain selectable for explanation,
@@ -103,3 +104,42 @@ The HTML only reports sample selections. It never executes actions. Sample sessi
 illustrations; native availability remains owned by `RootNode` and `ActionAvailability`, including
 independent fork availability. Model selection remains restricted to a new session and compaction
 requires conversation content. Preserve existing keys and guards in implementation.
+
+Locked artifact: `actions-v1.html` at `b5079fb`, SHA-256
+`56b3d55c9a40c3492dd0e1e0362b11de1b70497f98bccb371548517cc4083bf2`.
+Its pending-review label is historical; this registry records approval.
+
+## Persistent activity indicator, proposal 1
+
+The [HTML](components/activity-v1.html) proposes a five-column, two-row mark in the current
+top-left activity position, followed by one plain state label. Approved by the user.
+
+- A small O at rest, an orbit for thinking, a moving chevron for work, inward bars for compaction,
+  a check for completion, a cross for error, and a dash for cancellation.
+- Preserve the existing seven `ActivityState` values and `RootNode::refresh_activity` ownership.
+  Tools and child agents map to Working; child completion cannot finish the whole session.
+- Preserve current activity color roles: muted for Idle/Cancelled, thinking-medium for Thinking,
+  accent for Working/Complete, thinking-high for Compacting, and thinking-xhigh for Error.
+- Remove the repeated `ORVEK /` caption. Normal layout uses two terminal rows instead of one;
+  no extra blank header row is required. Short terminals keep a one-row static symbol and label.
+- The browser draws twenty half-cells. Native rendering can pack them into ten `▀` cells, using
+  foreground/background for the upper/lower pixels. This requires no image, font install, or new
+  dependency. ASCII fallback reuses the existing native compact symbols.
+- Label and semantic color update immediately. A proposed 180 ms shape transition is followed by
+  motion only while active. Use at most 12 decorative frames per second, skip missed frames, and
+  schedule nothing after idle/final transitions settle. Reduced motion uses distinct static shapes.
+- Covered/hidden views stop drawing. The compact fallback stays still. Route deadlines through the
+  existing scheduler; do not add an independent native animation loop.
+
+The existing chat-bar thinking wave and execution-row animations remain unchanged. The static
+conversation excerpt only illustrates placement. Verify half-block rendering, terminal color
+fallbacks, short-height allocation, event precedence, and idle wakeups in native implementation.
+
+Locked artifact: `activity-v1.html`, SHA-256
+`ef82946fe8f705227ce94e52fb9084aade7e725fa7c902c138c01224a632c9a7`.
+Its pending-review label is historical; this registry records approval.
+
+Native rendering note: the current theme exposes a light/dark scheme, not the terminal's exact
+default background RGB. Preserve that background. When it is unknown, use `▀`/`▄`/`█`/space with
+reset background for on/off half-pixels; do not add a blocking startup query to reproduce HTML
+blending. Native appearance still needs verification.
