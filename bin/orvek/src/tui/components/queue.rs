@@ -18,6 +18,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 const STEERING_TEXT: &str = "steering";
+const MAX_VISIBLE_MESSAGES: usize = 3;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct QueueId(u64);
@@ -63,6 +64,7 @@ pub(super) struct MessageQueue {
     next_id: u64,
     applied_steers_waiting_for_ack: usize,
     steering_label: WavedText,
+    viewport_offset: usize,
 }
 
 impl Default for MessageQueue {
@@ -74,6 +76,7 @@ impl Default for MessageQueue {
             next_id: 0,
             applied_steers_waiting_for_ack: 0,
             steering_label: WavedText::new(STEERING_TEXT, Color::Rgb(220, 220, 220)),
+            viewport_offset: 0,
         }
     }
 }
@@ -244,21 +247,34 @@ impl MessageQueue {
     }
 
     pub(super) fn focus_row(&mut self, row: u16, area: Rect) -> bool {
-        if !area.contains(ratatui::layout::Position::new(area.x, row)) {
+        if row <= area.y || row >= area.bottom().saturating_sub(1) {
             return false;
         }
         let offset = row.saturating_sub(area.y + 1);
-        let index = usize::from(offset / 2).min(self.items.len().saturating_sub(1));
+        let index = self.viewport_offset + usize::from(offset / 2);
+        let Some(index) = (index < self.items.len()).then_some(index) else {
+            return false;
+        };
         self.selected = index;
         self.focused = !self.items.is_empty();
         true
+    }
+
+    pub(super) fn mouse_scroll(&mut self, up: bool) -> bool {
+        self.move_selection(!up)
+    }
+
+    #[cfg(test)]
+    fn selected_id(&self) -> Option<QueueId> {
+        self.items.get(self.selected).map(|item| item.id)
     }
 
     pub(super) fn desired_height(&self) -> u16 {
         if self.items.is_empty() {
             0
         } else {
-            u16::try_from(self.items.len().saturating_mul(2) + 1).unwrap_or(u16::MAX)
+            let visible = self.items.len().min(MAX_VISIBLE_MESSAGES);
+            u16::try_from(visible.saturating_mul(2) + 1).unwrap_or(u16::MAX)
         }
     }
 
@@ -275,7 +291,7 @@ impl MessageQueue {
             return None;
         }
         let item = self.items.remove(index);
-        self.repair_selection();
+        self.repair_removed_selection(index);
         Some((index, item))
     }
 
@@ -295,8 +311,13 @@ impl MessageQueue {
 
     fn remove_id(&mut self, id: QueueId) -> Option<Submission> {
         let index = self.items.iter().position(|item| item.id == id)?;
+        let selected = self.items.get(self.selected).map(|item| item.id);
         let item = self.items.remove(index);
-        self.repair_selection();
+        self.selected = self
+            .items
+            .iter()
+            .position(|item| Some(item.id) == selected)
+            .unwrap_or_else(|| self.repair_removed_selection(index));
         Some(item.prompt)
     }
 
@@ -310,6 +331,12 @@ impl MessageQueue {
         if self.items.is_empty() {
             self.focused = false;
         }
+    }
+
+    fn repair_removed_selection(&mut self, removed_index: usize) -> usize {
+        self.selected = removed_index.min(self.items.len().saturating_sub(1));
+        self.repair_selection();
+        self.selected
     }
 
     fn move_selection(&mut self, down: bool) -> bool {
@@ -471,7 +498,7 @@ impl Component for MessageQueue {
             spans.push(Span::styled(" ", Style::default().fg(border)));
             Line::from(spans)
         } else {
-            Line::styled(" queue · enter steer latest ", Style::default().fg(border))
+            Line::styled(" queue · tab manage ", Style::default().fg(border))
         };
         let mut block = Block::new()
             .borders(Borders::ALL)
@@ -487,10 +514,37 @@ impl Component for MessageQueue {
         }
         frame.render_widget(block, area);
 
-        let content_width = usize::from(area.width.saturating_sub(4));
-        for (index, item) in self.items.iter().enumerate() {
-            let offset = u16::try_from(index.saturating_mul(2)).unwrap_or(u16::MAX);
+        let content_height = usize::from(area.height.saturating_sub(2));
+        let visible_count = content_height
+            .div_ceil(2)
+            .min(MAX_VISIBLE_MESSAGES)
+            .min(self.items.len());
+        if visible_count == 0 {
+            return;
+        }
+        if self.selected < self.viewport_offset {
+            self.viewport_offset = self.selected;
+        } else if self.selected >= self.viewport_offset + visible_count {
+            self.viewport_offset = self.selected + 1 - visible_count;
+        }
+        self.viewport_offset = self
+            .viewport_offset
+            .min(self.items.len().saturating_sub(visible_count));
+
+        let content_width = usize::from(area.width.saturating_sub(5));
+        for (index, item) in self
+            .items
+            .iter()
+            .enumerate()
+            .skip(self.viewport_offset)
+            .take(visible_count)
+        {
+            let visible_index = index - self.viewport_offset;
+            let offset = u16::try_from(visible_index.saturating_mul(2)).unwrap_or(u16::MAX);
             let row_y = area.y + 1 + offset;
+            if row_y >= area.bottom().saturating_sub(1) {
+                break;
+            }
             if index > 0 {
                 let y = row_y - 1;
                 frame
@@ -512,20 +566,40 @@ impl Component for MessageQueue {
             if row_y >= area.bottom().saturating_sub(1) {
                 break;
             }
-            let mut style = if self.focused && index == self.selected {
+            let is_selected = self.focused && index == self.selected;
+            if is_selected {
+                frame.buffer_mut().set_stringn(
+                    area.x + 1,
+                    row_y,
+                    "▶",
+                    1,
+                    Style::default()
+                        .fg(theme.accent())
+                        .add_modifier(Modifier::BOLD),
+                );
+            }
+            let mut style = if is_selected {
                 Style::default()
                     .fg(theme.accent())
-                    .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.text())
             };
             if item.state != QueueItemState::Queued {
                 style = style.fg(theme.muted()).add_modifier(Modifier::ITALIC);
             }
+            let state = match item.state {
+                QueueItemState::Queued => "",
+                QueueItemState::Editing => "editing · ",
+                QueueItemState::SubmittingSteer => "sending · ",
+                QueueItemState::AdmittedSteer => "accepted · ",
+                QueueItemState::CancelledSteer => "retained · ",
+            };
+            let text = format!("{state}{}", item.prompt.display_text());
             frame.buffer_mut().set_stringn(
                 area.x + 2,
                 row_y,
-                truncate(item.prompt.display_text(), content_width),
+                truncate(&text, content_width),
                 content_width,
                 style,
             );
@@ -562,7 +636,7 @@ mod tests {
     };
     use crate::tui::theme::Theme;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend, style::Color};
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> QueueEvent {
         QueueEvent::Terminal(Event::Key(KeyEvent::new(code, modifiers)))
@@ -647,13 +721,71 @@ mod tests {
     }
 
     #[test]
-    fn queue_title_explains_how_to_steer_the_latest_message() {
+    fn queue_title_explains_how_to_manage_the_queue() {
         let mut queue = MessageQueue::default();
         queue.push("queued".to_owned());
 
         let rows = rendered_rows(&mut queue, 100, 3);
 
-        assert!(rows[0].contains(" queue · enter steer latest "));
+        assert!(rows[0].contains(" queue · tab manage "));
+    }
+
+    #[test]
+    fn queue_height_is_capped_and_scrolled_selections_stay_visible() {
+        let mut queue = MessageQueue::default();
+        for index in 0..8 {
+            queue.push(format!("item {index}"));
+        }
+
+        assert_eq!(queue.desired_height(), 7);
+        queue.set_focused(true);
+        for _ in 0..7 {
+            queue.update(key(KeyCode::Down, KeyModifiers::NONE));
+        }
+        let rows = rendered_rows(&mut queue, 40, 5);
+
+        assert!(rows[1].contains("item 6"));
+        assert!(rows[3].contains("item 7"));
+        assert!(!rows[1].contains("item 0"));
+    }
+
+    #[test]
+    fn focus_row_maps_through_the_visible_viewport() {
+        let mut queue = MessageQueue::default();
+        for index in 0..6 {
+            queue.push(format!("item {index}"));
+        }
+        for _ in 0..5 {
+            queue.update(key(KeyCode::Down, KeyModifiers::NONE));
+        }
+        let _ = rendered_rows(&mut queue, 40, 7);
+        assert!(queue.focus_row(5, Rect::new(10, 0, 40, 7)));
+
+        assert_eq!(queue.selected_id(), Some(QueueId::new(5)));
+        assert!(!queue.focus_row(0, Rect::new(10, 0, 40, 7)));
+        assert!(!queue.focus_row(6, Rect::new(10, 0, 40, 7)));
+    }
+
+    #[test]
+    fn background_removal_keeps_selection_attached_to_its_queue_id() {
+        let mut queue = MessageQueue::default();
+        queue.push("first".to_owned());
+        queue.push("selected".to_owned());
+        queue.push("last".to_owned());
+        queue.update(key(KeyCode::Up, KeyModifiers::NONE));
+
+        let first = queue
+            .items
+            .first()
+            .map(|item| item.id)
+            .expect("queue has a first item");
+        let _ = queue.remove_id(first);
+
+        let steer = queue.update(key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(
+            steer.effects.as_slice(),
+            [QueueEffect::Steer { prompt, .. }] if prompt.display_text() == "selected"
+        ));
     }
 
     #[test]

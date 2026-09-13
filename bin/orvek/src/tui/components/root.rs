@@ -1057,6 +1057,21 @@ impl RootNode {
                 .update(TranscriptEvent::BlurExpandables);
             return ComponentUpdate::render(RenderRequest::Immediate);
         }
+        if let Event::Mouse(mouse) = &event
+            && matches!(
+                mouse.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            )
+            && self
+                .queue_area
+                .contains(Position::new(mouse.column, mouse.row))
+            && self
+                .queue
+                .component_mut()
+                .mouse_scroll(mouse.kind == MouseEventKind::ScrollUp)
+        {
+            return ComponentUpdate::render(RenderRequest::Immediate);
+        }
         if is_left_click_in(&event, self.composer_area) {
             self.focus_composer();
             return ComponentUpdate::render(RenderRequest::Immediate);
