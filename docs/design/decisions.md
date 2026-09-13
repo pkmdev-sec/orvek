@@ -6,6 +6,11 @@ scope; changes to it need another review. Design approval does not authorize nat
 
 The welcome logo is already approved. The current review is **Chat bar, proposal 1**.
 
+Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
+colors. The HTML uses approximate samples; those values are not a proposed replacement palette.
+Implementation must reuse the existing theme roles and user overrides. This clarification does
+not approve the chat-bar design. The separately approved welcome-logo colors stay fixed.
+
 | Order | Component | State | Artifact |
 | --- | --- | --- | --- |
 | 1 | Welcome logo | Approved: glyphs and colors only | [Logo](tui-motion-preview.html) |
@@ -26,7 +31,7 @@ It keeps the rounded border, plain editor surface, top-left context/activity, to
 and bottom-edge hints/workspace. Proposed refinements:
 
 - Two cells of horizontal inset and one blank row around the editor.
-- A modest border contrast change on focus.
+- A clearer focus state using existing theme colors.
 - The thinking wave stays after context; foreground brightness changes without shifting text.
 - Status takes priority over metadata. Overflow uses reserved rows inside the existing frame;
   the editor moves down with its measured region. Hints shorten before the workspace disappears.
