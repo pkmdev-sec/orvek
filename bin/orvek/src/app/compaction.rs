@@ -52,8 +52,11 @@ impl Default for CompactionConfig {
 
 impl CompactionConfig {
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
-        if !(16_384..=272_000).contains(&self.input_budget_tokens) {
-            return Err("agent.compaction.input_budget_tokens must be between 16384 and 272000");
+        // The ceiling tracks the largest context window an operator can actually
+        // configure, so million-token models are expressible. The default stays
+        // conservative; raising it here only widens what is accepted.
+        if !(16_384..=1_000_000).contains(&self.input_budget_tokens) {
+            return Err("agent.compaction.input_budget_tokens must be between 16384 and 1000000");
         }
         if !(1..=64).contains(&self.max_generated_pages) {
             return Err("agent.compaction.max_generated_pages must be between 1 and 64");
