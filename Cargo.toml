@@ -1,0 +1,82 @@
+[workspace]
+members = ["bin/orvek", "crates/*", "examples/orvek-memory-cloudflare"]
+exclude = ["vendor/nanocodex-agent", "vendor/nanocodex-oai-api"]
+resolver = "3"
+
+[patch.crates-io]
+nanocodex-agent = { path = "vendor/nanocodex-agent" }
+nanocodex-oai-api = { path = "vendor/nanocodex-oai-api" }
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.0"
+authors = ["Puneet", "Ben Clabby"]
+description = "A terminal coding workspace with durable context and local tools"
+license = "Apache-2.0"
+repository = "https://github.com/pkmdev-sec/orvek"
+homepage = "https://github.com/pkmdev-sec/orvek"
+documentation = "https://github.com/pkmdev-sec/orvek#readme"
+readme = "README.md"
+keywords = ["ai", "coding-agent", "llm", "terminal", "tui"]
+categories = ["command-line-interface", "development-tools"]
+publish = ["crates-io"]
+
+[workspace.lints.clippy]
+manual_async_fn = "allow"
+
+[workspace.dependencies]
+arboard = "3.6.1"
+axum = { version = "0.8.4", default-features = false, features = ["json"] }
+base64 = "0.22.1"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+clap = { version = "4.6.4", features = ["derive", "env"] }
+const_format = "0.2.35"
+criterion = { package = "codspeed-criterion-compat", version = "5.0.1" }
+crossterm = { version = "0.29.0", features = ["event-stream", "osc52"] }
+dark-light = "2.0.0"
+flate2 = "1.1.9"
+fs2 = "0.4.3"
+futures-util = "0.3.33"
+image = { version = "0.25.10", default-features = false, features = ["bmp", "dds", "ff", "gif", "hdr", "ico", "jpeg", "png", "pnm", "qoi", "tga", "tiff", "webp"] }
+jsonschema = { version = "0.48.5", default-features = false }
+miette = { version = "7.6.0", features = ["fancy"] }
+minisign-verify = "0.2.5"
+nanocodex = "0.5.0"
+png = "0.18.1"
+pulldown-cmark = { version = "0.13.4", default-features = false }
+ratatui = "0.30.2"
+ratatui-image = { version = "11.0.6", default-features = false, features = ["crossterm"] }
+rayon = "1.12.0"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls-no-provider", "stream"] }
+rstest = "0.26.1"
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+rustls = { version = "0.23.42", default-features = false, features = ["ring", "std"] }
+self-replace = "1.5.0"
+semver = { version = "1.0.28", features = ["serde"] }
+serde = { version = "1.0.229", features = ["derive", "rc"] }
+serde_json = { version = "1.0.151", features = ["raw_value"] }
+serde_yaml = "0.9.34"
+sha2 = "0.10.9"
+shlex = "2.0.1"
+syntect = { version = "5.3.0", default-features = false, features = ["default-syntaxes", "regex-onig"] }
+tar = "0.4.44"
+orvek-memory = { version = "0.1.0", path = "crates/memory", default-features = false }
+orvek-subagents = { version = "0.1.0", path = "crates/subagents" }
+tempfile = "3.27.0"
+thiserror = "2.0.19"
+tokio = { version = "1.53.1", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = { version = "0.7.19", features = ["rt"] }
+toml = "1.1.3"
+toml_edit = "0.25.13"
+tower = "0.5.3"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.22"
+tracing-web = "0.1.3"
+unicode-segmentation = "1.13.3"
+unicode-width = "0.2.2"
+url = "2.5.7"
+web-time = "1.1.0"
+worker = { version = "0.8.5", features = ["axum", "d1", "http"] }
+zeroize = { version = "1.9.0", features = ["derive"] }
+zstd = "0.13.3"

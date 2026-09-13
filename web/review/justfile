@@ -1,0 +1,58 @@
+review_directory := justfile_directory()
+repository_directory := review_directory + "/../.."
+
+build:
+    cd "{{ review_directory }}" && bun run build
+
+dev:
+    cd "{{ review_directory }}" && bun run dev
+
+# Build and link these assets into the path used by development Orvek builds.
+install-dev: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    review_directory="{{ review_directory }}"
+    repository_directory="{{ repository_directory }}"
+    version=$(
+        cargo metadata \
+            --manifest-path "$repository_directory/Cargo.toml" \
+            --no-deps \
+            --format-version 1 |
+            bun -e '
+                const metadata = await Bun.stdin.json();
+                const orvek = metadata.packages.find((candidate) => candidate.name === "orvek");
+                if (!orvek) throw new Error("orvek package not found");
+                process.stdout.write(orvek.version);
+            '
+    )
+
+    if [[ -n "${ORVEK_HOME:-}" ]]; then
+        orvek_directory="$ORVEK_HOME"
+    elif [[ -n "${TACT_HOME:-}" ]]; then
+        orvek_directory="$TACT_HOME"
+    elif [[ -n "${HOME:-}" ]]; then
+        orvek_directory="$HOME/.orvek"
+    elif [[ -n "${USERPROFILE:-}" ]]; then
+        orvek_directory="$USERPROFILE/.orvek"
+    else
+        echo "could not determine the Orvek directory; set ORVEK_HOME" >&2
+        exit 1
+    fi
+
+    if [[ -z "${ORVEK_HOME:-}" && -z "${TACT_HOME:-}" && ! -e "$orvek_directory" ]]; then
+        legacy_directory="$(dirname "$orvek_directory")/.tact"
+        if [[ -d "$legacy_directory" ]]; then orvek_directory="$legacy_directory"; fi
+    fi
+
+    destination="$orvek_directory/review/v$version"
+    mkdir -p "$(dirname "$destination")"
+
+    if [[ -e "$destination" && ! -L "$destination" ]]; then
+        echo "refusing to replace non-symlink review assets at $destination" >&2
+        exit 1
+    fi
+
+    rm -f -- "$destination"
+    ln -s -- "$review_directory/dist" "$destination"
+    printf 'Installed development review assets at %s\n' "$destination"
