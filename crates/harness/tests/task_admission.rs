@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use orvek_harness::{
     Digest, Store, StoreError,
     admission::{self, Proposal, ProposedCheck, RepositoryProfile},
@@ -8,7 +9,6 @@ use orvek_harness::{
     verification::{CheckProgram, ControlFailure, Expectation, Probe},
     workspace::{Snapshot, SnapshotPolicy},
 };
-use std::collections::BTreeMap;
 use uuid::Uuid;
 
 fn proposal() -> Proposal {
@@ -54,11 +54,11 @@ fn proposal() -> Proposal {
 
 #[test]
 fn queue_edits_reordering_and_promotion_are_atomic_and_distinct_from_normal_queueing() {
+    use serde_json::json;
     use orvek_harness::{
         input,
         submission::{Schedule, SubmissionStatus, WorkIntent},
     };
-    use serde_json::json;
     let root = tempfile::tempdir().unwrap();
     let mut store = Store::open(&root.path().join("state")).unwrap();
     let session = store
@@ -201,13 +201,13 @@ fn queue_edits_reordering_and_promotion_are_atomic_and_distinct_from_normal_queu
 
 #[test]
 fn queued_followups_revoke_old_authority_and_keep_obligations_workspace_and_spend() {
+    use serde_json::json;
     use orvek_harness::{
         input,
         session::SessionCommand,
         state::{Candidate, Outcome, Usage},
         submission::{SubmissionStatus, WorkIntent},
     };
-    use serde_json::json;
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");
     std::fs::create_dir(&source).unwrap();
@@ -429,11 +429,11 @@ fn queued_followups_revoke_old_authority_and_keep_obligations_workspace_and_spen
 
 #[test]
 fn cancelled_and_interrupted_submissions_are_not_replayed_as_new_tasks() {
+    use serde_json::json;
     use orvek_harness::{
         input,
         submission::{SubmissionStatus, WorkIntent},
     };
-    use serde_json::json;
     let root = tempfile::tempdir().unwrap();
     let mut store = Store::open(&root.path().join("state")).unwrap();
     let session = store
@@ -512,6 +512,418 @@ fn cancelled_and_interrupted_submissions_are_not_replayed_as_new_tasks() {
         unstarted
     );
     assert_eq!(store.list().unwrap().len(), 1);
+}
+
+/// A session plus a stored request policy, shared by the ordinary
+/// cancellation/recovery cases below.
+fn ordinary_fixture() -> (tempfile::TempDir, Store, SessionId, Digest) {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&root.path().join("state")).unwrap();
+    let session = store
+        .create_session(
+            SessionId::new(),
+            SessionConfig {
+                workspace: root.path().into(),
+                model: ModelSettings::default(),
+                instructions: String::new(),
+            },
+            None,
+        )
+        .unwrap();
+    let policy = store
+        .artifacts()
+        .put(
+            &serde_json::to_vec(&admission::RequestPolicy {
+                version: 1,
+                delivery: DeliveryKind::Source,
+                profile: RepositoryProfile {
+                    version: 1,
+                    name: "fixture".into(),
+                    checks: BTreeMap::new(),
+                },
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    (root, store, session.id, policy)
+}
+
+/// A fixed, nonzero dispatch timestamp. The accounting projection has to be
+/// rebuildable, so the record carries its own time rather than reading the
+/// clock while folding.
+const DISPATCHED_MS: u64 = 1_700_000_000_000;
+
+#[test]
+fn ordinary_cancellation_before_classification_is_never_dispatched() {
+    use serde_json::json;
+    use orvek_harness::{
+        input,
+        submission::{Schedule, SubmissionStatus, WorkIntent},
+    };
+    let (_root, mut store, session, policy) = ordinary_fixture();
+    let input = input::prepare(
+        vec![json!({"type":"input_text","text":"Fix addition"})],
+        store.artifacts(),
+    )
+    .unwrap();
+    let while_queued = Uuid::new_v4();
+    let after_claim = Uuid::new_v4();
+    for request in [while_queued, after_claim] {
+        store
+            .submit(
+                session,
+                request,
+                input.artifact,
+                WorkIntent::Ordinary {
+                    limits: Limits::default(),
+                    policy,
+                    schedule: Schedule::Queue,
+                },
+            )
+            .unwrap();
+    }
+    // Cancelled before the queue ever claims it.
+    store
+        .set_submission_status(session, while_queued, SubmissionStatus::Cancelled)
+        .unwrap();
+    // Claimed, then cancelled in the window before `begin_classification`.
+    store
+        .set_submission_status(session, after_claim, SubmissionStatus::Running)
+        .unwrap();
+    store
+        .set_submission_status(session, after_claim, SubmissionStatus::Cancelled)
+        .unwrap();
+
+    for request in [while_queued, after_claim] {
+        let error = store.begin_classification(session, request).unwrap_err();
+        assert!(matches!(error, StoreError::Invalid(_)), "{error:?}");
+        let submission = store.submission(session, request).unwrap();
+        assert_eq!(submission.status, SubmissionStatus::Cancelled);
+        assert!(
+            submission.records.is_empty(),
+            "a cancelled request never admitted a classifier call, so there is nothing to reconcile"
+        );
+    }
+    assert!(store.next_submission(session).unwrap().is_none());
+    let state = store.load_session(session).unwrap();
+    assert_eq!(state.active_request, None);
+    assert_eq!(state.current_task, None);
+    assert!(state.tasks_by_request.is_empty());
+    assert!(store.list().unwrap().is_empty());
+}
+
+#[test]
+fn ordinary_classification_interrupted_before_observation_keeps_the_pending_call() {
+    use serde_json::json;
+    use orvek_harness::{
+        auxiliary::AuxiliaryRecord,
+        input,
+        submission::{Schedule, SubmissionStatus, WorkIntent},
+    };
+    let (root, mut store, session, policy) = ordinary_fixture();
+    let input = input::prepare(
+        vec![json!({"type":"input_text","text":"Fix addition"})],
+        store.artifacts(),
+    )
+    .unwrap();
+    let request = Uuid::new_v4();
+    store
+        .submit(
+            session,
+            request,
+            input.artifact,
+            WorkIntent::Ordinary {
+                limits: Limits::default(),
+                policy,
+                schedule: Schedule::Queue,
+            },
+        )
+        .unwrap();
+    store
+        .set_submission_status(session, request, SubmissionStatus::Running)
+        .unwrap();
+    store.begin_classification(session, request).unwrap();
+    let call = Uuid::new_v4();
+    let invocation = store.artifacts().put(b"{}").unwrap();
+    store
+        .record_auxiliary(
+            session,
+            request,
+            Uuid::new_v5(&call, b"classification-intended"),
+            AuxiliaryRecord::ClassificationIntended {
+                at_ms: DISPATCHED_MS,
+                input: invocation,
+                call,
+            },
+        )
+        .unwrap();
+
+    // Interrupted here: the call is on the wire, its outcome unknown.
+    drop(store);
+    let mut store = Store::open(&root.path().join("state")).unwrap();
+    store.recover_interrupted().unwrap();
+    store.recover_submissions().unwrap();
+
+    let submission = store.submission(session, request).unwrap();
+    assert_eq!(
+        submission.status,
+        SubmissionStatus::Interrupted,
+        "a dispatched classifier is parked for reconciliation, never silently requeued"
+    );
+    assert_eq!(submission.records.len(), 1);
+    let record: AuxiliaryRecord =
+        serde_json::from_slice(&store.artifacts().read(submission.records[0]).unwrap()).unwrap();
+    assert!(
+        matches!(
+            record,
+            AuxiliaryRecord::ClassificationIntended { call: recorded, at_ms, .. }
+                if recorded == call && at_ms == DISPATCHED_MS
+        ),
+        "the unresolved call is preserved exactly as issued: {record:?}"
+    );
+    let state = store.load_session(session).unwrap();
+    assert_eq!(
+        state.active_request, None,
+        "recovery settles the session instead of leaving it wedged"
+    );
+    assert!(state.tasks_by_request.is_empty());
+    // Interrupted is terminal, so nothing can dispatch a second classifier call
+    // or push the request back onto the automatic queue path.
+    assert!(matches!(
+        store.begin_classification(session, request),
+        Err(StoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        store.set_submission_status(session, request, SubmissionStatus::Queued),
+        Err(StoreError::Invalid(_))
+    ));
+    assert!(store.next_submission(session).unwrap().is_none());
+    assert!(store.list().unwrap().is_empty());
+}
+
+#[test]
+fn late_classification_receipt_after_cancellation_is_kept_but_cannot_admit_a_task() {
+    use serde_json::json;
+    use orvek_harness::{
+        auxiliary::AuxiliaryRecord,
+        input,
+        state::{ModelCallReceipt, ModelCallStatus},
+        submission::{Schedule, SubmissionStatus, WorkIntent},
+    };
+    let (_root, mut store, session, policy) = ordinary_fixture();
+    let input = input::prepare(
+        vec![json!({"type":"input_text","text":"Fix addition"})],
+        store.artifacts(),
+    )
+    .unwrap();
+    let request = Uuid::new_v4();
+    store
+        .submit(
+            session,
+            request,
+            input.artifact,
+            WorkIntent::Ordinary {
+                limits: Limits::default(),
+                policy,
+                schedule: Schedule::Queue,
+            },
+        )
+        .unwrap();
+    store
+        .set_submission_status(session, request, SubmissionStatus::Running)
+        .unwrap();
+    store.begin_classification(session, request).unwrap();
+    let call = Uuid::new_v4();
+    let invocation = store.artifacts().put(b"{}").unwrap();
+    store
+        .record_auxiliary(
+            session,
+            request,
+            Uuid::new_v5(&call, b"classification-intended"),
+            AuxiliaryRecord::ClassificationIntended {
+                at_ms: DISPATCHED_MS,
+                input: invocation,
+                call,
+            },
+        )
+        .unwrap();
+    let cancelled = SubmissionStatus::Finished {
+        task: None,
+        outcome: None,
+        error: Some("Ordinary request cancelled".into()),
+    };
+    store
+        .set_submission_status(session, request, cancelled.clone())
+        .unwrap();
+
+    // The classifier answers late, successfully, after the request is gone.
+    // Recording it is REQUIRED: billing that was really incurred must never be
+    // silently dropped. What must not happen is it becoming actionable.
+    let report = store.artifacts().put(b"{}").unwrap();
+    store
+        .record_auxiliary(
+            session,
+            request,
+            Uuid::new_v5(&call, b"classification-observed"),
+            AuxiliaryRecord::ClassificationObserved {
+                call,
+                receipt: ModelCallReceipt {
+                    status: ModelCallStatus::Completed,
+                    tokens: Some(6),
+                    report,
+                },
+                kind: "action".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        store.submission(session, request).unwrap().records.len(),
+        2,
+        "the late receipt is preserved"
+    );
+
+    let prepared = input::prepare(
+        vec![json!({"type":"input_text","text":"Fix addition"})],
+        store.artifacts(),
+    )
+    .unwrap();
+    assert!(matches!(
+        store.start_prepared_request(session, request, prepared, Limits::default(), policy),
+        Err(StoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        store.begin_auxiliary(session, request),
+        Err(StoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        store.begin_classification(session, request),
+        Err(StoreError::Invalid(_))
+    ));
+    let state = store.load_session(session).unwrap();
+    assert_eq!(state.current_task, None);
+    assert!(state.tasks_by_request.is_empty());
+    assert!(store.list().unwrap().is_empty());
+    assert_eq!(
+        store.submission(session, request).unwrap().status,
+        cancelled,
+        "recording the late receipt did not resurrect the cancelled request"
+    );
+}
+
+#[test]
+fn ordinary_action_crash_between_classification_and_adoption_forges_no_task() {
+    use serde_json::json;
+    use orvek_harness::{
+        auxiliary::AuxiliaryRecord,
+        input,
+        state::{ModelCallReceipt, ModelCallStatus},
+        submission::{Schedule, SubmissionStatus, WorkIntent},
+    };
+    let (root, mut store, session, policy) = ordinary_fixture();
+    let input = input::prepare(
+        vec![json!({"type":"input_text","text":"Fix addition"})],
+        store.artifacts(),
+    )
+    .unwrap();
+    let request = Uuid::new_v4();
+    store
+        .submit(
+            session,
+            request,
+            input.artifact,
+            WorkIntent::Ordinary {
+                limits: Limits::default(),
+                policy,
+                schedule: Schedule::Queue,
+            },
+        )
+        .unwrap();
+    store
+        .set_submission_status(session, request, SubmissionStatus::Running)
+        .unwrap();
+    store.begin_classification(session, request).unwrap();
+    let call = Uuid::new_v4();
+    let invocation = store.artifacts().put(b"{}").unwrap();
+    store
+        .record_auxiliary(
+            session,
+            request,
+            Uuid::new_v5(&call, b"classification-intended"),
+            AuxiliaryRecord::ClassificationIntended {
+                at_ms: DISPATCHED_MS,
+                input: invocation,
+                call,
+            },
+        )
+        .unwrap();
+    let report = store.artifacts().put(b"{}").unwrap();
+    store
+        .record_auxiliary(
+            session,
+            request,
+            Uuid::new_v5(&call, b"classification-observed"),
+            AuxiliaryRecord::ClassificationObserved {
+                call,
+                receipt: ModelCallReceipt {
+                    status: ModelCallStatus::Completed,
+                    tokens: Some(6),
+                    report,
+                },
+                kind: "action".into(),
+            },
+        )
+        .unwrap();
+
+    // Crash here: classification resolved to `action`, but no task has been
+    // created yet and the classifier's spend has not been attributed.
+    drop(store);
+    let mut store = Store::open(&root.path().join("state")).unwrap();
+    store.recover_interrupted().unwrap();
+    store.recover_submissions().unwrap();
+
+    let submission = store.submission(session, request).unwrap();
+    assert_eq!(submission.status, SubmissionStatus::Interrupted);
+    assert_eq!(submission.records.len(), 2);
+    let observed: AuxiliaryRecord =
+        serde_json::from_slice(&store.artifacts().read(submission.records[1]).unwrap()).unwrap();
+    match observed {
+        AuxiliaryRecord::ClassificationObserved { receipt, kind, .. } => {
+            assert_eq!(kind, "action");
+            assert_eq!(
+                receipt.tokens,
+                Some(6),
+                "real spend survives the crash instead of being zeroed"
+            );
+            assert_eq!(receipt.status, ModelCallStatus::Completed);
+        }
+        other => panic!("the observed classification must survive: {other:?}"),
+    }
+    let state = store.load_session(session).unwrap();
+    assert_eq!(state.active_request, None);
+    assert_eq!(
+        state.current_task, None,
+        "no task is forged from an orphaned classification"
+    );
+    assert!(state.tasks_by_request.is_empty());
+    assert!(
+        store.list().unwrap().is_empty(),
+        "the classifier's spend was never attributed to a task that does not exist"
+    );
+    // The already-decided `action` cannot be picked up later to finish admission.
+    let prepared = input::prepare(
+        vec![json!({"type":"input_text","text":"Fix addition"})],
+        store.artifacts(),
+    )
+    .unwrap();
+    assert!(matches!(
+        store.start_prepared_request(session, request, prepared, Limits::default(), policy),
+        Err(StoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        store.begin_classification(session, request),
+        Err(StoreError::Invalid(_))
+    ));
+    assert!(store.next_submission(session).unwrap().is_none());
 }
 
 #[test]

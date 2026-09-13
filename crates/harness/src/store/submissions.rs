@@ -446,7 +446,10 @@ impl Store {
                 "continuation is not claimed for execution",
             ));
         }
-        if session.active_request.is_some() {
+        if session
+            .active_request
+            .is_some_and(|active| active != request)
+        {
             return Err(StoreError::Invalid("session already has an active request"));
         }
         if session.current_task != Some(id) {

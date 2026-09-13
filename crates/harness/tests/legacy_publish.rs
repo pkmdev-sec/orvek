@@ -1,3 +1,6 @@
+use rusqlite::{Connection, params};
+use serde_json::{Value, json};
+use std::fs;
 use orvek_harness::{
     Digest,
     artifacts::ArtifactStore,
@@ -6,9 +9,6 @@ use orvek_harness::{
         PublishError, prepare_import, read_import_page,
     },
 };
-use rusqlite::{Connection, params};
-use serde_json::{Value, json};
-use std::fs;
 
 struct Fixture {
     root: tempfile::TempDir,

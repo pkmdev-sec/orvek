@@ -8,6 +8,7 @@ use crate::{
         SessionState,
     },
     state::*,
+    submission::OrdinaryKind,
 };
 use fs2::FileExt;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
@@ -556,7 +557,24 @@ impl Store {
             }
             return Ok((session, task, false));
         }
-        if session.active_request.is_some() || session.operations.contains_key(&operation) {
+        // An ordinary request legitimately passes through here twice: once to
+        // claim classification and again to adopt the resulting task, so a
+        // recorded operation ID is not by itself a conflict. The check below
+        // still requires that an already-active request be an ordinary one.
+        if session
+            .active_request
+            .is_some_and(|active| active != operation)
+            || (session.active_request == Some(operation)
+                && !session
+                    .submissions
+                    .get(&operation)
+                    .is_some_and(|submission| {
+                        matches!(
+                            submission.intent,
+                            crate::submission::WorkIntent::Ordinary { .. }
+                        )
+                    }))
+        {
             return Err(StoreError::Invalid("session request is already active"));
         }
         if let Some(submission) = session.submissions.get(&operation)
@@ -2453,7 +2471,7 @@ fn load_session_state(
                     parent,
                     history,
                     at_ms,
-                    imported.map(|source| *source),
+                    imported.map(|imported| *imported),
                     branch,
                 ))
             }

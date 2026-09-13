@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     auxiliary::{AuxiliaryContext, AuxiliaryRecord, AuxiliarySpec, AuxiliaryStatus},
-    submission::{OrdinaryKind, SubmissionStatus},
+    submission::{OrdinaryKind, SubmissionStatus, parse_ordinary_kind},
 };
 
 impl Host {
@@ -49,7 +49,34 @@ impl Host {
         session: SessionId,
         request: Uuid,
         submission: &crate::submission::Submission,
+        limits: crate::contract::Limits,
+    ) -> Result<OrdinaryKind, HostError> {
+        // Register the token before dispatching. `cancel_request` can only
+        // reach an in-flight call through `self.active`, so without this entry
+        // cancelling during classification is a no-op against the provider
+        // call. Mirrors `execute_auxiliary` below.
+        let cancellation = self.queue_stop.child_token();
+        {
+            let mut active = self.active.lock().await;
+            if active.contains_key(&session) {
+                return Err(HostError::Busy);
+            }
+            active.insert(session, cancellation.clone());
+        }
+        let result = self
+            .classify_ordinary_call(session, request, submission, limits, &cancellation)
+            .await;
+        self.active.lock().await.remove(&session);
+        result
+    }
+
+    async fn classify_ordinary_call(
+        &self,
+        session: SessionId,
+        request: Uuid,
+        submission: &crate::submission::Submission,
         _limits: crate::contract::Limits,
+        cancellation: &CancellationToken,
     ) -> Result<OrdinaryKind, HostError> {
         let (artifacts, session_state, input) = {
             let store = self.store.lock().await;
@@ -77,11 +104,13 @@ impl Host {
         let call = Uuid::new_v4();
         {
             let mut store = self.store.lock().await;
+            store.begin_classification(session, request)?;
             store.record_auxiliary(
                 session,
                 request,
                 Uuid::new_v5(&call, b"classification-intended"),
                 AuxiliaryRecord::ClassificationIntended {
+                    at_ms: crate::store::now_ms(),
                     input: invocation,
                     call,
                 },
@@ -89,7 +118,7 @@ impl Host {
         }
         let response = self
             .provider
-            .respond(&request_body, &self.queue_stop.child_token(), |_| {})
+            .respond(&request_body, cancellation, |_| {})
             .await;
         let tokens = if response.billing_uncertain() {
             None
@@ -132,7 +161,7 @@ impl Host {
                         [OutputItem::Message { text, .. }] => Some(text.clone()),
                         _ => None,
                     })
-                    .and_then(|text| serde_json::from_str::<OrdinaryKind>(&text).ok())
+                    .and_then(|text| parse_ordinary_kind(&text).ok())
             })
             .flatten();
         {
@@ -145,8 +174,9 @@ impl Host {
                     call,
                     receipt,
                     kind: kind
-                        .and_then(|kind| serde_json::to_string(&kind).ok())
-                        .unwrap_or_default(),
+                        .map(|kind| kind.as_tag())
+                        .unwrap_or_default()
+                        .to_owned(),
                 },
             )?;
         }
@@ -178,8 +208,10 @@ impl Host {
         } else {
             Vec::new()
         };
-        if spec.context == AuxiliaryContext::Clean || !spec.visible() {
+        if spec.context != AuxiliaryContext::CurrentConversation || !spec.visible() {
             history.extend(input.messages);
+        } else {
+            history.extend(input.messages.clone());
         }
         let pending = if let Some(task) = session.current_task {
             self.store.lock().await.load(task)?.workspace_override
@@ -239,6 +271,8 @@ impl Host {
             }
             let mut view = session.clone();
             view.history = history;
+            // Downstream-only fix: the cloned projection view must not look like it
+            // still has a request in flight.
             view.active_request = None;
             let projection = crate::context::project(&view, 128 * 1024)?;
             history = projection.input;

@@ -1,12 +1,12 @@
-use orvek_harness::{
-    Digest,
-    artifacts::ArtifactStore,
-    review::{self, ReviewError, ReviewLimits, ReviewRange, ReviewSide},
-};
 use std::{
     fs,
     os::unix::fs::{PermissionsExt, symlink},
     process::Command,
+};
+use orvek_harness::{
+    Digest,
+    artifacts::ArtifactStore,
+    review::{self, ReviewError, ReviewLimits, ReviewRange, ReviewSide},
 };
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;

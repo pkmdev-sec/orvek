@@ -309,10 +309,14 @@ impl Host {
             let result = async {
                 let admission = match &submission.intent {
                     WorkIntent::Shell { spec } => {
-                        return self.execute_shell(session, submission.id, spec.clone()).await;
+                        return self
+                            .execute_shell(session, submission.id, spec.clone())
+                            .await;
                     }
                     WorkIntent::Auxiliary { spec } => {
-                        return self.execute_auxiliary(session, submission.id, spec.clone()).await;
+                        return self
+                            .execute_auxiliary(session, submission.id, spec.clone())
+                            .await;
                     }
                     WorkIntent::NewTask { limits, policy } => {
                         let store = self.store.lock().await;
@@ -327,100 +331,99 @@ impl Host {
                     },
                     WorkIntent::Ordinary { limits, policy, .. } => {
                         let state = self.store.lock().await.load_session(session)?;
-                        let kind = self
-                            .classify_ordinary(
-                                session,
-                                submission.id,
-                                &submission,
-                                *limits,
-                            )
-                            .await?;
+                        let kind = match self
+                            .classify_ordinary(session, submission.id, &submission, *limits)
+                            .await
+                        {
+                            Ok(kind) => kind,
+                            Err(error) => {
+                                // A classification that fails closed still has
+                                // to settle the turn. Without this the session
+                                // keeps `active_request` set and rejects every
+                                // later submission until the host restarts.
+                                self.store
+                                    .lock()
+                                    .await
+                                    .settle_classification(session, submission.id)?;
+                                return Err(error);
+                            }
+                        };
+                        // Only an unfinished task may be continued by a
+                        // classifier decision. Reopening a task that already
+                        // completed is an explicit user action, not something
+                        // an ordinary action should infer.
+                        let incomplete_task = match state.current_task {
+                            Some(task) => {
+                                self.store.lock().await.load(task)?.outcome
+                                    != Some(crate::state::Outcome::Complete)
+                            }
+                            None => false,
+                        };
                         match kind {
                             OrdinaryKind::Information => {
-                                let spec = crate::auxiliary::AuxiliarySpec {
-                                    kind: crate::auxiliary::AuxiliaryKind::Conversation,
-                                    context: crate::auxiliary::AuxiliaryContext::CurrentConversation,
-                                    review: None,
-                                    limits: Default::default(),
-                                };
-                                let permit = self
-                                    .runs
-                                    .clone()
-                                    .try_acquire_owned()
-                                    .map_err(|_| HostError::Busy)?;
+                                let spec = crate::auxiliary::ordinary_conversation_spec();
+                                self.store
+                                    .lock()
+                                    .await
+                                    .begin_auxiliary(session, submission.id)?;
+                                // Keep the request active across classification and answer;
+                                // publication is the single settle boundary.
+                                let state = self.store.lock().await.load_session(session)?;
                                 let cancellation = self.queue_stop.child_token();
-                                {
-                                    let mut active = self.active.lock().await;
-                                    if !self.accepting.load(Ordering::Acquire) {
-                                        return Err(HostError::ShuttingDown);
-                                    }
-                                    if active.contains_key(&session) {
-                                        return Err(HostError::Busy);
-                                    }
-                                    active.insert(session, cancellation.clone());
-                                }
-                                let result = async {
-                                    let state = self.store.lock().await.begin_auxiliary(
-                                        session,
+                                // Publication is the only settle boundary, so a
+                                // failed answer still has to reach it. Returning
+                                // early here would leave `active_request` set and
+                                // wedge the session until the host restarts.
+                                let (status, text, error) = match self
+                                    .run_auxiliary(
+                                        state,
                                         submission.id,
-                                    )?;
-                                    let run = tokio::time::timeout(
-                                        Duration::from_millis(spec.limits.elapsed_ms),
-                                        self.run_auxiliary(
-                                            state,
-                                            submission.id,
-                                            &spec,
-                                            cancellation.clone(),
-                                        ),
+                                        &spec,
+                                        cancellation.clone(),
                                     )
-                                    .await;
-                                    let (status, text, error) = match run {
-                                        Ok(Ok(result)) => result,
-                                        Ok(Err(error)) => (
-                                            if cancellation.is_cancelled() {
-                                                crate::auxiliary::AuxiliaryStatus::Cancelled
-                                            } else if matches!(error, HostError::Store(StoreError::Budget)) {
-                                                crate::auxiliary::AuxiliaryStatus::BudgetExhausted
-                                            } else {
-                                                crate::auxiliary::AuxiliaryStatus::Failed
-                                            },
-                                            String::new(),
-                                            Some(error.to_string()),
-                                        ),
-                                        Err(_) => {
-                                            cancellation.cancel();
-                                            (
-                                                crate::auxiliary::AuxiliaryStatus::BudgetExhausted,
-                                                String::new(),
-                                                Some("Auxiliary elapsed-time allowance exhausted; dispatched calls may have unknown billing".into()),
-                                            )
-                                        }
-                                    };
-                                    self.store.lock().await.publish_auxiliary(
-                                        session,
-                                        submission.id,
-                                        status,
-                                        text,
-                                        error.clone(),
-                                    )?;
-                                    Ok(SubmissionStatus::Finished { task: None, outcome: None, error })
-                                }
-                                .await;
-                                self.active.lock().await.remove(&session);
-                                drop(permit);
-                                self.queue_wake.notify_waiters();
-                                return result;
+                                    .await
+                                {
+                                    Ok(result) => result,
+                                    Err(error) => (
+                                        if cancellation.is_cancelled() {
+                                            crate::auxiliary::AuxiliaryStatus::Cancelled
+                                        } else if matches!(
+                                            error,
+                                            HostError::Store(StoreError::Budget)
+                                        ) {
+                                            crate::auxiliary::AuxiliaryStatus::BudgetExhausted
+                                        } else {
+                                            crate::auxiliary::AuxiliaryStatus::Failed
+                                        },
+                                        String::new(),
+                                        Some(error.to_string()),
+                                    ),
+                                };
+                                self.store.lock().await.publish_auxiliary(
+                                    session,
+                                    submission.id,
+                                    status,
+                                    text,
+                                    error.clone(),
+                                )?;
+                                return Ok(SubmissionStatus::Finished {
+                                    task: None,
+                                    outcome: None,
+                                    error,
+                                });
                             }
-                            OrdinaryKind::Action if state.current_task.is_some() => {
-                                let _task = state.current_task.expect("checked");
-                                TaskRequest::Continue {
-                                    request: submission.id,
-                                }
-                            }
+                            OrdinaryKind::Action if incomplete_task => TaskRequest::Continue {
+                                request: submission.id,
+                            },
                             OrdinaryKind::Action => {
                                 let store = self.store.lock().await;
-                                let input = crate::input::load(submission.input, store.artifacts())?;
-                                TaskRequest::DiscoverInput { input, limits: *limits, intake: *policy }
+                                let input =
+                                    crate::input::load(submission.input, store.artifacts())?;
+                                TaskRequest::DiscoverInput {
+                                    input,
+                                    limits: *limits,
+                                    intake: *policy,
+                                }
                             }
                         }
                     }
@@ -442,7 +445,8 @@ impl Host {
             }
             .await;
             let mut store = self.store.lock().await;
-            if store.submission(session, submission.id)?.status == SubmissionStatus::Cancelled {
+            let current = store.submission(session, submission.id)?;
+            if current.status == SubmissionStatus::Cancelled {
                 continue;
             }
             let status = match result {

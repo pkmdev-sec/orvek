@@ -1,6 +1,6 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
-use orvek_harness::{artifacts::ArtifactStore, input};
 use serde_json::json;
+use orvek_harness::{artifacts::ArtifactStore, input};
 
 #[test]
 fn ordered_images_round_trip_without_embedding_media_bytes_in_journal_messages() {

@@ -1,3 +1,5 @@
+use rusqlite::{Connection, params};
+use serde_json::json;
 use orvek_harness::{
     controller::Host,
     inference::{
@@ -7,8 +9,6 @@ use orvek_harness::{
     runtime::DockerExecutor,
     session::SessionConfig,
 };
-use rusqlite::{Connection, params};
-use serde_json::json;
 
 #[tokio::test]
 #[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]

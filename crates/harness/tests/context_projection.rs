@@ -1,10 +1,10 @@
+use serde_json::json;
 use orvek_harness::{
     Digest, Store,
     context::{self, ContextError},
     inference::ModelSettings,
     session::{RecordedToolCall, SessionConfig, SessionId, SessionState},
 };
-use serde_json::json;
 use uuid::Uuid;
 
 fn session() -> SessionState {

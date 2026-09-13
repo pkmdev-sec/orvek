@@ -1,7 +1,3 @@
-use orvek_harness::{
-    Digest,
-    import::{ImportError, ImportLimits, LegacyArchive},
-};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use std::{
@@ -9,6 +5,10 @@ use std::{
     path::PathBuf,
     sync::{Arc, Barrier},
     thread,
+};
+use orvek_harness::{
+    Digest,
+    import::{ImportError, ImportLimits, LegacyArchive},
 };
 use tempfile::TempDir;
 

@@ -1,10 +1,10 @@
+use serde_json::json;
 use orvek_harness::{
     Store, StoreError,
     inference::ModelSettings,
     session::{SessionCommand, SessionConfig, SessionId},
     state::{Outcome, RequestKind},
 };
-use serde_json::json;
 use uuid::Uuid;
 
 #[test]

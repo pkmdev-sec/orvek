@@ -1,11 +1,11 @@
+use rusqlite::{Connection, params};
+use serde_json::json;
 use orvek_harness::{
     Digest, Store, StoreError,
     import::{ImportLimits, LegacyArchive, PreparedImport, PublicationLimits, prepare_import},
     inference::{ModelSettings, Thinking},
     session::{SessionCommand, SessionConfig},
 };
-use rusqlite::{Connection, params};
-use serde_json::json;
 use uuid::Uuid;
 
 struct Fixture {

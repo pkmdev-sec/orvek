@@ -68,6 +68,15 @@ impl AuxiliarySpec {
     }
 }
 
+pub(crate) fn ordinary_conversation_spec() -> AuxiliarySpec {
+    AuxiliarySpec {
+        kind: AuxiliaryKind::Conversation,
+        context: AuxiliaryContext::CurrentConversation,
+        review: None,
+        limits: AuxiliaryLimits::default(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuxiliaryStatus {
@@ -94,6 +103,7 @@ pub struct AuxiliaryReport {
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum AuxiliaryRecord {
     ClassificationIntended {
+        at_ms: u64,
         input: Digest,
         call: Uuid,
     },
@@ -123,27 +133,54 @@ pub enum AuxiliaryRecord {
     },
 }
 
+/// An ordinary request starts its clock when classification is dispatched and
+/// then runs an auxiliary answer turn on the same record log, so the two starts
+/// are tracked separately. `started_ms` is the earliest admitted work on the
+/// request and drives the elapsed allowance; `run_started_ms` keeps a second
+/// `Started` record from being accepted.
 #[derive(Default)]
 pub(crate) struct Accounting {
     pub started_ms: Option<u64>,
+    classified_ms: Option<u64>,
+    run_started_ms: Option<u64>,
     pub calls: std::collections::BTreeMap<Uuid, Option<ModelCallReceipt>>,
 }
 impl Accounting {
+    fn start_at(&mut self, at_ms: u64) {
+        self.started_ms = Some(match self.started_ms {
+            Some(existing) => existing.min(at_ms),
+            None => at_ms,
+        });
+    }
+
     pub fn tokens(&self) -> Option<u64> {
         self.calls.values().try_fold(0u64, |total, receipt| {
             total.checked_add(receipt.as_ref()?.tokens?)
         })
     }
+    pub(crate) fn known_tokens(&self) -> Option<u64> {
+        self.calls.values().try_fold(0u64, |total, receipt| {
+            total.checked_add(receipt.as_ref().and_then(|receipt| receipt.tokens)?)
+        })
+    }
+
+    pub(crate) fn has_pending_receipt(&self) -> bool {
+        self.calls.values().any(Option::is_none)
+    }
     pub fn apply(&mut self, record: &AuxiliaryRecord) -> Result<(), crate::StoreError> {
         match record {
-            AuxiliaryRecord::ClassificationIntended { input, call } => {
+            AuxiliaryRecord::ClassificationIntended { at_ms, input, call } => {
                 let _ = input;
-                if self.started_ms.is_none() {
-                    self.started_ms = Some(crate::store::now_ms());
+                if self.classified_ms.is_some() || self.run_started_ms.is_some() {
+                    return Err(crate::StoreError::Invalid(
+                        "classification cannot follow a started auxiliary run",
+                    ));
                 }
                 if self.calls.contains_key(call) {
                     return Err(crate::StoreError::Invalid("classification call reused"));
                 }
+                self.classified_ms = Some(*at_ms);
+                self.start_at(*at_ms);
                 self.calls.insert(*call, None);
             }
             AuxiliaryRecord::ClassificationObserved { call, receipt, .. }
@@ -151,12 +188,11 @@ impl Accounting {
             {
                 self.calls.insert(*call, Some(receipt.clone()));
             }
-            AuxiliaryRecord::Started { at_ms, .. } if self.started_ms.is_none() => {
-                self.started_ms = Some(*at_ms)
+            AuxiliaryRecord::Started { at_ms, .. } if self.run_started_ms.is_none() => {
+                self.run_started_ms = Some(*at_ms);
+                self.start_at(*at_ms);
             }
-            AuxiliaryRecord::ModelIntended { call, .. }
-                if self.started_ms.is_some() && !self.calls.contains_key(call) =>
-            {
+            AuxiliaryRecord::ModelIntended { call, .. } if !self.calls.contains_key(call) => {
                 self.calls.insert(*call, None);
             }
             AuxiliaryRecord::ModelObserved { call, receipt }
@@ -164,7 +200,7 @@ impl Accounting {
             {
                 self.calls.insert(*call, Some(receipt.clone()));
             }
-            AuxiliaryRecord::ToolObserved { .. } if self.started_ms.is_some() => {}
+            AuxiliaryRecord::ToolObserved { .. } if self.run_started_ms.is_some() => {}
             _ => {
                 return Err(crate::StoreError::Invalid(
                     "invalid auxiliary accounting transition",

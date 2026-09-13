@@ -1,3 +1,4 @@
+use std::{collections::BTreeMap, fs};
 use orvek_harness::{
     Store, StoreError,
     contract::*,
@@ -6,7 +7,6 @@ use orvek_harness::{
     verification::{self, CheckProgram, ControlFailure, Expectation, Probe},
     workspace::{Snapshot, SnapshotPolicy},
 };
-use std::{collections::BTreeMap, fs};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]

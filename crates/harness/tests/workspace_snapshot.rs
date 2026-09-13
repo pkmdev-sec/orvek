@@ -1,9 +1,9 @@
+use std::{collections::BTreeMap, fs};
 use orvek_harness::{
     Digest,
     artifacts::ArtifactStore,
     workspace::{Entry, Snapshot, SnapshotPolicy, WorkspaceError},
 };
-use std::{collections::BTreeMap, fs};
 
 #[test]
 fn snapshot_preserves_bytes_modes_empty_directories_and_declared_exclusions() {

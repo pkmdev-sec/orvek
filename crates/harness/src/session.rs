@@ -117,6 +117,10 @@ pub enum SessionEvent {
         parent: Option<SessionCursor>,
         history: Vec<Value>,
         at_ms: u64,
+        /// Boxed to keep this variant close in size to `Command`; the archive
+        /// descriptor is the largest field and is absent for native sessions.
+        /// `Option<Box<_>>` serializes exactly like `Option<_>`, so the journal
+        /// format is unchanged.
         imported: Option<Box<ImportedSource>>,
     },
     Command {

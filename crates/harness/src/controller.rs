@@ -1010,13 +1010,32 @@ impl Host {
             let mut store = self.store.lock().await;
             match admission {
                 TaskRequest::Continue { request } => {
-                    store.continue_submission(session_id, request)?
+                    let classification = store.ordinary_classification(session_id, request)?;
+                    let mut run = store.continue_submission(session_id, request)?;
+                    if let Some((kind, call, receipt, started_ms)) = classification {
+                        let task = store.account_ordinary_classification(
+                            run.1.id, request, kind, call, receipt, started_ms,
+                        )?;
+                        run.1 = task;
+                    }
+                    run
                 }
                 TaskRequest::DiscoverInput {
                     input,
                     limits,
                     intake,
-                } => store.start_prepared_request(session_id, request, input, limits, intake)?,
+                } => {
+                    let classification = store.ordinary_classification(session_id, request)?;
+                    let mut run =
+                        store.start_prepared_request(session_id, request, input, limits, intake)?;
+                    if let Some((kind, call, receipt, started_ms)) = classification {
+                        let task = store.account_ordinary_classification(
+                            run.1.id, request, kind, call, receipt, started_ms,
+                        )?;
+                        run.1 = task;
+                    }
+                    run
+                }
                 TaskRequest::Discover {
                     input,
                     limits,

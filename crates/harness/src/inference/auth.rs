@@ -1,6 +1,6 @@
 //! Shared Codex-compatible ChatGPT credentials and API-key ownership.
 //!
-//! Orvek-owned secret strings, JSON strings, and buffers zeroize on drop. HTTP/TLS,
+//! Tact-owned secret strings, JSON strings, and buffers zeroize on drop. HTTP/TLS,
 //! URL parsing, and serde may retain temporary non-zeroizing copies; this module
 //! does not claim to erase memory owned by those dependencies. No provider body,
 //! token, callback query, or credential file contents enters an error message.
@@ -387,7 +387,7 @@ pub fn chatgpt_auth_status(path: impl AsRef<Path>) -> Result<ChatGptAuthStatus, 
 }
 
 /// Synchronous, idempotent removal retains the existing shared logout behavior.
-/// Active Orvek clients re-read the path before further requests. A concurrent Orvek
+/// Active Orvek clients re-read the path before further requests. A concurrent Tact
 /// refresh holds the shared lock, so logout fails visibly while that write is active.
 pub fn logout_chatgpt(path: impl AsRef<Path>) -> Result<bool, AuthError> {
     let path = path.as_ref();

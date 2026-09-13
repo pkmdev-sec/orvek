@@ -1,3 +1,10 @@
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeMap,
+    fs,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use orvek_harness::{
     Digest, Store,
     contract::*,
@@ -10,13 +17,6 @@ use orvek_harness::{
     session::SessionConfig,
     state::Outcome,
     verification::{CheckProgram, ControlFailure, Expectation, Probe},
-};
-use serde_json::{Value, json};
-use std::{
-    collections::BTreeMap,
-    fs,
-    sync::{Arc, Mutex},
-    time::Duration,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -82,6 +82,10 @@ async fn human_shell_keeps_private_changes_across_requests_without_model_calls_o
     };
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/ct");
     fs::create_dir_all(&directory).unwrap();
+    // Canonicalize before deriving any path under this root: the literal form
+    // carries a `crates/harness/../../` detour, and the queued case binds a
+    // Unix socket here, which macOS caps at 104 bytes (SUN_LEN).
+    let directory = directory.canonicalize().unwrap();
     let root = tempfile::tempdir_in(directory).unwrap();
     let source = root.path().join("source");
     fs::create_dir(&source).unwrap();
@@ -200,6 +204,10 @@ async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_cod
     };
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/ct");
     fs::create_dir_all(&directory).unwrap();
+    // Canonicalize before deriving any path under this root: the literal form
+    // carries a `crates/harness/../../` detour, and the queued case binds a
+    // Unix socket here, which macOS caps at 104 bytes (SUN_LEN).
+    let directory = directory.canonicalize().unwrap();
     let root = tempfile::tempdir_in(directory).unwrap();
     let source = root.path().join("source");
     fs::create_dir(&source).unwrap();
@@ -308,10 +316,10 @@ async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_cod
     let settled = timeout(Duration::from_secs(30), async {
         loop {
             let submission = host.submission(session.id, request).await.unwrap();
-            if !matches!(
-                submission.status,
-                orvek_harness::submission::SubmissionStatus::Queued
-            ) {
+            // Wait for the request to actually settle. Excluding only `Queued`
+            // let this loop return a still-`Running` submission and then assert
+            // on that transient state.
+            if !submission.status.pending() {
                 break submission;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -382,19 +390,732 @@ async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_cod
 #[tokio::test]
 #[ignore = "requires local Docker and pre-pulled debian:bookworm-slim"]
 async fn controller_rejects_premature_finish_then_delivers_an_actually_verified_fix() {
-    exercise(DeliveryKind::Source, Mode::Ordinary).await;
-}
-
-#[tokio::test]
-#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
-async fn ordinary_action_is_classified_then_admitted_as_one_task() {
-    exercise(DeliveryKind::Source, Mode::OrdinaryInformation).await;
+    exercise(DeliveryKind::Source, Mode::OrdinaryAction).await;
 }
 
 #[tokio::test]
 #[ignore = "requires local Docker and pre-pulled debian:bookworm-slim"]
 async fn controller_delivers_a_patch_that_reproduces_the_verified_source() {
     exercise(DeliveryKind::Patch, Mode::Ordinary).await;
+}
+
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn ordinary_action_is_classified_then_admitted_as_one_task() {
+    exercise(DeliveryKind::Source, Mode::OrdinaryAction).await;
+}
+
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn ordinary_information_is_answered_without_changing_the_current_task() {
+    exercise(DeliveryKind::Source, Mode::OrdinaryInformation).await;
+}
+
+/// Like `provider`, but lets a case choose the terminal event's `usage` field,
+/// including omitting it, instead of the fixed six-token accounting. Omitting it
+/// is how an unknown-billing classifier response is reproduced.
+async fn provider_with_usage(
+    outputs: Vec<(Vec<Value>, Option<Value>)>,
+) -> (String, tokio::task::JoinHandle<Vec<Value>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1/responses", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        for (index, (output, usage)) in outputs.into_iter().enumerate() {
+            let (mut socket, _) = timeout(Duration::from_secs(20), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                socket.read_exact(&mut byte).await.unwrap();
+                headers.push(byte[0]);
+                assert!(headers.len() < 32 * 1024);
+            }
+            let headers = String::from_utf8(headers).unwrap();
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|n| n.trim().parse::<usize>().unwrap())
+                })
+                .unwrap();
+            let mut bytes = vec![0; length];
+            socket.read_exact(&mut bytes).await.unwrap();
+            requests.push(serde_json::from_slice(&bytes).unwrap());
+            let mut response =
+                json!({"id":format!("resp_{index}"),"status":"completed","output":output});
+            if let Some(usage) = usage {
+                response["usage"] = usage;
+            }
+            let event = json!({"type":"response.completed","response":response});
+            let payload = format!("event: response.completed\ndata: {event}\n\n");
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                payload.len()
+            );
+            socket.write_all(reply.as_bytes()).await.unwrap();
+        }
+        requests
+    });
+    (endpoint, task)
+}
+
+struct ClassifierRun {
+    session: orvek_harness::session::SessionId,
+    request: uuid::Uuid,
+    settled: orvek_harness::submission::Submission,
+    state: orvek_harness::session::SessionState,
+    requests: Vec<Value>,
+    records: Vec<orvek_harness::auxiliary::AuxiliaryRecord>,
+}
+
+/// Drive one ordinary submission through classification against a single
+/// scripted classifier response, then settle and read back durable state.
+async fn run_ordinary_classifier(output: Vec<Value>, usage: Option<Value>) -> ClassifierRun {
+    use orvek_harness::submission::{Schedule, SubmitIntent};
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/ct");
+    fs::create_dir_all(&directory).unwrap();
+    let directory = directory.canonicalize().unwrap();
+    let root = tempfile::tempdir_in(directory).unwrap();
+    let source = root.path().join("source");
+    fs::create_dir(&source).unwrap();
+    let state_root = root.path().join("state");
+    let store = Store::open(&state_root).unwrap();
+    let artifacts = store.artifacts().clone();
+    drop(store);
+    let (endpoint, served) = provider_with_usage(vec![(output, usage)]).await;
+    let client = ResponsesClient::new(
+        Auth::api_key(SecretString::new("fixture-key".into())).unwrap(),
+        Route::new(Transport::Http, &endpoint).unwrap(),
+        InferenceLimits {
+            max_attempts: 1,
+            ..InferenceLimits::default()
+        },
+    )
+    .unwrap();
+    let host = Arc::new(
+        Host::open(
+            &state_root,
+            client,
+            DockerExecutor::connect("debian:bookworm-slim")
+                .await
+                .unwrap(),
+        )
+        .unwrap(),
+    );
+    let session = host
+        .create_session(SessionConfig {
+            workspace: source.clone(),
+            model: ModelSettings::default(),
+            instructions: String::new(),
+        })
+        .await
+        .unwrap();
+    let policy = orvek_harness::admission::RequestPolicy {
+        version: 1,
+        delivery: DeliveryKind::Source,
+        profile: orvek_harness::admission::RepositoryProfile {
+            version: 1,
+            name: "malformed classifier fixture".into(),
+            checks: BTreeMap::new(),
+        },
+    };
+    let request = uuid::Uuid::new_v4();
+    let content = vec![json!({"type":"input_text","text":"Fix addition"})];
+    let intent = SubmitIntent::Ordinary {
+        limits: Limits::default(),
+        policy,
+        schedule: Schedule::Queue,
+    };
+    host.submit(session.id, request, content.clone(), intent.clone())
+        .await
+        .unwrap();
+    host.start_queued().await.unwrap();
+    let settled = timeout(Duration::from_secs(60), async {
+        loop {
+            let submission = host.submission(session.id, request).await.unwrap();
+            if !submission.status.pending() {
+                break submission;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let requests = served.await.unwrap();
+    // Resubmitting the identical ID, input and intent is recognized as the same
+    // request and answered from the durable record, never reclassified.
+    let replay = host
+        .submit(session.id, request, content, intent)
+        .await
+        .unwrap();
+    assert_eq!(
+        replay, settled,
+        "resubmitting the same ordinary request must not redispatch the classifier"
+    );
+    let records = settled
+        .records
+        .iter()
+        .map(|digest| serde_json::from_slice(&artifacts.read(*digest).unwrap()).unwrap())
+        .collect();
+    let state = host.session(session.id).await.unwrap();
+    ClassifierRun {
+        session: session.id,
+        request,
+        settled,
+        state,
+        requests,
+        records,
+    }
+}
+
+/// Every malformed classifier outcome has to fail closed identically: no task,
+/// no fabricated answer, no redispatch, the original submission ID kept, and a
+/// durable intended/observed record pair that still shows what was actually
+/// billed.
+fn assert_classifier_failed_closed(
+    run: &ClassifierRun,
+    expected_kind: &str,
+    expected_tokens: Option<u64>,
+) {
+    use orvek_harness::{auxiliary::AuxiliaryRecord, state::ModelCallStatus};
+    assert_eq!(run.settled.id, run.request, "the submission keeps its ID");
+    let orvek_harness::submission::SubmissionStatus::Finished {
+        task,
+        outcome,
+        error,
+    } = run.settled.status.clone()
+    else {
+        panic!("must fail closed into Finished: {:?}", run.settled.status);
+    };
+    assert_eq!(task, None, "no task may be admitted");
+    assert_eq!(outcome, None);
+    assert!(
+        error
+            .as_deref()
+            .is_some_and(|error| error.contains("ordinary classification failed closed")),
+        "{error:?}"
+    );
+    assert_eq!(run.settled.result, None, "no answer may be fabricated");
+    assert_eq!(run.requests.len(), 1, "the classifier is dispatched once");
+    assert_eq!(run.records.len(), 2, "{:?}", run.records);
+    assert!(matches!(
+        run.records[0],
+        AuxiliaryRecord::ClassificationIntended { .. }
+    ));
+    let AuxiliaryRecord::ClassificationObserved { receipt, kind, .. } = &run.records[1] else {
+        panic!("expected an observed record: {:?}", run.records[1]);
+    };
+    assert_eq!(
+        receipt.status,
+        ModelCallStatus::Completed,
+        "the provider call itself succeeded; only the decision failed closed"
+    );
+    assert_eq!(
+        receipt.tokens, expected_tokens,
+        "unknown billing must not be normalized to zero spend"
+    );
+    assert_eq!(kind.as_str(), expected_kind);
+    assert_eq!(run.state.current_task, None);
+    assert!(run.state.tasks_by_request.is_empty());
+    assert_eq!(
+        run.state.active_request, None,
+        "a fail-closed classification must settle the turn, not wedge the session"
+    );
+    let _ = run.session;
+}
+
+fn classifier_message(text: String) -> Vec<Value> {
+    vec![
+        json!({"type":"message","id":"msg_classify","role":"assistant","status":"completed","content":[{"type":"output_text","text":text,"annotations":[]}]}),
+    ]
+}
+
+fn six_tokens() -> Option<Value> {
+    Some(json!({"input_tokens":5,"output_tokens":1,"total_tokens":6}))
+}
+
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn ordinary_classifier_rejects_unparseable_json_without_redispatch() {
+    let run =
+        run_ordinary_classifier(classifier_message("not json at all".into()), six_tokens()).await;
+    assert_classifier_failed_closed(&run, "", Some(6));
+    assert!(
+        run.state.history.is_empty(),
+        "an unresolved request records no conversation history"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn ordinary_classifier_rejects_unknown_fields_without_redispatch() {
+    // `ClassifierOutput` denies unknown fields, so an extra key alongside a
+    // valid kind is still a hard rejection rather than a tolerated decision.
+    let run = run_ordinary_classifier(
+        classifier_message(json!({"kind":"action","confidence":0.97}).to_string()),
+        six_tokens(),
+    )
+    .await;
+    assert_classifier_failed_closed(&run, "", Some(6));
+}
+
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn ordinary_classifier_rejects_an_unknown_kind_without_redispatch() {
+    let run = run_ordinary_classifier(
+        classifier_message(json!({"kind":"chitchat"}).to_string()),
+        six_tokens(),
+    )
+    .await;
+    assert_classifier_failed_closed(&run, "", Some(6));
+}
+
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn ordinary_classifier_rejects_a_tool_proposal_without_executing_it() {
+    // The classifier request offers no tools, but a misbehaving model can still
+    // return a function call. It must not be executed or treated as a decision.
+    let run = run_ordinary_classifier(
+        vec![
+            json!({"type":"function_call","id":"fc_classify","call_id":"call_classify","name":"read_file","arguments":"{}","status":"completed"}),
+        ],
+        six_tokens(),
+    )
+    .await;
+    assert_classifier_failed_closed(&run, "", Some(6));
+    assert_eq!(
+        run.requests[0]["tools"],
+        json!([]),
+        "the classifier is never offered tools, so the proposal was unsolicited"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn ordinary_classifier_with_unknown_billing_fails_closed_despite_a_valid_kind() {
+    // The body is a perfectly valid `action` decision, but the terminal event
+    // omits usage entirely. A recognized kind is not enough to admit a task
+    // when the spend cannot be accounted, and the durable record keeps both
+    // facts: the kind it understood and the billing it never learned.
+    let run = run_ordinary_classifier(
+        classifier_message(json!({"kind":"action"}).to_string()),
+        None,
+    )
+    .await;
+    assert_classifier_failed_closed(&run, "action", None);
+}
+
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn ordinary_action_continues_an_incomplete_task_and_charges_its_classifier() {
+    use orvek_harness::submission::{Schedule, SubmissionStatus, SubmitIntent};
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/ct");
+    fs::create_dir_all(&directory).unwrap();
+    let directory = directory.canonicalize().unwrap();
+    let root = tempfile::tempdir_in(directory).unwrap();
+    let source = root.path().join("source");
+    fs::create_dir(&source).unwrap();
+    let before = "#!/bin/sh\nprintf '3\\n'\n";
+    let after = "#!/bin/sh\nprintf '%s\\n' \"$(($1 + $2))\"\n";
+    fs::write(source.join("add"), before).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(source.join("add"), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let state_root = root.path().join("state");
+    let program = CheckProgram {
+        version: 1,
+        probes: vec![Probe::Command {
+            id: "sum".into(),
+            command: "./add 2 2".into(),
+            exit_code: 0,
+            stdout: Some(Expectation::Equals("4\n".into())),
+            stderr: None,
+        }],
+        control_failure: Some(ControlFailure {
+            probe: "sum".into(),
+            stdout: Some(Expectation::Equals("3\n".into())),
+            stderr: None,
+        }),
+    };
+    let limits = Limits {
+        model_calls: 12,
+        tokens: 4000,
+        ..Limits::default()
+    };
+    let draft = orvek_harness::admission::Proposal {
+        outcome: "add both operands".into(),
+        scope: "addition command".into(),
+        requirements: vec![Requirement {
+            id: "sum".into(),
+            behavior: "2 plus 2 yields 4".into(),
+            origin: Origin::User("Fix addition".into()),
+            checks: vec!["sum".into()],
+            depends_on: vec![],
+        }],
+        checks: BTreeMap::from([(
+            "sum".into(),
+            orvek_harness::admission::ProposedCheck {
+                purpose: "observe exact arithmetic behavior".into(),
+                kind: CheckKind::Behavior,
+                program: program.clone(),
+                baseline_failure: true,
+                control_omission: None,
+            },
+        )]),
+        protected_behavior: vec![],
+        assumptions: vec![],
+        open_questions: vec![],
+    };
+    let classify = |id: &str| {
+        vec![
+            json!({"type":"message","id":id,"role":"assistant","status":"completed","content":[{"type":"output_text","text":json!({"kind":"action"}).to_string(),"annotations":[]}]}),
+        ]
+    };
+    let outputs = vec![
+        classify("msg_classify_1"),
+        vec![
+            json!({"type":"function_call","id":"fc_contract","call_id":"call_contract","name":"propose_contract","arguments":serde_json::to_string(&draft).unwrap(),"status":"completed"}),
+        ],
+        vec![final_message("msg_early")],
+        vec![
+            json!({"type":"function_call","id":"fc_write","call_id":"call_write","name":"write_file","arguments":serde_json::to_string(&json!({"operation":"replace","path":"add","expected":{"kind":"digest","digest":Digest::of(before.as_bytes())},"content":after})).unwrap(),"status":"completed"}),
+        ],
+        vec![
+            json!({"type":"function_call","id":"fc_blocker","call_id":"call_blocker","name":"report_blocker","arguments":"{\"reason\":\"fixture prerequisite is temporarily absent\"}","status":"completed"}),
+        ],
+        classify("msg_classify_2"),
+        vec![final_message("msg_final")],
+        vec![final_message("msg_spare_1")],
+        vec![final_message("msg_spare_2")],
+    ];
+    // The handle is intentionally dropped rather than awaited: the exact number
+    // of provider turns the controller needs is not the property under test, so
+    // spare responses must not make the fixture hang.
+    let (endpoint, _served) = provider(outputs).await;
+    let client = ResponsesClient::new(
+        Auth::api_key(SecretString::new("fixture-key".into())).unwrap(),
+        Route::new(Transport::Http, &endpoint).unwrap(),
+        InferenceLimits {
+            max_attempts: 1,
+            ..InferenceLimits::default()
+        },
+    )
+    .unwrap();
+    let host = Arc::new(
+        Host::open(
+            &state_root,
+            client,
+            DockerExecutor::connect("debian:bookworm-slim")
+                .await
+                .unwrap(),
+        )
+        .unwrap(),
+    );
+    let session = host
+        .create_session(SessionConfig {
+            workspace: source.clone(),
+            model: ModelSettings::default(),
+            instructions: String::new(),
+        })
+        .await
+        .unwrap();
+    let policy = orvek_harness::admission::RequestPolicy {
+        version: 1,
+        delivery: DeliveryKind::Source,
+        profile: orvek_harness::admission::RepositoryProfile {
+            version: 1,
+            name: "fixed addition fixture".into(),
+            checks: BTreeMap::new(),
+        },
+    };
+    let ordinary = |text: &str| {
+        (
+            vec![json!({"type":"input_text","text":text})],
+            SubmitIntent::Ordinary {
+                limits,
+                policy: policy.clone(),
+                schedule: Schedule::Queue,
+            },
+        )
+    };
+    let settle = |request: uuid::Uuid| {
+        let host = host.clone();
+        async move {
+            timeout(Duration::from_secs(120), async {
+                loop {
+                    let submission = host.submission(session.id, request).await.unwrap();
+                    if !submission.status.pending() {
+                        break submission;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap()
+        }
+    };
+
+    let first = uuid::Uuid::new_v4();
+    let (content, intent) = ordinary("Fix addition");
+    host.submit(session.id, first, content, intent)
+        .await
+        .unwrap();
+    host.start_queued().await.unwrap();
+    let settled = settle(first).await;
+    let SubmissionStatus::Finished {
+        task: Some(task_id),
+        outcome,
+        ..
+    } = settled.status
+    else {
+        panic!("an ordinary action must admit a task even when it blocks: {settled:?}");
+    };
+    assert_eq!(
+        outcome,
+        Some(Outcome::Blocked),
+        "the fixture reports a blocker so the task is left incomplete: {settled:?}"
+    );
+    let after_first = host.task(task_id).await.unwrap();
+    let first_classifier = uuid::Uuid::new_v5(&first, b"ordinary-classifier");
+    assert!(
+        after_first.model_receipts.contains_key(&first_classifier),
+        "the classifier that admitted this task must be charged to it"
+    );
+
+    // A second ordinary action, while that task is still incomplete.
+    let second = uuid::Uuid::new_v4();
+    let (content, intent) = ordinary("The prerequisite is available now; continue");
+    host.submit(session.id, second, content, intent)
+        .await
+        .unwrap();
+    host.start_queued().await.unwrap();
+    let settled = settle(second).await;
+    let SubmissionStatus::Finished {
+        task: Some(continued),
+        ..
+    } = settled.status
+    else {
+        panic!("the continuation must resolve to a task: {settled:?}");
+    };
+
+    // Identity and every immutable fact are retained across the continuation.
+    assert_eq!(
+        continued, task_id,
+        "an ordinary action must continue the incomplete task, never spawn a second one"
+    );
+    let after_second = host.task(task_id).await.unwrap();
+    assert_eq!(
+        after_second.request, after_first.request,
+        "the immutable original request must not change"
+    );
+    assert_eq!(after_second.initial_limits, after_first.initial_limits);
+    assert_eq!(
+        after_second.started_ms, after_first.started_ms,
+        "continuing must not reset the task's start time"
+    );
+    assert_eq!(
+        after_second.baseline, after_first.baseline,
+        "continuing must not re-snapshot the established baseline"
+    );
+    assert_eq!(after_second.origin, after_first.origin);
+    assert_eq!(
+        after_second.contract.as_ref().unwrap().requirements,
+        after_first.contract.as_ref().unwrap().requirements,
+        "the scope admitted on the first turn is retained"
+    );
+
+    // The second classifier is charged to that same task, and the first charge
+    // survives untouched.
+    let second_classifier = uuid::Uuid::new_v5(&second, b"ordinary-classifier");
+    assert!(
+        after_second.model_receipts.contains_key(&second_classifier),
+        "the continuation's classifier must be charged to the continued task"
+    );
+    assert!(
+        after_second.model_receipts.contains_key(&first_classifier),
+        "the original classifier charge must survive the continuation"
+    );
+    assert!(after_second.usage.model_calls > after_first.usage.model_calls);
+
+    let state = host.session(session.id).await.unwrap();
+    assert_eq!(state.tasks_by_request.get(&first), Some(&task_id));
+    assert_eq!(
+        state.tasks_by_request.get(&second),
+        Some(&task_id),
+        "both ordinary requests resolve to the one task"
+    );
+    assert_eq!(
+        fs::read_to_string(source.join("add")).unwrap(),
+        before,
+        "the user's source must not be overwritten by execution"
+    );
+}
+
+/// Accepts exactly one request and then never answers it, so the classifier
+/// call stays in flight until the host cancels it. Resolves `dispatched` once
+/// the request is fully read, and reports how many requests it ever received.
+async fn stalling_provider() -> (
+    String,
+    tokio::sync::oneshot::Receiver<()>,
+    tokio::task::JoinHandle<usize>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1/responses", listener.local_addr().unwrap());
+    let (dispatched_tx, dispatched_rx) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        let Ok(Ok((mut socket, _))) = timeout(Duration::from_secs(20), listener.accept()).await
+        else {
+            return 0usize;
+        };
+        let mut headers = Vec::new();
+        while !headers.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            if socket.read_exact(&mut byte).await.is_err() {
+                return 0;
+            }
+            headers.push(byte[0]);
+            assert!(headers.len() < 32 * 1024);
+        }
+        let headers = String::from_utf8(headers).unwrap();
+        let length = headers
+            .lines()
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .strip_prefix("content-length:")
+                    .map(|n| n.trim().parse::<usize>().unwrap())
+            })
+            .unwrap();
+        let mut bytes = vec![0; length];
+        if socket.read_exact(&mut bytes).await.is_err() {
+            return 0;
+        }
+        let _ = dispatched_tx.send(());
+        // Deliberately send no response. This read returns once the host drops
+        // the connection, which is what cancelling the call does.
+        let mut discard = [0u8; 1];
+        let _ = socket.read(&mut discard).await;
+        1
+    });
+    (endpoint, dispatched_rx, task)
+}
+
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn ordinary_cancellation_during_classification_settles_without_admitting_a_task() {
+    use orvek_harness::submission::{Schedule, SubmitIntent};
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/ct");
+    fs::create_dir_all(&directory).unwrap();
+    let directory = directory.canonicalize().unwrap();
+    let root = tempfile::tempdir_in(directory).unwrap();
+    let source = root.path().join("source");
+    fs::create_dir(&source).unwrap();
+    let state_root = root.path().join("state");
+    let (endpoint, dispatched, served) = stalling_provider().await;
+    let client = ResponsesClient::new(
+        Auth::api_key(SecretString::new("fixture-key".into())).unwrap(),
+        Route::new(Transport::Http, &endpoint).unwrap(),
+        InferenceLimits {
+            max_attempts: 1,
+            ..InferenceLimits::default()
+        },
+    )
+    .unwrap();
+    let host = Arc::new(
+        Host::open(
+            &state_root,
+            client,
+            DockerExecutor::connect("debian:bookworm-slim")
+                .await
+                .unwrap(),
+        )
+        .unwrap(),
+    );
+    let session = host
+        .create_session(SessionConfig {
+            workspace: source.clone(),
+            model: ModelSettings::default(),
+            instructions: String::new(),
+        })
+        .await
+        .unwrap();
+    let policy = orvek_harness::admission::RequestPolicy {
+        version: 1,
+        delivery: DeliveryKind::Source,
+        profile: orvek_harness::admission::RepositoryProfile {
+            version: 1,
+            name: "cancelled classifier fixture".into(),
+            checks: BTreeMap::new(),
+        },
+    };
+    let request = uuid::Uuid::new_v4();
+    host.submit(
+        session.id,
+        request,
+        vec![json!({"type":"input_text","text":"Fix addition"})],
+        SubmitIntent::Ordinary {
+            limits: Limits::default(),
+            policy,
+            schedule: Schedule::Queue,
+        },
+    )
+    .await
+    .unwrap();
+    host.start_queued().await.unwrap();
+
+    // Only cancel once the call is genuinely on the wire, so this exercises the
+    // in-flight window rather than the easier pre-dispatch one.
+    timeout(Duration::from_secs(20), dispatched)
+        .await
+        .unwrap()
+        .unwrap();
+    host.cancel_submission(session.id, request).await.unwrap();
+
+    let settled = timeout(Duration::from_secs(60), async {
+        loop {
+            let submission = host.submission(session.id, request).await.unwrap();
+            if !submission.status.pending() {
+                break submission;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let dispatches = timeout(Duration::from_secs(30), served)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(settled.id, request);
+    assert!(
+        matches!(
+            settled.status,
+            orvek_harness::submission::SubmissionStatus::Finished {
+                task: None,
+                outcome: None,
+                ..
+            }
+        ),
+        "a cancelled classification must never admit a task: {settled:?}"
+    );
+    assert_eq!(settled.result, None, "no answer may be fabricated");
+    assert_eq!(
+        dispatches, 1,
+        "cancelling must not cause the classifier to be redispatched"
+    );
+    let state = host.session(session.id).await.unwrap();
+    assert_eq!(
+        state.active_request, None,
+        "a cancelled classification must settle the turn, not wedge the session"
+    );
+    assert_eq!(state.current_task, None);
+    assert!(state.tasks_by_request.is_empty());
 }
 
 #[tokio::test]
@@ -423,6 +1144,7 @@ async fn disconnected_submission_and_followup_keep_one_task_and_its_original_che
 
 enum Mode {
     Ordinary,
+    OrdinaryAction,
     ExplicitCompletion,
     Resume,
     Natural,
@@ -435,9 +1157,14 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
     let resume = matches!(mode, Mode::Resume);
     let queued = matches!(mode, Mode::Queued);
     let natural = matches!(mode, Mode::Natural | Mode::Queued);
+    let ordinary_action = matches!(mode, Mode::OrdinaryAction);
     let ordinary_information = matches!(mode, Mode::OrdinaryInformation);
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/ct");
     fs::create_dir_all(&directory).unwrap();
+    // Canonicalize before deriving any path under this root: the literal form
+    // carries a `crates/harness/../../` detour, and the queued case binds a
+    // Unix socket here, which macOS caps at 104 bytes (SUN_LEN).
+    let directory = directory.canonicalize().unwrap();
     let root = tempfile::tempdir_in(directory).unwrap();
     let source = root.path().join("source");
     fs::create_dir(&source).unwrap();
@@ -449,7 +1176,10 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(source.join("add"), fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let state_root = root.path().join("protected-state");
+    // Keep this segment short: the queued case binds `<state_root>/host.sock`,
+    // and macOS caps a Unix socket path at 104 bytes (SUN_LEN). Matches the
+    // shorter `state` name the other tests in this file already use.
+    let state_root = root.path().join("state");
     let store = Store::open(&state_root).unwrap();
     let artifacts = store.artifacts().clone();
     let program = CheckProgram {
@@ -503,8 +1233,10 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         open_questions: vec![],
         delivery,
         limits: Limits {
-            model_calls: if queued {
+            model_calls: if queued || ordinary_action {
                 8
+            } else if ordinary_information {
+                2
             } else if natural {
                 6
             } else {
@@ -526,11 +1258,19 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
             vec![final_message("msg_final")]
         },
     ];
-    if ordinary_information {
+    if ordinary_action || ordinary_information {
+        let kind = if ordinary_action {
+            "action"
+        } else {
+            "information"
+        };
         outputs.insert(
             0,
-            vec![json!({"type":"message","id":"msg_classify","role":"assistant","status":"completed","content":[{"type":"output_text","text":"{\"kind\":\"action\"}","annotations":[]}]})],
+            vec![json!({"type":"message","id":"msg_classify","role":"assistant","status":"completed","content":[{"type":"output_text","text":json!({"kind":kind}).to_string(),"annotations":[]}]})],
         );
+    }
+    if ordinary_information {
+        outputs.push(vec![final_message("msg_information_answer")]);
     }
     if resume {
         outputs.insert(2, vec![json!({"type":"function_call","id":"fc_blocker","call_id":"call_blocker","name":"report_blocker","arguments":"{\"reason\":\"fixture prerequisite is temporarily absent\"}","status":"completed"})]);
@@ -544,6 +1284,30 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
             checks: BTreeMap::new(),
         },
     };
+    if ordinary_action {
+        let draft = orvek_harness::admission::Proposal {
+            outcome: contract.outcome.clone(),
+            scope: contract.scope.clone(),
+            requirements: contract.requirements.clone(),
+            checks: BTreeMap::from([(
+                "sum".into(),
+                orvek_harness::admission::ProposedCheck {
+                    purpose: "observe exact arithmetic behavior".into(),
+                    kind: CheckKind::Behavior,
+                    program: program.clone(),
+                    baseline_failure: true,
+                    control_omission: None,
+                },
+            )]),
+            protected_behavior: vec![],
+            assumptions: vec![],
+            open_questions: vec![],
+        };
+        outputs.insert(
+            1,
+            vec![json!({"type":"function_call","id":"fc_contract","call_id":"call_contract","name":"propose_contract","arguments":serde_json::to_string(&draft).unwrap(),"status":"completed"})],
+        );
+    }
     if natural {
         let draft = orvek_harness::admission::Proposal {
             outcome: contract.outcome.clone(),
@@ -622,10 +1386,18 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
     let mut result = if queued {
         use orvek_harness::{ipc, submission::SubmitIntent};
         let stop = CancellationToken::new();
-        let service = tokio::spawn(ipc::serve(host.clone(), stop.clone()));
+        let mut service = tokio::spawn(ipc::serve(host.clone(), stop.clone()));
         let socket = host.state_directory().join("host.sock");
         timeout(Duration::from_secs(5), async {
             while !socket.exists() {
+                // Report why the listener never appeared. Spinning only on the
+                // socket path turns any `serve` failure into an opaque timeout.
+                if service.is_finished() {
+                    panic!(
+                        "ipc::serve exited before binding: {:?}",
+                        (&mut service).await
+                    );
+                }
                 tokio::task::yield_now().await;
             }
         })
@@ -729,6 +1501,43 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         stop.cancel();
         service.await.unwrap().unwrap();
         result
+    } else if ordinary_action {
+        host.submit(
+            session.id,
+            request_id,
+            vec![json!({"type":"input_text","text":"Fix addition"})],
+            orvek_harness::submission::SubmitIntent::Ordinary {
+                limits: contract.limits,
+                policy: policy.clone(),
+                schedule: orvek_harness::submission::Schedule::Queue,
+            },
+        )
+        .await
+        .unwrap();
+        host.start_queued().await.unwrap();
+        let settled = timeout(Duration::from_secs(90), async {
+            loop {
+                let submission = host.submission(session.id, request_id).await.unwrap();
+                if !submission.status.pending() {
+                    break submission;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let orvek_harness::submission::SubmissionStatus::Finished {
+            task: Some(task), ..
+        } = settled.status
+        else {
+            panic!("ordinary action must produce a task: {settled:?}")
+        };
+        let task = host.task(task).await.unwrap();
+        orvek_harness::controller::TaskRun {
+            session: session.id,
+            task,
+            message: String::new(),
+        }
     } else if ordinary_information {
         host.submit(
             session.id,
@@ -743,26 +1552,53 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         .await
         .unwrap();
         host.start_queued().await.unwrap();
-        timeout(Duration::from_secs(90), async {
+        let settled = timeout(Duration::from_secs(90), async {
             loop {
-                let _submission = host.submission(session.id, request_id).await.unwrap();
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                let state = host.session(session.id).await.unwrap();
                 let submission = host.submission(session.id, request_id).await.unwrap();
-                if matches!(
-                    submission.status,
-                    orvek_harness::submission::SubmissionStatus::Running
-                ) && state.current_task.is_some()
-                {
+                if !submission.status.pending() {
                     break submission;
                 }
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
         .unwrap();
-        host.execute_resolved_submission(session.id, request_id, CancellationToken::new(), sink)
-            .await
-            .unwrap()
+        assert!(
+            matches!(
+                settled.status,
+                orvek_harness::submission::SubmissionStatus::Finished {
+                    task: None,
+                    outcome: None,
+                    error: None,
+                    ..
+                }
+            ),
+            "{settled:?}"
+        );
+        let report: orvek_harness::auxiliary::AuxiliaryReport = serde_json::from_slice(
+            &artifacts
+                .read(settled.result.expect("durable answer"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            report.status,
+            orvek_harness::auxiliary::AuxiliaryStatus::Completed
+        );
+        // The classifier and the answer are both charged to this ordinary
+        // submission, so its report aggregates both: one classification call
+        // plus one answer call. This mirrors the action path, where the
+        // classifier is charged to the adopted task and counted in its five
+        // model calls. Reporting only the answer would hide real spend.
+        assert_eq!(report.model_calls, 2);
+        assert_eq!(report.tokens, Some(12));
+        let state = host.session(session.id).await.unwrap();
+        assert_eq!(state.current_task, None);
+        assert_eq!(state.tasks_by_request, BTreeMap::new());
+        assert_eq!(state.history.len(), 1);
+        assert_eq!(state.active_request, None);
+        assert_eq!(fs::read_to_string(source.join("add")).unwrap(), before);
+        return;
     } else if natural {
         host.execute_request(
             session.id,
@@ -840,8 +1676,8 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
             .unwrap();
         assert_eq!(replay.task, result.task);
     }
-    let calls = if ordinary_information {
-        4
+    let calls = if ordinary_action {
+        5
     } else if queued {
         7
     } else if natural {
@@ -880,15 +1716,23 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         ));
         assert_eq!(session.active_request, None);
     }
-    let replay = if queued {
+    let replay = if queued || ordinary_action {
         let submission = host
             .submit(
                 session.id,
                 request_id,
                 vec![json!({"type":"input_text","text":"Fix addition"})],
-                orvek_harness::submission::SubmitIntent::NewTask {
-                    limits: contract.limits,
-                    policy,
+                if queued {
+                    orvek_harness::submission::SubmitIntent::NewTask {
+                        limits: contract.limits,
+                        policy,
+                    }
+                } else {
+                    orvek_harness::submission::SubmitIntent::Ordinary {
+                        limits: contract.limits,
+                        policy,
+                        schedule: orvek_harness::submission::Schedule::Queue,
+                    }
                 },
             )
             .await
@@ -929,7 +1773,8 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
     assert_eq!(replay.task.revision, result.task.revision);
     assert_eq!(replay.task.usage.model_calls, calls);
     let requests = served.await.unwrap();
-    assert_eq!(requests.len(), calls as usize);
+    let provider_requests = calls;
+    assert_eq!(requests.len(), provider_requests as usize);
     if natural {
         assert!(
             !requests[0]["tools"]
@@ -943,7 +1788,13 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         assert!(result.task.intake.is_some());
     }
     assert!(
-        requests[if natural { 3 } else { 1 }]["input"]
+        requests[if natural {
+            3
+        } else if ordinary_action {
+            4
+        } else {
+            1
+        }]["input"]
             .to_string()
             .contains("host rejected completion")
     );
@@ -960,7 +1811,7 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
                 }
             ))
             .count(),
-        if queued { 0 } else { 1 }
+        if queued || ordinary_action { 0 } else { 1 }
     );
     assert!(
         result

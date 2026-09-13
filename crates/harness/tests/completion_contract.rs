@@ -1,5 +1,5 @@
-use orvek_harness::{Digest, Store, StoreError, contract::*, state::*};
 use std::collections::BTreeMap;
+use orvek_harness::{Digest, Store, StoreError, contract::*, state::*};
 use tempfile::TempDir;
 use uuid::Uuid;
 

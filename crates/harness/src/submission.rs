@@ -16,10 +16,55 @@ pub enum Schedule {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OrdinaryKind {
     Information,
     Action,
+}
+
+impl OrdinaryKind {
+    pub(crate) const fn as_tag(&self) -> &'static str {
+        match self {
+            Self::Information => "information",
+            Self::Action => "action",
+        }
+    }
+}
+
+pub(crate) fn parse_ordinary_kind(text: &str) -> Result<OrdinaryKind, serde_json::Error> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ClassifierOutput {
+        kind: String,
+    }
+    match serde_json::from_str::<ClassifierOutput>(text)?
+        .kind
+        .as_str()
+    {
+        "information" => Ok(OrdinaryKind::Information),
+        "action" => Ok(OrdinaryKind::Action),
+        _ => Err(serde::de::Error::custom("unknown ordinary classifier kind")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OrdinaryKind, parse_ordinary_kind};
+
+    #[test]
+    fn ordinary_kind_rejects_partial_or_extra_classifier_output() {
+        assert_eq!(
+            parse_ordinary_kind(r#"{"kind":"action"}"#).unwrap(),
+            OrdinaryKind::Action
+        );
+        assert_eq!(
+            parse_ordinary_kind(r#"{"kind":"information"}"#).unwrap(),
+            OrdinaryKind::Information
+        );
+        assert!(parse_ordinary_kind(r#"{"kind":"action","tool":"x"}"#).is_err());
+        assert!(parse_ordinary_kind(r#"{"kind":"action""#).is_err());
+        assert!(parse_ordinary_kind(r#"{"kind":"unknown"}"#).is_err());
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

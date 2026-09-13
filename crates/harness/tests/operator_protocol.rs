@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
-use orvek_harness::ipc::{self, Command, Request, Response};
 use serde_json::json;
+use orvek_harness::ipc::{self, Command, Request, Response};
 use tokio::io::{AsyncWriteExt, duplex};
 
 #[tokio::test]
@@ -67,6 +67,7 @@ async fn responses_round_trip_without_turn_completion_becoming_task_completion()
 #[tokio::test]
 #[ignore = "requires local Docker and pre-pulled debian:bookworm-slim"]
 async fn real_operator_socket_uses_the_host_owner_and_survives_client_reconnect() {
+    use std::{sync::Arc, time::Duration};
     use orvek_harness::{
         controller::Host,
         inference::{
@@ -76,7 +77,6 @@ async fn real_operator_socket_uses_the_host_owner_and_survives_client_reconnect(
         runtime::DockerExecutor,
         session::{SessionConfig, SessionId},
     };
-    use std::{sync::Arc, time::Duration};
     use tokio_util::sync::CancellationToken;
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");
