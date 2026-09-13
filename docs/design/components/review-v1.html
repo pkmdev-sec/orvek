@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Review download dialog · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:740px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--border:#59646e;--accent:#76a9df;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 22px 22px;overflow:auto}.canvas.light{--base:#f7f8f9;--text:#283441;--muted:#627180;--border:#909ba5;--accent:#265f99}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:26px;gap:12px}.stage{min-height:365px;display:grid;place-items:center}.frame{position:relative;outline:none;font:14px/23px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.grid{font:inherit;white-space:pre;user-select:none;margin:0}.cell{display:inline-block;width:1ch;height:23px;vertical-align:top}.border{color:var(--border)}.muted{color:var(--muted)}.accent{color:var(--accent);font-weight:600}.hit{position:absolute;min-height:0;background:transparent;border:0;border-radius:0;padding:0;margin:0;color:transparent;outline:none}.hit:hover{background:#7a899910}.hit:focus-visible{outline:1px solid var(--accent);outline-offset:2px}.note{font-size:11px;color:var(--muted);margin:24px 0 0}.notice{min-height:21px;color:var(--muted);font-size:12px;margin-top:18px}.closed{font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);max-width:50ch}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:16px 8px}.explanation{grid-template-columns:1fr;gap:16px}.frame{font-size:13px}h1{font-size:27px}}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>The review download dialog</h1>
+<p class="intro">One small dialog. Explain what is needed, show what confirming will do, and keep both actions visible.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Terminal width<select id="width"><option value="100">Normal · 100 columns</option><option value="64">64 columns</option><option value="40">Narrow · 40 columns</option><option value="32">Small · 32 columns</option></select></label>
+<label>Available height<select id="height"><option value="24">24 rows</option><option value="12">Short · 12 rows</option><option value="9">Small · 9 rows</option></select></label>
+<label>Sample background<select id="scheme"><option value="dark">Dark</option><option value="light">Light</option></select></label>
+<button id="reopen" type="button">Reopen dialog</button>
+</div>
+<section class="canvas" id="canvas" aria-label="Review download confirmation preview">
+<div class="caption"><span>REVIEW INTERFACE / INTERACTIVE PREVIEW</span><span id="dimensions"></span></div>
+<div class="stage">
+<div class="frame" id="frame" tabindex="0" role="group" aria-label="Sample install review interface dialog" aria-describedby="description"><pre class="grid" id="grid" aria-hidden="true"></pre><div id="hits"></div><p id="description" class="sr-only"></p></div>
+<div class="closed" id="closed" hidden></div>
+</div>
+<div class="notice" id="notice" role="status"></div>
+<p class="note">Enter or Y confirms; Esc or N cancels. Click either action to try it. In a short terminal, arrows or the wheel scroll the explanation. This preview never downloads files or starts a review. Native theme colors stay unchanged.</p>
+</section>
+<div class="explanation">
+<div><h2>A clear consequence</h2><p>The action says “Download &amp; open”. The text explains that the bundle matches this Orvek version and is verified before the browser opens.</p></div>
+<div><h2>Small and readable</h2><p>Keep the rounded frame and plain text. The dialog grows only when text wraps. When height is limited, the actions stay fixed while the explanation scrolls.</p></div>
+<div><h2>No extra motion</h2><p>This choice needs no animation or loading badge. Confirming closes the dialog and follows the existing review flow. Its progress display is a separate component.</p></div>
+</div>
+<div class="foot"><span>Review this dialog only. Previously approved components remain unchanged.</span><a href="../decisions.md">Review order and approvals</a></div>
+</main>
+<script>
+const reviewStudy=(()=>{
+ const title='Install review interface';
+ const paragraphs=['The browser review interface needs to be installed.','Download the bundle for this Orvek version, verify it, then open the review in your browser.'];
+ const actions=[{id:'confirm',key:'enter/y',label:'Download & open'},{id:'dismiss',key:'esc/n',label:'Cancel'}];
+ function wrap(text,width){const lines=[];let remaining=text;while(remaining.length>width){let end=remaining.lastIndexOf(' ',width);if(end<1)end=width;lines.push(remaining.slice(0,end));remaining=remaining.slice(end).replace(/^ /,'');}lines.push(remaining);return lines;}
+ function key(key,kind='press'){if(kind!=='press'&&kind!=='repeat')return null;if(['Enter','y','Y'].includes(key))return 'confirm';if(['Escape','n','N'].includes(key))return 'dismiss';return null;}
+ function outcome(state,action){return state==='open'&&['confirm','dismiss'].includes(action)?action:state;}
+ function scene({columns=100,availableRows=24,scroll=0}={}){
+  const width=Math.min(64,Math.max(32,Math.floor(columns))),bodyWidth=width-6;
+  const body=[...wrap(paragraphs[0],bodyWidth).map(text=>({text,role:'text'})),{text:'',role:'text'},...wrap(paragraphs[1],bodyWidth).map(text=>({text,role:'muted'}))];
+  const labels=actions.map(action=>action.key+' '+action.label),together=labels.join('    ').length<=bodyWidth;
+  const actionRows=together?1:2,naturalRows=body.length+actionRows+4,rows=Math.min(Math.max(9,Math.floor(availableRows)),naturalRows);
+  const actionY=rows-1-actionRows,bodySpace=actionY-3,overflow=body.length>bodySpace,capacity=bodySpace-(overflow?1:0),maxScroll=Math.max(0,body.length-capacity);
+  scroll=Math.max(0,Math.min(Math.floor(scroll),maxScroll));
+  const grid=Array.from({length:rows},()=>Array.from({length:width},()=>({ch:' ',role:'text'})));
+  function put(text,x,y,role='text'){[...text].forEach((ch,i)=>{if(x+i>=0&&x+i<width&&y>=0&&y<rows)grid[y][x+i]={ch,role};});}
+  put('╭'+'─'.repeat(width-2)+'╮',0,0,'border');put('╰'+'─'.repeat(width-2)+'╯',0,rows-1,'border');for(let y=1;y<rows-1;y++){put('│',0,y,'border');put('│',width-1,y,'border');}
+  put(' '+title+' ',Math.floor((width-title.length-2)/2),0,'accent');
+  body.slice(scroll,scroll+capacity).forEach((line,i)=>put(line.text,3,2+i,line.role));
+  if(overflow){const hint=scroll===0?'↓ More':scroll===maxScroll?'↑ Back':'↑ / ↓ More';put(hint,width-3-hint.length,2+capacity,'muted');}
+  const hits=[];let x=together?Math.floor((width-labels.join('    ').length)/2):3;
+  actions.forEach((action,index)=>{const y=actionY+(together?0:index);put(action.key,x,y);put(' '+action.label,x+action.key.length,y,action.id==='confirm'?'accent':'muted');hits.push({id:action.id,x,y,width:labels[index].length,height:1});if(together)x+=labels[index].length+4;});
+  return {grid,hits,width,rows,body,capacity,scroll,maxScroll,overflow};
+ }
+ return {title,paragraphs,actions,wrap,key,outcome,scene};
+})();
+if(typeof document!=='undefined'){
+ const id=name=>document.getElementById(name),frame=id('frame'),grid=id('grid'),canvas=id('canvas');
+ let columns=100,scroll=0,state='open',layout=null;
+ const buttons=reviewStudy.actions.map(action=>{const button=document.createElement('button');button.type='button';button.className='hit';button.setAttribute('aria-label',action.label+' (sample only)');button.addEventListener('click',()=>finish(action.id));button.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' ')event.stopPropagation();});id('hits').append(button);return button;});
+ function render(){
+  layout=reviewStudy.scene({columns,availableRows:Number(id('height').value),scroll});scroll=layout.scroll;
+  frame.hidden=state!=='open';id('closed').hidden=state==='open';id('dimensions').textContent=layout.width+' × '+layout.rows+' cells';if(state!=='open')return;
+  frame.style.width=layout.width+'ch';frame.style.height=layout.rows*23+'px';
+  if(grid.dataset.size!==layout.width+'x'+layout.rows){grid.replaceChildren();layout.grid.forEach(row=>{row.forEach(()=>{const span=document.createElement('span');span.className='cell';grid.append(span);});grid.append(document.createTextNode('\n'));});grid.dataset.size=layout.width+'x'+layout.rows;}
+  [...grid.children].forEach((cell,index)=>{const next=layout.grid[Math.floor(index/layout.width)][index%layout.width],role='cell '+next.role;if(cell.textContent!==next.ch)cell.textContent=next.ch;if(cell.className!==role)cell.className=role;});
+  layout.hits.forEach((hit,index)=>{Object.assign(buttons[index].style,{left:hit.x+'ch',top:hit.y*23+'px',width:hit.width+'ch',height:'23px'});});
+  id('description').textContent=reviewStudy.paragraphs.join(' ')+' Enter or Y confirms. Escape or N cancels.';
+ }
+ function finish(action){const next=reviewStudy.outcome(state,action);if(next===state)return;state=next;id('closed').textContent=next==='confirm'?'Sample: download and review requested.':'Sample: installation cancelled.';id('notice').textContent=next==='confirm'?'No download, installation, or browser review was started.':'The sample closes without starting work.';render();id('reopen').focus();}
+ function reopen(){state='open';scroll=0;id('notice').textContent='';render();frame.focus();}
+ function resize(){const probe=document.createElement('span');probe.className='cell';probe.textContent='M';const hidden=frame.hidden;frame.hidden=false;grid.append(probe);const cellWidth=probe.getBoundingClientRect().width;probe.remove();frame.hidden=hidden;const style=getComputedStyle(canvas),available=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);columns=Math.max(32,Math.min(Number(id('width').value),Math.floor(available/cellWidth)));render();}
+ frame.addEventListener('keydown',event=>{if(state!=='open')return;const action=reviewStudy.key(event.key,event.repeat?'repeat':'press');if(action){event.preventDefault();finish(action);return;}const delta={ArrowUp:-1,ArrowDown:1,PageUp:-layout.capacity,PageDown:layout.capacity,Home:-layout.maxScroll,End:layout.maxScroll}[event.key];if(delta!==undefined){event.preventDefault();scroll+=delta;render();}});
+ frame.addEventListener('wheel',event=>{if(state!=='open'||!layout.overflow||!event.deltaY)return;event.preventDefault();scroll+=Math.sign(event.deltaY);render();},{passive:false});
+ id('width').addEventListener('change',resize);id('height').addEventListener('change',render);id('scheme').addEventListener('change',()=>canvas.classList.toggle('light',id('scheme').value==='light'));id('reopen').addEventListener('click',reopen);
+ new ResizeObserver(resize).observe(canvas);resize();frame.focus();
+}
+</script>
+</body>
+</html>

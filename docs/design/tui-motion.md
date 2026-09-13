@@ -114,8 +114,8 @@ details still available on expansion. Preserve command identity and process cont
 
 Keep the timer optimization that replaces summary lines without rebuilding expanded details.
 Color and animation must never hide errors, imply successful completion early, or move the viewport.
-The small persistent activity mark still needs design review; neither its proposed shape nor its
-new placement is approved. Do not add competing spinners around the composer.
+The persistent activity mark is approved in the [component registry](decisions.md). Follow its
+locked shape, placement, and motion limits. Do not add competing spinners around the composer.
 
 ## Welcome logo and motion
 

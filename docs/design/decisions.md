@@ -4,7 +4,7 @@ Review one component at a time. Open its HTML proposal with macOS `open`, then w
 explicit approval. Feedback revises that component only. An approval locks the named version and
 scope; changes to it need another review. Design approval does not authorize native implementation.
 
-Components through the message queue are approved. The current review is **Child-agent view,
+Components through the child-agent view are approved. The current review is **Review download dialog,
 proposal 1**.
 
 Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
@@ -25,9 +25,15 @@ welcome-logo colors stay fixed.
 | 9 | File picker | Approved and locked | [Proposal 1](components/files-v1.html) |
 | 10 | Skill picker | Approved and locked | [Proposal 1](components/skills-v1.html) |
 | 11 | Message queue | Approved and locked | [Proposal 1](components/queue-v1.html) |
-| 12 | Child-agent view | Awaiting approval | [Proposal 1](components/agents-v1.html) |
-| 13 | Review prompts and notifications | Not started | Preserve existing actions and event meaning. |
-| 14 | Welcome placement and final consistency | Not started | Check approved components together, including light and narrow layouts. |
+| 12 | Child-agent view | Approved and locked | [Proposal 1](components/agents-v1.html) |
+| 13 | Review download dialog | Awaiting approval | [Proposal 1](components/review-v1.html) |
+| 14 | Notifications and review status | Not started | Preserve event meaning and cancellation. |
+| 15 | Recent prompt picker | Not started | Preserve prompt history and draft handling. |
+| 16 | Memory browser | Not started | Preserve existing data and actions. |
+| 17 | Context diagnostics | Not started | Preserve measured values and recovery details. |
+| 18 | Theme selector | Not started | Preserve theme roles and overrides. |
+| 19 | Keyboard help | Not started | Show the actual bindings. |
+| 20 | Welcome placement and final consistency | Not started | Check approved components together, including light and narrow layouts. |
 
 ## Chat bar, proposal 1
 
@@ -366,8 +372,8 @@ Its pending-review label is historical; this registry records approval.
 
 ## Child-agent view, proposal 1
 
-The [HTML](components/agents-v1.html) keeps the tree and read-only transcript inspector. No approval
-recorded yet. Source: `components/subagents.rs`, `subagent_tree_layout.rs`, Root's subagent effects,
+The [HTML](components/agents-v1.html) keeps the tree and read-only transcript inspector. Approved
+by the user. Source: `components/subagents.rs`, `subagent_tree_layout.rs`, Root's subagent effects,
 and `crates/subagents/src/model.rs` / `capacity.rs`.
 
 - Keep rounded 24 × 4 nodes, the green focus border, and current status/model colors. Keep agent
@@ -407,3 +413,56 @@ filter promotion, real parent identity, focus repair, cousin navigation, interru
 status updates during inspection, links/selection, limit changes below active count, empty views,
 small dimensions, and hidden-transcript wakeups. Review dialogs and remaining utility views follow
 after approval.
+
+Locked artifact: `agents-v1.html` at `5206d8d`, SHA-256
+`79a445f69f2b25a81c56d3dbebc41a820088f65dcb764be2b995676aaf33d8f8`.
+Its pending-review label is historical; this registry records approval.
+
+## Review download dialog, proposal 1
+
+The [HTML](components/review-v1.html) keeps the rounded 64 × 9 confirmation. No approval recorded
+yet. Source: `components/review_confirmation.rs`, `components/floating.rs`,
+`RootNode::update_review_confirmation`, the `RootEffect::Review` handler and `spawn_review` in
+`tui/mod.rs`, `ReviewAssets::availability` / `download` in `review/assets.rs`, and
+`tui/review_controller.rs`.
+
+- Keep the title and native theme roles. Use the existing accent for the primary action, regular
+  text for keys, and muted text for explanation and Cancel. No new palette or shaded panel.
+- Explain that this Orvek version's bundle will be downloaded and verified, then the browser
+  review will open. Label the primary action `Download & open`; keep a separate `Cancel` action.
+  Successful opening remains conditional on the existing download, preparation, and browser flow.
+- Say the interface needs installation. The current `DownloadRequired` result also covers an
+  invalid managed bundle, so saying it is always absent would be inaccurate.
+- Preserve Enter/Y confirmation and Esc/N cancellation, including uppercase and key repeats.
+  Ignore release events. Do not introduce selectable defaults or change Enter to select Cancel.
+  Click targets for the two actions are proposed additions; use the same Confirm/Dismiss effects.
+- Keep the normal 64 × 9 frame. Compute required height from wrapped text and action rows, bounded
+  by the available area. Add a small body inset. On narrow screens, stack the two actions.
+- With insufficient height, reserve the actions and a more/back indicator, then scroll only the
+  explanation. Arrows, Page Up/Down, Home/End, and wheel scrolling are proposed additions. These
+  currently ignored keys must not change focus or reach the underlying composer while open.
+- Reflow after resize and clamp the scroll position. Keep all explanatory text reachable and both
+  action hit regions inside the frame. The preview covers widths of at least 32 and heights of
+  at least 9; smaller native rectangles still need a bounded fallback and resize tests.
+- No animation, decorative timer, network lookup, or dependency belongs in this component.
+  Measure fixed copy on resize and repaint only on relevant events.
+
+Keep the existing runtime boundary: Ready assets skip this prompt; DownloadRequired prompts before
+starting the download; development installs and invalid explicit overrides retain their current
+error paths. Confirmation closes the overlay and emits `RootEffect::Review { download_assets: true }`.
+Cancellation closes it without starting review work or changing the draft. Preserve the active-review
+guard, installation verification and lock, ReviewIdentity generations, and task cancellation.
+Do not reopen this prompt automatically on a failure, or interpret dismissal as cancelling a
+separate running task. Notifications and ongoing review status are a later component review.
+
+Implementation can retain `Floating` and the existing effect enums. Give `ReviewDownloadConfirmation`
+only a body scroll offset and measured render geometry; replace the unit-struct construction with
+its default state. Use the same geometry for painting and mouse targets. Keep installation paths,
+URLs, and credentials out of this static dialog.
+
+The HTML simulates only choosing an action; it never downloads, installs, calls a model, or starts
+a browser review. Native checks must cover key kinds, exactly one effect before overlay closure,
+dismissal with an unchanged draft, hit testing, wrapped copy and borders, short-height scrolling,
+resize recovery, Ready/DownloadRequired/development/error routing, stale review events, and
+interruption. Reuse existing asset/controller tests for their contracts. Browser layout checks do
+not prove native terminal rendering, download behavior, or performance.
