@@ -4,8 +4,8 @@ Review one component at a time. Open its HTML proposal with macOS `open`, then w
 explicit approval. Feedback revises that component only. An approval locks the named version and
 scope; changes to it need another review. Design approval does not authorize native implementation.
 
-The welcome logo, chat bar, execution view, Actions menu, activity indicator, model selector, and
-effort selector are approved. The current review is **Session picker, proposal 1**.
+Components through the session picker are approved. The current review is **File picker,
+proposal 1**.
 
 Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
 colors. The HTML uses approximate samples; those values are not a proposed replacement palette.
@@ -21,8 +21,8 @@ welcome-logo colors stay fixed.
 | 5 | Persistent activity indicator | Approved and locked | [Proposal 1](components/activity-v1.html) |
 | 6 | Model selector | Approved and locked | [Proposal 1](components/model-v1.html) |
 | 7 | Effort selector | Approved and locked | [Proposal 1](components/effort-v1.html) |
-| 8 | Session picker | Awaiting approval | [Proposal 1](components/sessions-v1.html) |
-| 9 | File picker | Not started | Current native file lookup is the baseline. |
+| 8 | Session picker | Approved and locked | [Proposal 1](components/sessions-v1.html) |
+| 9 | File picker | Awaiting approval | [Proposal 1](components/files-v1.html) |
 | 10 | Skill picker | Not started | Review separately. |
 | 11 | Queue and child-agent views | Not started | Preserve existing workflow. |
 | 12 | Review prompts and notifications | Not started | Preserve existing actions and event meaning. |
@@ -79,10 +79,6 @@ the existing Rust behavioral tests. Browser layout checks are not native runtime
 Locked artifact: `transcript-v1.html` at `bcac24a`, SHA-256
 `bd87d124c3839e73a86334cac689c12500edafe96bdad2027768afe6a7c1f2d5`.
 Its pending-review label is historical; this registry records approval.
-
-
-
-
 
 Approved preview files remain unchanged. Future components have no approved design and should not
 receive speculative preview changes.
@@ -214,7 +210,7 @@ Its pending-review label is historical; this registry records approval.
 ## Session picker, proposal 1
 
 The [HTML](components/sessions-v1.html) keeps the 76 × 18 rounded picker and its Resume/Mention
-modes. No approval recorded yet. Source: `components/session_picker.rs`, `SessionSummary` in
+modes. Approved by the user. Source: `components/session_picker.rs`, `SessionSummary` in
 `sessions/checkpoint.rs`, session discovery in `sessions/storage.rs`, and root picker effects.
 
 - Put the existing saved preview first, with model/effort and saved Pro mode beneath. Use a plain
@@ -239,3 +235,42 @@ Browser sessions and ages are fictional fixtures. Loading and load-error behavio
 they are not redesigned inside the picker. Verify native sanitization, glyph widths, stable
 selection, duplicate previews, same-workspace filtering, missing checkpoints, and distinct
 Resume/Mention effects during implementation. File selection is the next component after approval.
+
+Locked artifact: `sessions-v1.html` at `8adb2c5`, SHA-256
+`fcaaa54586b5dfb18f1920539a740f29385b699919da1e6b1389832348ae3b1a`.
+Its pending-review label is historical; this registry records approval.
+
+## File picker, proposal 1
+
+The [HTML](components/files-v1.html) keeps the 72 × 14 rounded file/directory picker. No approval
+recorded yet. Source: `components/file_finder.rs` and `RootNode::update_file_finder`.
+
+- Emphasize the basename and mute directory prefixes. Keep directory trailing slashes. Shorten
+  long display paths in the middle so the filename remains recognizable.
+- Show the selected `@path` below the list, with two reserved rows. Extremely long display
+  paths use an ellipsis; `FileFinderEffect::Insert` always carries the original full path. Reserving
+  the rows keeps the list stable when selecting paths of different lengths.
+- Preserve fuzzy scoring and its score-descending/path-ascending tie order. Keep the existing
+  directory exclusions: `.git`, `.jj`, `node_modules`, and `target`. This is not gitignore support.
+  Preserve skipped symlinks and control-character path rejection; add no silent discovery-policy change.
+- The search row mirrors the query after `@`; the native composer still owns the draft and cursor.
+  Preserve token-boundary opening, `@@` session-mention handoff, invalid-character dismissal, and
+  replacement of only the active mention range with `@<path> `.
+- Keep clamped Up/Down navigation, Enter/Tab insertion, and Escape dismissal. Selecting a directory
+  inserts its trailing-slash reference; it does not navigate into that directory.
+- Click selects; double-click inserts; wheel moves selection. These are proposed additions.
+  Root currently dismisses on mouse movement through its generic non-navigation branch. Route
+  picker mouse events before that branch so normal hover does not close the popup.
+- Distinguish loading, empty discovery, and no matching paths. Loading must not permit stale
+  insertion, and query edits must survive discovery completion.
+
+Performance requirement: `FileFinder::new` currently walks the workspace synchronously. Separate
+path discovery from rendering using the existing background-task pattern, then filter a snapshot
+in memory. Publish results only to the still-active request/pane; discard late results after
+cancellation or a changed workspace. Preserve the current scan policy. No indexing daemon, preview
+file reads, provider calls, or per-keystroke filesystem scan is proposed.
+
+The HTML uses fixed path fixtures and a manually controlled loading state. It does not test native
+async discovery. Later checks must cover ranking parity, query/cursor forwarding, `@@` handoff,
+exact insertion including trailing slashes, ignored/stale discovery results, root mouse routing,
+Unicode paths, and responsiveness with large workspaces. The skill picker is next after approval.

@@ -5,12 +5,13 @@ Status: design only, on `design/tui-motion`. Native source baseline: `59bef36`.
 **Approved:** the welcome logo, [chat bar](components/composer-v1.html), and
 [conversation and execution](components/transcript-v1.html), [Actions](components/actions-v1.html),
 [activity indicator](components/activity-v1.html), [model selector](components/model-v1.html), and
-[effort selector](components/effort-v1.html), with the existing native color scheme.
+[effort selector](components/effort-v1.html), and [session picker](components/sessions-v1.html),
+with the existing native color scheme.
 **Baseline for everything else:** the existing native Orvek interface.
 
 Follow the [component review order](decisions.md): present one HTML proposal, open it for the user,
 and wait for explicit approval before starting the next component. The current proposal is
-[session picker](components/sessions-v1.html). Approved versions stay fixed unless
+[file picker](components/files-v1.html). Approved versions stay fixed unless
 the user reopens them.
 
 The chat bar, execution presentation, and Actions menu need focused improvements. Their current
