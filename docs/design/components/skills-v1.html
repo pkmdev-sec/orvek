@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Skill picker · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:740px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.toggle{display:flex;gap:8px;align-items:center;min-height:36px}.toggle input{accent-color:#aebfcb}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--border:#59646e;--accent:#76a9df;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 22px 22px;overflow:auto}.canvas.light{--base:#f7f8f9;--text:#283441;--muted:#627180;--border:#909ba5;--accent:#265f99}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:26px;gap:12px}.stage{min-height:350px;display:grid;place-items:start center}.frame{position:relative;font:15px/23px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.grid{font:inherit;white-space:pre;user-select:none;margin:0}.cell{display:inline-block;width:1ch;height:23px;vertical-align:top}.border{color:var(--border)}.muted{color:var(--muted)}.accent{color:var(--accent);font-weight:600}.title{font-weight:600}.search{position:absolute;top:23px;left:11ch;font:inherit;line-height:23px;padding:0;border:0;outline:0;background:var(--base);color:var(--text);height:23px;min-width:0;border-radius:0;caret-color:var(--text)}.hit{position:absolute;left:1ch;min-height:0;height:23px;background:transparent;border:0;border-radius:0;padding:0;margin:0;outline:none}.hit:hover{background:#7a89990b}.note{font-size:11px;color:var(--muted);margin:24px 0 0}.notice{min-height:21px;color:var(--muted);font-size:12px;margin-top:18px}.closed{font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);padding-top:120px}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:16px 8px}.explanation{grid-template-columns:1fr;gap:16px}.frame{font-size:13px}h1{font-size:27px}}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>The skill picker</h1>
+<p class="intro">One proposal: a compact skill list, with enough description to choose the right reference.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Catalog in sample<select id="catalog"><option value="loaded">Skills loaded</option><option value="empty">No loaded skills</option></select></label>
+<label>Input context<select id="context"><option value="chat">Chat input</option><option value="shell">Shell input</option></select></label>
+<label>Popup width<select id="width"><option value="72">Normal · 72 columns</option><option value="52">Compact · 52 columns</option><option value="40">Narrow · 40 columns</option><option value="32">Small · 32 columns</option></select></label>
+<button id="reopen" type="button">Reopen picker</button><button id="clear" type="button">Clear query</button>
+<label class="toggle"><input id="light" type="checkbox">Light</label>
+</div>
+<section class="canvas" id="canvas" aria-label="Skill picker preview">
+<div class="caption"><span>SKILLS / INTERACTIVE PREVIEW</span><span id="dimensions"></span></div>
+<div class="stage"><div class="frame" id="frame"><pre class="grid" id="grid" aria-hidden="true"></pre><div id="hits"></div><input class="search" id="search" type="text" aria-label="Skill name query after the $ marker" autocomplete="off" spellcheck="false"></div><div class="closed" id="closed" hidden></div></div>
+<div class="notice" id="notice" role="status" aria-live="polite"></div>
+<p class="note">This field stands in for typing after $ in the native composer. Search skill names, for example “review” or “wt”. Arrows select; Enter/Tab inserts; Esc closes. Click selects, double-click inserts. Skills and descriptions are sample data.</p>
+</section>
+<div class="explanation">
+<div><h2>Read before selecting</h2><p>Names and short descriptions align in the list. The selected description wraps into two fixed rows below, keeping the list still.</p></div>
+<div><h2>Insert, then use</h2><p>Selection inserts the exact skill reference into the draft. It does not execute a skill or load its body.</p></div>
+<div><h2>Keep the current scope</h2><p>Only the active session's loaded skills are offered. Shell input and an empty catalog keep the native picker closed.</p></div>
+</div>
+<div class="foot"><span>Review this picker only. Native theme colors remain unchanged.</span><a href="../decisions.md">Review order and approvals</a></div>
+</main>
+<script>
+const skillsStudy=(()=>{
+ const skills=[
+  {name:'review-changes',description:'Review a diff for incorrect behavior, missed edge cases, and regressions.'},
+  {name:'write-tests',description:'Add focused tests for expected behavior and important failure modes.'},
+  {name:'plan-work',description:'Break a proposed change into small steps with clear checks.'},
+  {name:'explain-code',description:'Explain a code path using its real callers, inputs, and outputs.'},
+  {name:'update-docs',description:'Update documentation to match the implementation. Keep the language concise.'},
+  {name:'check-security',description:'Inspect a scoped change for security problems and verify each finding against the source before reporting it.'},
+  {name:'release-notes',description:'Summarize user-visible changes for a release.'},
+  {name:'trace-session-lifecycle',description:'Trace how a session starts, persists, resumes, and ends. Check cancellation and recovery paths without changing unrelated behavior.'}
+ ];
+ const lower=s=>s.replace(/[A-Z]/g,c=>c.toLowerCase());
+ function score(name,query){if(!query)return 0;const q=[...lower(query)],chars=[...lower(name)];let next=0,total=0,previous=null,before=null;for(let i=0;i<chars.length;i++){const ch=chars[i];if(ch!==q[next]){before=ch;continue;}total+=10;if(previous!==null&&previous+1===i)total+=15;if(before===null||before==='/')total+=8;previous=i;next++;if(next===q.length)return Math.max(0,total-i);before=ch;}return null;}
+ function matches(query='',queried=false,loaded=true,context='chat'){if(!loaded||context==='shell')return [];if(!queried)return skills;return skills.map(skill=>({skill,score:score(skill.name,query)})).filter(row=>row.score!==null).sort((a,b)=>b.score-a.score||(a.skill.name<b.skill.name?-1:a.skill.name>b.skill.name?1:0)).map(row=>row.skill);}
+ function insert(query,queried,selected,loaded,context){const skill=matches(query,queried,loaded,context)[selected];return skill?{name:skill.name,text:'$'+skill.name+' '}:null;}
+ const cut=(s,n)=>n<=0?'':s.length<=n?s:s.slice(0,n-1)+'…';
+ function wrap(value,width){const rows=[];let rest=value;while(rest.length>width){let end=rest.lastIndexOf(' ',width);if(end<1)end=width;rows.push(rest.slice(0,end));rest=rest.slice(end).replace(/^ /,'');}rows.push(rest);return rows;}
+ function helpRows(width){const rows=[];let line='';for(const group of ['↑↓ move','enter/tab insert','esc close']){if(line&&line.length+3+group.length>width){rows.push(line);line='';}line+=(line?' · ':'')+group;}if(line)rows.push(line);return rows;}
+ function layout({columns=72,query='',queried=false,loaded=true,context='chat',selected=0,offset=0}={}){
+  if(columns<32)throw new Error('Preview minimum width is 32 columns.');
+  const height=14,results=matches(query,queried,loaded,context);selected=results.length?Math.max(0,Math.min(selected,results.length-1)):0;
+  const chosen=results[selected],help=helpRows(columns-2),detailY=height-1-help.length-3,listHeight=detailY-2;
+  offset=Math.max(0,Math.min(offset,Math.max(0,results.length-listHeight)));if(selected<offset)offset=selected;if(selected>=offset+listHeight)offset=selected-listHeight+1;
+  const grid=Array.from({length:height},()=>Array.from({length:columns},()=>({ch:' ',role:'text'}))),hits=[];
+  function write(value,x,y,role='text'){[...value].forEach((ch,index)=>{if(x+index>=columns-1||y>=height-1)throw new Error('Row overflow.');grid[y][x+index]={ch,role};});}
+  for(let x=1;x<columns-1;x++){grid[0][x]={ch:'─',role:'border'};grid[height-1][x]={ch:'─',role:'border'};}
+  for(let y=1;y<height-1;y++){grid[y][0]={ch:'│',role:'border'};grid[y][columns-1]={ch:'│',role:'border'};}
+  [['╭',0,0],['╮',columns-1,0],['╰',0,height-1],['╯',columns-1,height-1]].forEach(([ch,x,y])=>{grid[y][x]={ch,role:'border'};});
+  write(' Skills ',Math.floor((columns-8)/2),0,'title');write('Search:',3,1,'muted');write([...query].slice(-(columns-13)).join(''),11,1);
+  results.slice(offset,offset+listHeight).forEach((skill,index)=>{const y=2+index,active=offset+index===selected;if(active)write('›',1,y,'accent');const wide=columns>=54;write(cut('$'+skill.name,wide?22:columns-6),3,y,active?'accent':'title');if(wide)write(cut(skill.description,columns-30),27,y,'muted');hits.push({y,index:offset+index,name:skill.name,description:skill.description});});
+  if(!results.length)write(loaded&&context==='chat'?'No matching skills':'No skills available',3,3,'muted');
+  const description=chosen?wrap('About: '+chosen.description,columns-6):[''];
+  if(description.length>2){description.length=2;description[1]=description[1].slice(0,columns-7).trimEnd()+'…';}
+  while(description.length<2)description.push('');description.forEach((line,index)=>write(line,3,detailY+index,'muted'));
+  if(chosen)write(cut('Insert: $'+chosen.name,columns-6),3,detailY+2,'muted');help.forEach((line,index)=>write(line,Math.floor((columns-line.length)/2),height-1-help.length+index,'muted'));
+  return {grid,height,columns,results,selected,offset,chosen,hits,detailY,description,help,listHeight};
+ }
+ return {skills,score,matches,insert,layout};
+})();
+if(typeof document!=='undefined'){
+ const id=x=>document.getElementById(x),frame=id('frame'),grid=id('grid'),input=id('search'),hits=id('hits'),canvas=id('canvas');
+ let selected=0,offset=0,columns=72,queried=false,open=true,lastLayout,gridWidth=0,cells=[],hitKey='';
+ function options(){return {columns,query:input.value,queried,loaded:id('catalog').value==='loaded',context:id('context').value,selected,offset};}
+ function render(){
+  lastLayout=skillsStudy.layout(options());selected=lastLayout.selected;offset=lastLayout.offset;
+  if(gridWidth!==columns){gridWidth=columns;grid.replaceChildren();cells=[];for(let y=0;y<14;y++){for(let x=0;x<columns;x++){const span=document.createElement('span');grid.append(span);cells.push(span);}if(y<13)grid.append(document.createTextNode('\n'));}}
+  lastLayout.grid.flat().forEach((cell,index)=>{const span=cells[index],role=`cell ${cell.role}`;if(span.textContent!==cell.ch)span.textContent=cell.ch;if(span.className!==role)span.className=role;});
+  const key=columns+':'+lastLayout.hits.map(row=>row.name+':'+row.index+':'+row.y).join('|');if(key!==hitKey){hitKey=key;hits.replaceChildren();lastLayout.hits.forEach(row=>{const button=document.createElement('button');button.className='hit';button.type='button';button.tabIndex=-1;button.style.top=`${row.y*23}px`;button.style.width=`${columns-2}ch`;button.setAttribute('aria-label',row.name+'. '+row.description);button.title=row.description;button.addEventListener('click',()=>{selected=row.index;render();input.focus();});button.addEventListener('dblclick',activate);hits.append(button);});}
+  input.style.width=`${columns-13}ch`;frame.style.width=`${columns}ch`;frame.hidden=!open;id('closed').hidden=open;
+ }
+ function activate(){const o=options(),result=skillsStudy.insert(o.query,o.queried,selected,o.loaded,o.context);if(result)close('Sample insertion: '+result.text+' No skill was executed and no native draft changed.');}
+ function close(message){open=false;id('closed').textContent='Picker closed';id('notice').textContent=message;render();id('reopen').focus();}
+ function reopen(){
+  open=id('catalog').value==='loaded'&&id('context').value==='chat';input.value='';queried=false;selected=0;offset=0;
+  id('notice').textContent=open?'':id('context').value==='shell'?'The native skill picker stays closed in shell input.':'The native skill picker stays closed when no skills are loaded.';
+  id('closed').textContent=open?'Picker closed':'No picker opens in this context.';render();if(open)input.focus();
+ }
+ function resize(){const probe=document.createElement('span');probe.className='cell';probe.textContent='M';const hidden=frame.hidden;frame.hidden=false;grid.append(probe);const width=probe.getBoundingClientRect().width;probe.remove();frame.hidden=hidden;const style=getComputedStyle(canvas),available=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);columns=Math.max(32,Math.min(Number(id('width').value),Math.floor(available/width)));id('dimensions').textContent=`${columns} × 14 cells`;render();}
+ input.addEventListener('input',()=>{queried=true;selected=0;offset=0;if(!/^[a-zA-Z0-9-]*$/.test(input.value)){close('The native picker closes when typing leaves the skill query. The editor keeps the typed text.');return;}render();});
+ input.addEventListener('keydown',event=>{if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();selected=Math.max(0,Math.min(lastLayout.results.length-1,selected+(event.key==='ArrowDown'?1:-1)));render();}else if(event.key==='Enter'||event.key==='Tab'){event.preventDefault();activate();}else if(event.key==='Escape'){event.preventDefault();close('Dismissed. The native editor keeps the existing $ query.');}else if(event.key==='Backspace'&&!input.value){event.preventDefault();close('Removing the opening $ closes the native picker.');}});
+ hits.addEventListener('wheel',event=>{if(lastLayout.results.length<=lastLayout.listHeight)return;event.preventDefault();selected=Math.max(0,Math.min(lastLayout.results.length-1,selected+(event.deltaY>0?1:-1)));render();},{passive:false});
+ id('catalog').addEventListener('change',reopen);id('context').addEventListener('change',reopen);id('width').addEventListener('change',resize);id('light').addEventListener('change',()=>canvas.classList.toggle('light',id('light').checked));id('reopen').addEventListener('click',reopen);id('clear').addEventListener('click',reopen);
+ new ResizeObserver(resize).observe(canvas);resize();input.focus();
+}
+</script>
+</body>
+</html>

@@ -4,7 +4,7 @@ Review one component at a time. Open its HTML proposal with macOS `open`, then w
 explicit approval. Feedback revises that component only. An approval locks the named version and
 scope; changes to it need another review. Design approval does not authorize native implementation.
 
-Components through the session picker are approved. The current review is **File picker,
+Components through the file picker are approved. The current review is **Skill picker,
 proposal 1**.
 
 Color constraint: preserve the existing native Orvek theme, including model, effort, and thinking
@@ -22,8 +22,8 @@ welcome-logo colors stay fixed.
 | 6 | Model selector | Approved and locked | [Proposal 1](components/model-v1.html) |
 | 7 | Effort selector | Approved and locked | [Proposal 1](components/effort-v1.html) |
 | 8 | Session picker | Approved and locked | [Proposal 1](components/sessions-v1.html) |
-| 9 | File picker | Awaiting approval | [Proposal 1](components/files-v1.html) |
-| 10 | Skill picker | Not started | Review separately. |
+| 9 | File picker | Approved and locked | [Proposal 1](components/files-v1.html) |
+| 10 | Skill picker | Awaiting approval | [Proposal 1](components/skills-v1.html) |
 | 11 | Queue and child-agent views | Not started | Preserve existing workflow. |
 | 12 | Review prompts and notifications | Not started | Preserve existing actions and event meaning. |
 | 13 | Welcome placement and final consistency | Not started | Check approved components together, including light and narrow layouts. |
@@ -242,8 +242,8 @@ Its pending-review label is historical; this registry records approval.
 
 ## File picker, proposal 1
 
-The [HTML](components/files-v1.html) keeps the 72 × 14 rounded file/directory picker. No approval
-recorded yet. Source: `components/file_finder.rs` and `RootNode::update_file_finder`.
+The [HTML](components/files-v1.html) keeps the 72 × 14 rounded file/directory picker. Approved by
+the user. Source: `components/file_finder.rs` and `RootNode::update_file_finder`.
 
 - Emphasize the basename and mute directory prefixes. Keep directory trailing slashes. Shorten
   long display paths in the middle so the filename remains recognizable.
@@ -274,3 +274,36 @@ The HTML uses fixed path fixtures and a manually controlled loading state. It do
 async discovery. Later checks must cover ranking parity, query/cursor forwarding, `@@` handoff,
 exact insertion including trailing slashes, ignored/stale discovery results, root mouse routing,
 Unicode paths, and responsiveness with large workspaces. The skill picker is next after approval.
+
+Locked artifact: `files-v1.html` at `8be4288`, SHA-256
+`50a5dbb2727e0c13bc6ca145e06099e3ad02999c390154f6ae6199411b091d5d`.
+Its pending-review label is historical; this registry records approval.
+
+## Skill picker, proposal 1
+
+The [HTML](components/skills-v1.html) keeps the 72 × 14 rounded skill picker. No approval recorded
+here yet. Source: `components/skill_picker.rs`, `core/extensions/skills.rs`, and Root's skill-mention
+trigger and `update_skill_picker` handler.
+
+- Keep `$name` as the primary label, with aligned short descriptions on wide screens. Narrow
+  layouts show names in the list and the selected description below it.
+- Reserve two rows for the selected description and one for `Insert: $name`. Long text uses an
+  ellipsis. Fixed geometry prevents list movement when descriptions differ in length.
+- Use only the current `Skill` metadata: name and description. Do not invent origin paths,
+  provider badges, installation controls, or body previews absent from this UI contract.
+- Preserve initial catalog order. After a query event, use the existing shared fuzzy scorer over
+  names, with descending score/name tie order. Do not silently extend search to descriptions.
+- Preserve the composer-owned query after `$`, token-boundary opening, invalid-character and
+  marker-deletion dismissal, and replacement of only the active mention span with `$<name> `.
+- Keep the native guard: no skill picker for shell input or an empty active-session catalog.
+  Inserting a reference does not execute a skill or load its body.
+- Keep clamped arrows and Enter/Tab insertion. Click selects, double-click inserts, and wheel
+  navigation are proposed additions. Reuse the file-picker mouse-routing policy so mouse movement
+  does not hit Root's generic dismissal branch.
+- Reuse the active catalog snapshot and rendered cells. Show a clear no-match state. No idle
+  animation, catalog rescan, provider call, or framework dependency is introduced.
+
+The browser uses fictional skill metadata and only reports an insertion string. Later native checks
+must cover scorer parity, exact names, query/cursor ownership, shell `$` variables, empty catalogs,
+mouse routing, description truncation, terminal controls, and cancellation without draft loss.
+The queue is the next review after approval.
