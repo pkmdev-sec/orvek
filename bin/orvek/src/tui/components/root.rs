@@ -461,6 +461,10 @@ impl RootNode {
         }
     }
 
+    pub(crate) const fn set_context_window(&mut self, tokens: u64) {
+        self.context_diagnostics.set_window(tokens);
+    }
+
     pub(crate) fn set_memory_enabled(&mut self, enabled: bool) {
         self.memory_enabled = enabled;
         if !enabled && matches!(&self.overlay, Some(Overlay::Memory(_))) {

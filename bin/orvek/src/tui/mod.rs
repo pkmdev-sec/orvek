@@ -566,6 +566,7 @@ pub(crate) async fn run(
         subagent_sender.clone(),
     );
     let mut root = RootNode::new(&workspace, initial_effort);
+    root.set_context_window(config.agent().compaction().input_budget_tokens);
     root.set_reasoning_modes(reasoning_mode, preferred_reasoning_mode);
     root.set_fast_mode(initial_fast_mode);
     root.set_max_subagents(initial_max_subagents);
