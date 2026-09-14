@@ -461,8 +461,11 @@ impl RootNode {
         }
     }
 
-    pub(crate) const fn set_context_window(&mut self, tokens: u64) {
+    pub(crate) fn set_context_window(&mut self, tokens: u64) {
         self.context_diagnostics.set_window(tokens);
+        self.composer
+            .component_mut()
+            .update(ComposerEvent::ContextLimit(tokens));
     }
 
     pub(crate) fn set_memory_enabled(&mut self, enabled: bool) {
@@ -3613,6 +3616,15 @@ mod tests {
                 payload: to_raw_value(&payload).unwrap().into(),
             },
         ))
+    }
+
+    #[test]
+    fn configured_context_window_reaches_the_composer() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+
+        root.set_context_window(1_000_000);
+
+        assert!(render_root_text(&mut root, 100, 20).contains("0% / 1000k"));
     }
 
     #[test]
