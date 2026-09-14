@@ -1,14 +1,11 @@
 //! Configuration loading, precedence, and effective runtime settings.
 
 use crate::{
-    app::{
-        compaction::CompactionConfig,
-        error::{ConfigError, McpUrlError, RemoteMemoryConfigError, Result},
-    },
+    app::error::{ConfigError, McpUrlError, RemoteMemoryConfigError, Result},
     tui::theme::{Theme, ThemeMode},
 };
 use clap::ValueEnum;
-use nanocodex::Thinking;
+use orvek_harness::inference::Thinking;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -70,11 +67,32 @@ impl ReasoningMode {
     }
 }
 
-impl From<ReasoningMode> for nanocodex::ReasoningMode {
+impl From<ReasoningMode> for orvek_harness::inference::ReasoningMode {
     fn from(mode: ReasoningMode) -> Self {
         match mode {
             ReasoningMode::Standard => Self::Standard,
             ReasoningMode::Pro => Self::Pro,
+        }
+    }
+}
+
+impl From<orvek_harness::inference::Thinking> for ReasoningEffort {
+    fn from(value: orvek_harness::inference::Thinking) -> Self {
+        use orvek_harness::inference::Thinking;
+        match value {
+            Thinking::Low => Self::Low,
+            Thinking::Medium => Self::Medium,
+            Thinking::High => Self::High,
+            Thinking::Xhigh => Self::Xhigh,
+            Thinking::Max => Self::Max,
+        }
+    }
+}
+impl From<orvek_harness::inference::ReasoningMode> for ReasoningMode {
+    fn from(value: orvek_harness::inference::ReasoningMode) -> Self {
+        match value {
+            orvek_harness::inference::ReasoningMode::Standard => Self::Standard,
+            orvek_harness::inference::ReasoningMode::Pro => Self::Pro,
         }
     }
 }
@@ -84,8 +102,6 @@ impl From<ReasoningMode> for nanocodex::ReasoningMode {
 pub(crate) struct Config {
     #[serde(skip)]
     path: PathBuf,
-    #[serde(skip)]
-    codex_home: Option<PathBuf>,
     auth: AuthConfig,
     agent: AgentConfig,
     mcp_servers: BTreeMap<String, McpServerConfig>,
@@ -138,17 +154,15 @@ pub(crate) struct AuthConfig {
     file: PathBuf,
 }
 
-/// Effective Nanocodex configuration.
+/// Effective model and capability configuration.
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct AgentConfig {
-    compaction: CompactionConfig,
-    #[serde(skip)]
-    compaction_override: Option<crate::app::compaction::Strategy>,
     workspace: PathBuf,
     thinking: ReasoningEffort,
     reasoning_mode: ReasoningMode,
     fast_mode: bool,
     max_subagents: usize,
+    context_window_tokens: u64,
     #[serde(serialize_with = "serialize_optional_string")]
     instructions: Option<String>,
     #[serde(serialize_with = "serialize_optional_string")]
@@ -200,7 +214,6 @@ pub(crate) struct SubagentsConfig {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ConfigOverrides {
-    pub(crate) compaction_strategy: Option<crate::app::compaction::Strategy>,
     pub(crate) path: Option<PathBuf>,
     pub(crate) auth_mode: Option<AuthMode>,
     pub(crate) auth_file: Option<PathBuf>,
@@ -324,12 +337,13 @@ struct AuthConfigFile {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct AgentConfigFile {
-    compaction: CompactionConfig,
     workspace: Option<PathBuf>,
     thinking: Option<ReasoningEffort>,
     reasoning_mode: Option<ReasoningMode>,
     fast_mode: Option<bool>,
     max_subagents: Option<usize>,
+    context_window_tokens: Option<u64>,
+    compaction: LegacyCompactionConfigFile,
     instructions: Option<String>,
     append_instructions: Option<String>,
     web_search: Option<bool>,
@@ -337,6 +351,17 @@ struct AgentConfigFile {
     websocket_url: Option<String>,
     api_base_url: Option<String>,
     completion_hook: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct LegacyCompactionConfigFile {
+    strategy: Option<String>,
+    fallback: Option<String>,
+    profile: Option<String>,
+    input_budget_tokens: Option<u64>,
+    max_generated_pages: Option<usize>,
+    max_request_bytes: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -404,29 +429,37 @@ impl Config {
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
         let skills = SkillsConfig::new(file.skills, config_dir, &environment);
-        if let Some(strategy) = overrides.compaction_strategy {
-            file.agent.compaction.strategy = strategy;
-        }
-        file.agent
-            .compaction
-            .validate()
-            .map_err(ConfigError::Compaction)?;
         let memory = MemoryConfig::new(file.memory, config_dir).map_err(ConfigError::from)?;
-        let codex_home = environment
-            .codex_home
-            .clone()
-            .or_else(|| environment.home.as_ref().map(|home| home.join(".codex")));
+        if file
+            .agent
+            .compaction
+            .strategy
+            .as_deref()
+            .is_some_and(|strategy| strategy != "provider")
+        {
+            return Err(ConfigError::UnsupportedCompactionStrategy(
+                file.agent.compaction.strategy.unwrap_or_default(),
+            )
+            .into());
+        }
+        let context_window_tokens = file
+            .agent
+            .context_window_tokens
+            .or(file.agent.compaction.input_budget_tokens)
+            .unwrap_or(orvek_harness::context::MAX_WINDOW_TOKENS);
+        if !(orvek_harness::context::MIN_WINDOW_TOKENS..=orvek_harness::context::MAX_WINDOW_TOKENS)
+            .contains(&context_window_tokens)
+        {
+            return Err(ConfigError::ContextWindowTokens(context_window_tokens).into());
+        }
 
         Ok(Self {
             path,
-            codex_home,
             auth: AuthConfig::new(
                 overrides.auth_mode.or(file.auth.mode).unwrap_or_default(),
                 auth_file,
             ),
             agent: AgentConfig {
-                compaction: file.agent.compaction,
-                compaction_override: overrides.compaction_strategy,
                 workspace,
                 thinking: overrides
                     .thinking
@@ -441,6 +474,7 @@ impl Config {
                     .max_subagents
                     .or(file.agent.max_subagents)
                     .unwrap_or(DEFAULT_MAX_SUBAGENTS),
+                context_window_tokens,
                 instructions: optional_string(overrides.instructions.or(file.agent.instructions)),
                 append_instructions: optional_string(
                     overrides
@@ -510,10 +544,6 @@ impl Config {
 
     pub(crate) fn auth(&self) -> &AuthConfig {
         &self.auth
-    }
-
-    pub(crate) fn codex_home(&self) -> Option<&Path> {
-        self.codex_home.as_deref()
     }
 
     pub(crate) fn agent(&self) -> &AgentConfig {
@@ -976,12 +1006,6 @@ impl AuthConfig {
 }
 
 impl AgentConfig {
-    pub(crate) const fn compaction_override(&self) -> Option<crate::app::compaction::Strategy> {
-        self.compaction_override
-    }
-    pub(crate) const fn compaction(&self) -> &CompactionConfig {
-        &self.compaction
-    }
     pub(crate) fn workspace(&self) -> &Path {
         &self.workspace
     }
@@ -1002,12 +1026,8 @@ impl AgentConfig {
         self.max_subagents
     }
 
-    pub(crate) fn instructions(&self) -> Option<&str> {
-        self.instructions.as_deref()
-    }
-
-    pub(crate) fn append_instructions(&self) -> Option<&str> {
-        self.append_instructions.as_deref()
+    pub(crate) const fn context_window_tokens(&self) -> u64 {
+        self.context_window_tokens
     }
 
     pub(crate) const fn web_search(&self) -> bool {
@@ -1230,16 +1250,6 @@ fn repository_common_directory(path: &Path) -> Option<PathBuf> {
         return git_directory.join(contents.trim()).canonicalize().ok();
     }
     None
-}
-
-impl SubagentsConfig {
-    pub(crate) const fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    pub(crate) const fn allow_luna(&self) -> bool {
-        self.allow_luna
-    }
 }
 
 impl ReasoningEffort {
@@ -1553,6 +1563,7 @@ mod tests {
         assert_eq!(config.agent.reasoning_mode, ReasoningMode::Standard);
         assert!(!config.agent.fast_mode);
         assert_eq!(config.agent.max_subagents, 32);
+        assert_eq!(config.agent.context_window_tokens, 1_000_000);
         assert!(config.agent.web_search);
         assert!(config.agent.image_generation);
         assert_eq!(config.theme.border(), Color::DarkGray);
@@ -1581,6 +1592,7 @@ mod tests {
                 "reasoning_mode",
                 "fast_mode",
                 "max_subagents",
+                "context_window_tokens",
                 "instructions",
                 "append_instructions",
                 "web_search",
@@ -1588,7 +1600,6 @@ mod tests {
                 "websocket_url",
                 "api_base_url",
                 "completion_hook",
-                "compaction",
             ],
         );
         assert_table_fields(&rendered["mcp_servers"], &[]);
@@ -1599,10 +1610,7 @@ mod tests {
             &["endpoint", "namespace", "bearer_token", "workspace_roots"],
         );
         assert_table_fields(&rendered["subagents"], &["enabled", "allow_luna"]);
-        assert_table_fields(
-            &rendered["theme"],
-            &["mode", "motion", "glyphs", "light", "dark"],
-        );
+        assert_table_fields(&rendered["theme"], &["mode", "light", "dark"]);
         let palette_fields = [
             "text",
             "border",
@@ -2106,8 +2114,6 @@ mod tests {
         for contents in ["", "[subagents]\n"] {
             let config = load_config(contents).unwrap();
 
-            assert!(config.subagents().enabled());
-            assert!(config.subagents().allow_luna());
             let rendered: toml::Value = toml::from_str(&config.to_toml().unwrap()).unwrap();
             assert_eq!(rendered["subagents"]["enabled"].as_bool(), Some(true));
             assert_eq!(rendered["subagents"]["allow_luna"].as_bool(), Some(true));
@@ -2118,7 +2124,6 @@ mod tests {
     fn subagents_can_be_disabled_from_the_config_file() {
         let config = load_config("[subagents]\nenabled = false\n").unwrap();
 
-        assert!(!config.subagents().enabled());
         let rendered: toml::Value = toml::from_str(&config.to_toml().unwrap()).unwrap();
         assert_eq!(rendered["subagents"]["enabled"].as_bool(), Some(false));
     }
@@ -2127,8 +2132,6 @@ mod tests {
     fn luna_subagents_can_be_disabled_from_the_config_file() {
         let config = load_config("[subagents]\nallow_luna = false\n").unwrap();
 
-        assert!(config.subagents().enabled());
-        assert!(!config.subagents().allow_luna());
         let rendered: toml::Value = toml::from_str(&config.to_toml().unwrap()).unwrap();
         assert_eq!(rendered["subagents"]["allow_luna"].as_bool(), Some(false));
     }
@@ -2272,39 +2275,6 @@ mod tests {
         assert!(config.skills.roots().is_empty());
         let rendered: toml::Value = toml::from_str(&config.to_toml().unwrap()).unwrap();
         assert_eq!(rendered["skills"]["enabled"].as_bool(), Some(false));
-    }
-
-    #[test]
-    fn codex_home_uses_environment_override_or_home_default() {
-        let directory = tempdir().unwrap();
-        let home = directory.path().join("home");
-        let default_codex_home = home.join(".codex");
-        let configured_codex_home = directory.path().join("configured-codex");
-        let overridden = Config::load_with(
-            ConfigOverrides::default(),
-            Environment {
-                codex_home: Some(configured_codex_home.clone()),
-                home: Some(home.clone()),
-                ..Environment::default()
-            },
-            directory.path(),
-        )
-        .unwrap();
-        let defaulted = Config::load_with(
-            ConfigOverrides::default(),
-            Environment {
-                home: Some(home.clone()),
-                ..Environment::default()
-            },
-            directory.path(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            overridden.codex_home(),
-            Some(configured_codex_home.as_path())
-        );
-        assert_eq!(defaulted.codex_home(), Some(default_codex_home.as_path()));
     }
 
     #[test]
@@ -2988,6 +2958,68 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, Error::Config(ConfigError::Parse { .. })));
+    }
+
+    #[test]
+    fn legacy_provider_compaction_config_sets_context_window() {
+        let directory = tempdir().unwrap();
+        let config_path = directory.path().join("config.toml");
+        fs::write(
+            &config_path,
+            "[agent.compaction]\nstrategy = \"provider\"\ninput_budget_tokens = 1000000\n",
+        )
+        .unwrap();
+
+        let config = Config::load_with(
+            ConfigOverrides {
+                path: Some(config_path),
+                ..ConfigOverrides::default()
+            },
+            Environment {
+                codex_home: Some(directory.path().join("codex")),
+                ..Environment::default()
+            },
+            directory.path(),
+        )
+        .unwrap();
+
+        assert_eq!(config.agent().context_window_tokens(), 1_000_000);
+        let rendered: toml::Value = toml::from_str(&config.to_toml().unwrap()).unwrap();
+        assert_eq!(
+            rendered["agent"]["context_window_tokens"].as_integer(),
+            Some(1_000_000)
+        );
+        assert!(rendered["agent"].get("compaction").is_none());
+    }
+
+    #[test]
+    fn removed_snapcompact_strategy_has_an_actionable_error() {
+        let directory = tempdir().unwrap();
+        let config_path = directory.path().join("config.toml");
+        fs::write(
+            &config_path,
+            "[agent.compaction]\nstrategy = \"snapcompact\"\ninput_budget_tokens = 1000000\n",
+        )
+        .unwrap();
+
+        let error = Config::load_with(
+            ConfigOverrides {
+                path: Some(config_path),
+                ..ConfigOverrides::default()
+            },
+            Environment {
+                codex_home: Some(directory.path().join("codex")),
+                ..Environment::default()
+            },
+            directory.path(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::Config(ConfigError::UnsupportedCompactionStrategy(strategy))
+                if strategy == "snapcompact"
+        ));
     }
 
     #[test]

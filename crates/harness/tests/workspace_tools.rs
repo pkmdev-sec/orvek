@@ -1,5 +1,9 @@
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
+use orvek_harness::{
+    Digest,
+    capabilities::{ToolContext, ToolError, WorkspaceTools},
+};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -11,10 +15,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-};
-use orvek_harness::{
-    Digest,
-    capabilities::{ToolContext, ToolError, WorkspaceTools},
 };
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;

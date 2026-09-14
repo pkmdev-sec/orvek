@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shlex
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +12,9 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from harbor_adapter.credentials import default_codex_auth_file
 from harbor_adapter.evidence import EvidencePolicy, populate_context
+from harbor_adapter.host_sidecar import HostSidecar
 from harbor_adapter.installation import cli_tools_install_command
-from harbor_adapter.iron_proxy import REMOTE_AUTH_FILE, LocalCodexAuthProxy
+from harbor_adapter.iron_proxy import LocalCodexAuthProxy
 
 
 MODEL = "gpt-5.6-sol"
@@ -26,8 +26,6 @@ class OrvekAgent(BaseInstalledAgent):
     SUPPORTS_ATIF = True
     _BINARY = "/installed-agent/orvek"
     _EVENTS = "/logs/agent/events.jsonl"
-    _EVENTS_TMP = "/logs/agent/events.jsonl.tmp"
-    _ORCHESTRATION = "/logs/agent/orchestration.jsonl"
     _STDERR = "/logs/agent/stderr.log"
 
     def __init__(
@@ -57,7 +55,18 @@ class OrvekAgent(BaseInstalledAgent):
             minimum_lifetime_seconds=auth_minimum_lifetime_seconds,
             safe_bind_root=logs_dir.parent,
         )
-        for name in auth_proxy.agent_environment:
+        protected_environment = {
+            "DOCKER_HOST",
+            "ORVEK_AUTH",
+            "ORVEK_AUTH_FILE",
+            "ORVEK_CONFIG",
+            "ORVEK_HOST_STATE",
+            "ORVEK_WORKSPACE",
+            "ORVEK_EXECUTOR_IMAGE",
+            "ORVEK_EXECUTOR_HELPER",
+            *auth_proxy.host_environment(Path("/auth"), Path("/ca")).keys(),
+        }
+        for name in protected_environment:
             agent_env.pop(name, None)
         super().__init__(
             logs_dir=logs_dir,
@@ -125,12 +134,7 @@ class OrvekAgent(BaseInstalledAgent):
         self._run_failed = False
         self._post_run_validation_failed = False
         try:
-            async with self._auth_proxy.running(
-                environment,
-                exec_as_agent=self.exec_as_agent,
-                exec_as_root=self.exec_as_root,
-            ):
-                await self._run_to_completion(instruction, environment, context)
+            await self._run_to_completion(instruction, environment, context)
         except asyncio.CancelledError:
             self._run_interrupted = True
             raise
@@ -149,56 +153,45 @@ class OrvekAgent(BaseInstalledAgent):
             json.dumps({"instruction": instruction}, separators=(",", ":")) + "\n",
             encoding="utf-8",
         )
-        arguments = self._run_arguments(instruction)
-        agent_command = " ".join(shlex.quote(argument) for argument in arguments)
-        command = (
-            f"events_tmp={shlex.quote(self._EVENTS_TMP)}; "
-            'rm -f "$events_tmp"; set +e; set -o pipefail; '
-            f'{agent_command} 2> {shlex.quote(self._STDERR)} | tee "$events_tmp"; '
-            'exit "$?"'
+        sidecar = HostSidecar(
+            logs_dir=self.logs_dir,
+            binary_path=self._binary_path,
+            auth_proxy=self._auth_proxy,
         )
-        result = await self.exec_as_agent(
-            environment,
-            command,
-            env=self._auth_proxy.agent_environment,
+        result = await sidecar.run(
+            environment=environment,
+            client_arguments=self._run_arguments(instruction),
+            client_environment=self.extra_env,
         )
         self._publish_events(result.stdout)
+        (self.logs_dir / Path(self._STDERR).name).write_text(
+            result.stderr, encoding="utf-8"
+        )
+        if not result.terminal_fence:
+            raise RuntimeError(
+                "Orvek headless client ended without a terminal durable receipt"
+            )
+        if result.returncode != 0:
+            raise RuntimeError("Orvek headless client reported a terminal failure")
 
     def _run_arguments(self, prompt: str) -> list[str]:
         arguments = [
-            self._BINARY,
-            "--auth",
-            "chatgpt",
-            "--auth-file",
-            REMOTE_AUTH_FILE,
+            "--model",
+            self._model,
+            "--thinking",
+            self._effort,
+            "--reasoning-mode",
+            self._reasoning_mode,
+            "--max-subagents",
+            str(self._max_subagents),
+            "--web-search",
+            str(self._web_search).lower(),
+            "--image-generation",
+            str(self._image_generation).lower(),
         ]
-        arguments.extend(
-            [
-                "--workspace",
-                "/app",
-                "--thinking",
-                self._effort,
-                "--reasoning-mode",
-                self._reasoning_mode,
-                "--max-subagents",
-                str(self._max_subagents),
-                "--web-search",
-                str(self._web_search).lower(),
-                "--image-generation",
-                str(self._image_generation).lower(),
-            ]
-        )
         if self._append_instructions:
             arguments.extend(("--append-instructions", self._append_instructions))
-        arguments.extend(
-            (
-                "run",
-                "--orchestration-log",
-                self._ORCHESTRATION,
-                "--",
-                prompt,
-            )
-        )
+        arguments.extend(("run", "--", prompt))
         return arguments
 
     def _classify_exec_error(self, command: str, result: Any) -> Exception:

@@ -112,8 +112,9 @@ action order, selection marker, and Enter/Tab/Escape behavior. Approved by the u
 
 The HTML only reports sample selections. It never executes actions. Sample session presets are
 illustrations; native availability remains owned by `RootNode` and `ActionAvailability`, including
-independent fork availability. Model selection remains restricted to a new session and compaction
-requires conversation content. Preserve existing keys and guards in implementation.
+independent fork availability. Model selection remains restricted to a new session. Context
+projection is host-owned and is not exposed as a terminal action. Preserve existing keys and
+guards in implementation.
 
 Locked artifact: `actions-v1.html` at `b5079fb`, SHA-256
 `56b3d55c9a40c3492dd0e1e0362b11de1b70497f98bccb371548517cc4083bf2`.

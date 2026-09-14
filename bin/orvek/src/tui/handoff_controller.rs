@@ -1,130 +1,209 @@
+//! A handoff creates a host context only after its durable report is available.
 use crate::{
-    app::config::{ReasoningEffort, ReasoningMode},
-    core::ConfiguredAgent,
-    tui::{pane::PaneId, worker::AuxiliaryError},
+    app::{
+        auxiliary,
+        config::Config,
+        error::{Error, Result},
+        host::HostClient,
+    },
+    core::ConfiguredSession,
+    tui::session,
 };
-use nanocodex::Model;
-use tokio::task::JoinHandle;
+use orvek_harness::{
+    auxiliary::{AuxiliaryContext, AuxiliaryKind},
+    ipc::{Command, Request, Response, SessionView},
+    session::{SessionCursor, SessionId},
+};
 use tokio_util::sync::CancellationToken;
 
-pub(crate) type HandoffResult = Result<PreparedHandoff, AuxiliaryError>;
-pub(crate) type HandoffTask = JoinHandle<HandoffCompletion>;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct HandoffIdentity {
-    pub(crate) pane: PaneId,
-    pub(crate) pane_generation: u64,
-    controller_generation: u64,
-}
-
-pub(crate) struct HandoffCompletion {
-    pub(crate) identity: HandoffIdentity,
-    pub(crate) result: HandoffResult,
-}
+const PROMPT: &str = "Prepare a self-contained continuation prompt for a new coding context. Summarize the user's objective and requirements, decisions and constraints, work completed, relevant files, validation actually performed, unresolved blockers, and concrete next steps. Preserve exact technical facts and distinguish uncertain results. Do not continue the task or claim that this summary grants task completion authority. Return only the editable continuation prompt.";
 
 pub(crate) struct PreparedHandoff {
     pub(crate) prompt: String,
-    pub(crate) effort: ReasoningEffort,
-    pub(crate) reasoning_mode: ReasoningMode,
-    pub(crate) fast_mode: bool,
-    pub(crate) model: Model,
-    pub(crate) configured: ConfiguredAgent,
+    pub(crate) configured: ConfiguredSession,
+}
+pub(crate) struct HandoffFailure {
+    pub(crate) prompt: Option<String>,
+    pub(crate) error: Error,
 }
 
-struct ActiveHandoff {
-    identity: HandoffIdentity,
-    cancellation: CancellationToken,
-    task: HandoffTask,
-}
-
-pub(crate) struct HandoffController {
-    next_generation: u64,
-    active: Option<ActiveHandoff>,
-}
-
-impl HandoffController {
-    pub(crate) const fn new() -> Self {
-        Self {
-            next_generation: 0,
-            active: None,
-        }
-    }
-
-    pub(crate) fn start(
-        &mut self,
-        pane: PaneId,
-        pane_generation: u64,
-        spawn: impl FnOnce(HandoffIdentity, CancellationToken) -> HandoffTask,
-    ) -> Option<HandoffIdentity> {
-        if self.active.is_some() {
-            return None;
-        }
-
-        let identity = HandoffIdentity {
-            pane,
-            pane_generation,
-            controller_generation: self.next_generation,
-        };
-        self.next_generation = self.next_generation.saturating_add(1);
-        let cancellation = CancellationToken::new();
-        let task = spawn(identity, cancellation.clone());
-        self.active = Some(ActiveHandoff {
-            identity,
-            cancellation,
-            task,
+pub(crate) async fn prepare(
+    config: &Config,
+    client: &HostClient,
+    id: SessionId,
+    cancel: &CancellationToken,
+) -> std::result::Result<PreparedHandoff, HandoffFailure> {
+    let source = session::view(client, id)
+        .await
+        .map_err(|error| HandoffFailure {
+            prompt: None,
+            error: error.into(),
+        })?;
+    if source.branch.pending_task.is_some() {
+        return Err(HandoffFailure {
+            prompt: None,
+            error: Error::HostRequest(
+                "a settled workspace checkpoint is required for handoff".into(),
+            ),
         });
-        Some(identity)
     }
-
-    pub(crate) fn task_mut(&mut self) -> Option<&mut HandoffTask> {
-        self.active.as_mut().map(|handoff| &mut handoff.task)
+    let result = auxiliary::run(
+        client,
+        id,
+        vec![serde_json::json!({"type":"input_text","text":PROMPT})],
+        auxiliary::spec(
+            AuxiliaryKind::Handoff,
+            AuxiliaryContext::CurrentConversation,
+            None,
+        ),
+        cancel,
+    )
+    .await
+    .and_then(auxiliary::completed_text);
+    let prompt = result.map_err(|error| HandoffFailure {
+        prompt: None,
+        error,
+    })?;
+    if cancel.is_cancelled() {
+        return Err(HandoffFailure {
+            prompt: Some(prompt),
+            error: Error::AuxiliaryCancelled,
+        });
     }
-
-    pub(crate) fn cancel(&mut self) -> Option<HandoffIdentity> {
-        let handoff = self.active.as_ref()?;
-        handoff.cancellation.cancel();
-        Some(handoff.identity)
-    }
-
-    pub(crate) fn complete(&mut self, identity: HandoffIdentity) -> bool {
-        let matches = self
-            .active
-            .as_ref()
-            .is_some_and(|handoff| handoff.identity == identity);
-        if matches {
-            self.active = None;
+    let result=async {
+        let latest=session::view(client,id).await?;
+        if latest.current_task!=source.current_task || latest.branch.workspace!=source.branch.workspace || latest.branch.pending_task.is_some() {return Err(Error::HostRequest("workspace changed during the handoff report; the draft is retained in this session".into()));}
+        let view=create(client,source.fork_cursor).await?;
+        Ok(ConfiguredSession::from_view(config,client.clone(),view))
+    }.await;
+    result
+        .map(|configured| PreparedHandoff {
+            prompt: prompt.clone(),
+            configured,
+        })
+        .map_err(|error| HandoffFailure {
+            prompt: Some(prompt),
+            error,
+        })
+}
+async fn create(client: &HostClient, parent: SessionCursor) -> Result<SessionView> {
+    let id = SessionId::new();
+    let request = Request::new(Command::HandoffSession {
+        id,
+        parent: parent.clone(),
+    });
+    let mut uncertain = false;
+    let mut last = None;
+    for _ in 0..3 {
+        match client
+            .call(&request, std::time::Duration::from_secs(5))
+            .await
+        {
+            Ok(Response::Session(view))
+                if view.id == id
+                    && view.branch.fresh_context
+                    && view.parent.as_ref().is_some_and(|cursor| {
+                        cursor.session == parent.session && cursor.revision <= parent.revision
+                    }) =>
+            {
+                return Ok(*view);
+            }
+            Err(error @ Error::HostRequest(_)) if !uncertain => return Err(error),
+            Err(error) => {
+                uncertain = true;
+                last = Some(error);
+            }
+            Ok(_) => {
+                return Err(Error::HostRequest(
+                    "handoff response identity mismatch".into(),
+                ));
+            }
         }
-        matches
+        if let Ok(view) = session::view(client, id).await
+            && view.branch.fresh_context
+            && view.parent.as_ref().is_some_and(|cursor| {
+                cursor.session == parent.session && cursor.revision <= parent.revision
+            })
+        {
+            return Ok(view);
+        }
     }
+    Err(Error::HostRequest(format!(
+        "handoff context {id} may have been created; resume that ID to recover it. The report draft is retained. {}",
+        last.map(|error| error.to_string()).unwrap_or_default()
+    )))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{HandoffCompletion, HandoffController, HandoffIdentity};
-    use crate::tui::pane::PaneId;
-
-    fn pending_handoff(
-        identity: HandoffIdentity,
-        _: tokio_util::sync::CancellationToken,
-    ) -> super::HandoffTask {
-        tokio::spawn(async move {
-            std::future::pending::<()>().await;
-            HandoffCompletion {
-                identity,
-                result: Err(crate::tui::worker::AuxiliaryError::Cancelled),
-            }
-        })
-    }
-
+    use super::*;
+    use orvek_harness::{ipc, session::SessionBranch};
+    use std::{fs, os::unix::fs::PermissionsExt};
+    use tokio::net::UnixListener;
     #[tokio::test]
-    async fn controller_rejects_overlap_and_cancels_its_operation() {
-        let mut controller = HandoffController::new();
-        let identity = controller
-            .start(PaneId::Main, 4, pending_handoff)
-            .expect("the first handoff should start");
-
-        assert!(controller.start(PaneId::Main, 4, pending_handoff).is_none());
-        assert_eq!(controller.cancel(), Some(identity));
-        assert!(controller.task_mut().is_some());
+    async fn lost_creation_ack_recovers_the_same_context_without_another_handoff() {
+        let root = tempfile::Builder::new()
+            .prefix("orvek-handoff-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let socket = root.path().join("host.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        let parent = SessionCursor {
+            version: 1,
+            session: SessionId::new(),
+            revision: 7,
+        };
+        let expected = parent.clone();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let first: Request = ipc::read_frame(&mut stream).await.unwrap();
+            let Command::HandoffSession { id, parent } = first.command else {
+                panic!("expected handoff")
+            };
+            assert_eq!(parent, expected);
+            drop(stream);
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let lookup: Request = ipc::read_frame(&mut stream).await.unwrap();
+            assert!(matches!(lookup.command,Command::Session{id:found} if found==id));
+            let view = SessionView {
+                branch: SessionBranch {
+                    fresh_context: true,
+                    ..Default::default()
+                },
+                id,
+                revision: 1,
+                fork_cursor: SessionCursor {
+                    version: 1,
+                    session: id,
+                    revision: 1,
+                },
+                workspace: "/fixture".into(),
+                model: Default::default(),
+                context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+                admission: None,
+                parent: Some(parent),
+                current_task: None,
+                active_request: None,
+                history_items: 0,
+                outcome: None,
+                error: None,
+                journal_sequence: 2,
+                started_ms: 1,
+                title: None,
+                imported: None,
+            };
+            ipc::write_frame(&mut stream, &Response::Session(Box::new(view)))
+                .await
+                .unwrap();
+            id
+        });
+        let view = create(&HostClient::fixture(root.path()), parent)
+            .await
+            .unwrap();
+        assert_eq!(view.id, server.await.unwrap());
+        assert!(view.branch.fresh_context);
+        assert!(view.current_task.is_none());
+        assert!(view.outcome.is_none());
     }
 }

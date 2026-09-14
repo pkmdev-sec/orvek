@@ -1,7 +1,7 @@
 # Harness replacement integration plan
 
-Orvek's replacement harness is being prepared separately. Integration must preserve the current
-Orvek terminal experience while moving durable execution authority to a detached host.
+Orvek's replacement harness is integrated behind a detached host. This document records the
+resulting boundary and the checks required to keep the terminal from regaining execution authority.
 
 ## Integration rules
 
@@ -16,31 +16,22 @@ Orvek terminal experience while moving durable execution authority to a detached
 - Unknown billing and job outcomes remain unknown. Retries use the same durable request ID.
 - Secret-owning types stay non-`Clone`, non-`Display`, non-serializing, redacted, and zeroized.
 
-## Import sequence
+## Integrated shape
 
-1. **Lock the replacement snapshot.** Require a clean replacement commit, protocol and schema
-   versions, executor build identity, full test evidence, and an explicit list of unfinished or
-   removed behavior. Do not copy a moving working tree.
-2. **Import the runtime.** Add the harness and executor crates under Orvek naming, wire workspace
-   dependencies and packaging, and verify them independently before touching the frontend.
-3. **Add host infrastructure.** Port the detached host process, authenticated IPC, bounded framing,
-   configuration identity, startup diagnostics, and reconnect protocol.
-4. **Add frontend adapters.** Add host projection, submission, artifact, child, review, auxiliary,
-   shell, and legacy-history adapters beside the current components. Do not replace approved TUI
-   layouts in this increment.
-5. **Bridge effects to commands.** Map current submit, queue, settings, session, fork, resume,
-   cancel, reflection, handoff, review, shell, memory, and child effects to host commands while
-   preserving current interaction semantics.
-6. **Replace state ownership.** Remove UI-owned turn scheduling and persistence only after journal
-   rehydration, submission retries, and queue ownership are proven.
-7. **Finish product adapters.** Wire memory, MCP, children, skills, configured web/image tools,
-   hooks, review assets, shell, recent prompts, legacy sessions, and context projection, or disable
-   each unsupported path with a precise diagnostic.
-8. **Remove the legacy graph.** After every entry point uses the host, remove Nanocodex packages,
-   vendor patches, old worker/storage/journal loops, and execution-facing subagent dependencies.
-9. **Verify as one product.** Run repository checks, native host/executor suites, PTY and headless
-   parity, adversarial cases, packaging checks, dependency audits, and TUI benchmarks on the final
-   integrated candidate.
+1. `app::host` owns the authenticated process boundary, configuration identity, reconnect policy,
+   and durable host startup.
+2. `core::ConfiguredSession` creates, resumes, and imports sessions through that boundary.
+3. `tui::client` translates UI effects into host commands and detaches watches on close; it never
+   shuts down accepted host work as a side effect of closing the terminal.
+4. `tui::host_projection` derives disposable presentation changes from history, durable journal
+   records, and explicitly speculative previews.
+5. `app::headless` uses the same session, acknowledgement, watch, and settlement contracts for
+   `orvek run`.
+6. The legacy Nanocodex worker, transcript database authority, orchestration loop, and direct
+   execution-facing subagent graph are absent from the Orvek binary.
+
+The detached-process boundary and its rationale are documented in
+[Detached harness host](harness-host.md).
 
 ## Frontend contract
 
@@ -71,6 +62,6 @@ python3 scripts/check-source-tree.py
 ```
 
 Additional release gates include fake-host frontend tests, PTY/headless parity, reconnect and slow
-watcher coverage, queue/image-edit attacks, shell recovery, review feedback, legacy import, memory
-and child adapters, executor native suites, feature/target dependency audits, source-archive
-packaging, benchmarks, and the replacement plan's full adversarial campaign.
+watcher coverage, queue/image-edit attacks, review feedback, legacy import, memory and child
+adapters, executor native suites, feature/target dependency audits, source-archive packaging, and
+benchmarks.

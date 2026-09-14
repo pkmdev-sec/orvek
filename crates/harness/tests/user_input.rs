@@ -1,11 +1,14 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
+use orvek_harness::{Store, artifacts::PublicArtifactRef, input};
 use serde_json::json;
-use orvek_harness::{artifacts::ArtifactStore, input};
 
 #[test]
 fn ordered_images_round_trip_without_embedding_media_bytes_in_journal_messages() {
     let root = tempfile::tempdir().unwrap();
-    let artifacts = ArtifactStore::open(root.path(), 8 * 1024 * 1024).unwrap();
+    let artifacts = Store::open_with_artifact_limit(root.path(), 8 * 1024 * 1024)
+        .unwrap()
+        .public_artifacts()
+        .clone();
     let encoded = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=";
     let content = vec![
         json!({"type":"input_text","text":"Fix this "}),
@@ -24,17 +27,26 @@ fn ordered_images_round_trip_without_embedding_media_bytes_in_journal_messages()
     let digest =
         serde_json::from_value(prepared.messages[0]["content"][1]["digest"].clone()).unwrap();
     assert_eq!(
-        artifacts.read(digest).unwrap(),
+        artifacts
+            .resolve(PublicArtifactRef::from_digest(digest))
+            .unwrap(),
         STANDARD.decode(encoded).unwrap()
     );
-    std::fs::write(artifacts.path(digest), b"changed image").unwrap();
+    std::fs::write(
+        root.path().join("artifacts").join(digest.to_string()),
+        b"changed image",
+    )
+    .unwrap();
     assert!(input::materialize(prepared.messages, &artifacts).is_err());
 }
 
 #[test]
 fn media_cannot_be_a_file_read_or_an_injected_authority_object() {
     let root = tempfile::tempdir().unwrap();
-    let artifacts = ArtifactStore::open(root.path(), 1024).unwrap();
+    let artifacts = Store::open_with_artifact_limit(root.path(), 1024)
+        .unwrap()
+        .public_artifacts()
+        .clone();
     for content in [
         json!({"type":"input_image","image_url":"file:///secret","detail":"auto"}),
         json!({"type":"input_image","image_url":"https://example.com/secret","detail":"auto"}),

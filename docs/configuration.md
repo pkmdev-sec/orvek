@@ -37,6 +37,7 @@ thinking = "medium"
 reasoning_mode = "standard"
 fast_mode = false
 max_subagents = 32
+context_window_tokens = 1000000
 ```
 
 `thinking` accepts `low`, `medium`, `high`, `xhigh`, or `max`. `reasoning_mode` accepts `standard`
@@ -46,16 +47,15 @@ or `pro`. Mode changes that require a new session are reported in the terminal.
 is the environment equivalent. Resumed sessions retain their saved model.
 
 Advanced endpoints use `agent.websocket_url` and `agent.api_base_url`, or the matching CLI flags.
-Leave them unset for the configured authentication route. Bitmap compaction currently rejects
-custom endpoints.
+Leave them unset for the configured authentication route.
 
-## Memory and compaction
+## Memory and context projection
 
 Both settings have separate purposes:
 
 - [Memory](memory.md) stores conclusions across sessions. It is disabled by default.
-- [Compaction](compaction.md) reduces model context. Provider compaction is the default;
-  local bitmap compaction requires an explicit experimental profile.
+- [Context projection](compaction.md) is automatic and host-owned. Configure its model window with
+  `agent.context_window_tokens`; legacy provider compaction settings remain accepted.
 
 Changes to agent tools and instructions apply to new or restored sessions. Reloading configuration
 does not replace a running agent's tool set.

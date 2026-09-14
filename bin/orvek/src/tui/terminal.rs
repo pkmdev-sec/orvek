@@ -42,7 +42,6 @@ struct StableCursorBackend<B> {
 enum CursorVisibility {
     Hidden,
     Visible,
-    Unknown,
 }
 
 impl<B> StableCursorBackend<B> {
@@ -55,10 +54,6 @@ impl<B> StableCursorBackend<B> {
 
     const fn assume_cursor_hidden(&mut self) {
         self.cursor_visibility = CursorVisibility::Hidden;
-    }
-
-    const fn invalidate_cursor_visibility(&mut self) {
-        self.cursor_visibility = CursorVisibility::Unknown;
     }
 }
 
@@ -242,10 +237,6 @@ impl TerminalSession {
         let draw = self.terminal.draw(render).map(|_| ());
         let end = end_synchronized_update(self.terminal.backend_mut());
         draw.and(end)
-    }
-
-    pub(crate) fn invalidate_cursor_visibility(&mut self) {
-        self.terminal.backend_mut().invalidate_cursor_visibility();
     }
 
     pub(crate) fn copy_to_clipboard(&mut self, text: &str) -> io::Result<()> {
@@ -506,37 +497,6 @@ mod tests {
         terminal.draw(|_| {}).unwrap();
 
         assert_eq!(terminal.backend().inner.cursor_shows, 1);
-        assert_eq!(terminal.backend().inner.cursor_hides, 1);
-    }
-
-    #[test]
-    fn invalidated_cursor_visibility_is_reasserted_once() {
-        let measured = MeasuredBackend {
-            inner: TestBackend::new(10, 2),
-            changed_cells: 0,
-            cursor_reads: 0,
-            cursor_hides: 0,
-            cursor_shows: 0,
-        };
-        let backend = StableCursorBackend::hidden(measured);
-        let mut terminal = Terminal::new(backend).unwrap();
-
-        terminal
-            .draw(|frame| frame.set_cursor_position(Position::new(0, 0)))
-            .unwrap();
-        terminal.backend_mut().invalidate_cursor_visibility();
-        terminal
-            .draw(|frame| frame.set_cursor_position(Position::new(1, 0)))
-            .unwrap();
-        terminal
-            .draw(|frame| frame.set_cursor_position(Position::new(2, 0)))
-            .unwrap();
-
-        terminal.backend_mut().invalidate_cursor_visibility();
-        terminal.draw(|_| {}).unwrap();
-        terminal.draw(|_| {}).unwrap();
-
-        assert_eq!(terminal.backend().inner.cursor_shows, 2);
         assert_eq!(terminal.backend().inner.cursor_hides, 1);
     }
 }

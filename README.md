@@ -8,12 +8,11 @@ keeps resumable sessions, and uses your configured model provider for inference.
 - Read, edit, and inspect code with local tools.
 - Resume conversations or fork a session into a separate thread.
 - Share local SQLite memory across sessions using the same configuration.
-- Compact older tool output into images, with exact text available on demand.
+- Keep accepted work and resumable context in a detached durable host.
 - Delegate tasks to child agents and collect structured results.
 - Review diffs in a browser and send feedback to the agent.
 - Add local skills and MCP tools.
 
-Context compaction is experimental. Model recall and cost savings have not been validated.
 Shell commands run with your permissions; Orvek does not provide a sandbox.
 
 ## Install
@@ -58,7 +57,7 @@ enabled = true
 
 Leave `memory.remote` unconfigured for local-only memory. Sessions share
 `<config-dir>/memory/v1.sqlite3`; no Cloudflare service is needed. Agents read memory through
-explicit tools. Memory is separate from the session archive used by compaction.
+explicit tools. Memory is separate from durable session history.
 
 ## Configure and update
 
@@ -76,7 +75,7 @@ and saved-data handling.
 - [Configuration, authentication, skills, and MCP](docs/configuration.md)
 - [Sessions, review, and reflection](docs/sessions.md)
 - [Local and remote memory](docs/memory.md)
-- [Context compaction and recovery](docs/compaction.md)
+- [Context projection and legacy compaction data](docs/compaction.md)
 - [Subagents](docs/subagents.md)
 - [Performance notes](docs/performance.md)
 - [Evaluations](evals/README.md)
@@ -97,6 +96,5 @@ credentials, and build outputs must stay out of Git.
 
 ## License
 
-Orvek uses [Nanocodex](https://github.com/gakonst/nanocodex) and is distributed under
-[Apache-2.0](LICENSE.md). Attribution and dependency notices are in [NOTICE.md](NOTICE.md)
-and `vendor/`.
+Orvek is distributed under [Apache-2.0](LICENSE.md). Attribution and dependency notices, including
+the remaining Nanocodex-derived support crates, are in [NOTICE.md](NOTICE.md) and `vendor/`.

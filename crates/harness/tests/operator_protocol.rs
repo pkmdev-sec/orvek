@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
-use serde_json::json;
 use orvek_harness::ipc::{self, Command, Request, Response};
+use serde_json::json;
 use tokio::io::{AsyncWriteExt, duplex};
 
 #[tokio::test]
@@ -38,8 +38,11 @@ async fn operator_protocol_exposes_no_arbitrary_state_or_evidence_mutation() {
         "grant_capability",
     ] {
         let (mut writer, mut reader) = duplex(4096);
-        let value =
-            json!({"version":1,"id":uuid::Uuid::new_v4(),"command":{"type":kind,"data":{}}});
+        let value = json!({
+            "version": ipc::PROTOCOL_VERSION,
+            "id": uuid::Uuid::new_v4(),
+            "command": {"type": kind, "data": {}}
+        });
         ipc::write_frame(&mut writer, &value).await.unwrap();
         assert!(
             ipc::read_frame::<Request>(&mut reader).await.is_err(),
@@ -67,16 +70,17 @@ async fn responses_round_trip_without_turn_completion_becoming_task_completion()
 #[tokio::test]
 #[ignore = "requires local Docker and pre-pulled debian:bookworm-slim"]
 async fn real_operator_socket_uses_the_host_owner_and_survives_client_reconnect() {
-    use std::{sync::Arc, time::Duration};
     use orvek_harness::{
+        Channel,
         controller::Host,
         inference::{
             Limits, ModelSettings, ResponsesClient, Route, Transport,
             auth::{Auth, SecretString},
         },
         runtime::DockerExecutor,
-        session::{SessionConfig, SessionId},
+        session::{SessionAdmissionRequest, SessionId},
     };
+    use std::{sync::Arc, time::Duration};
     use tokio_util::sync::CancellationToken;
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");
@@ -120,11 +124,12 @@ async fn real_operator_socket_uses_the_host_owner_and_survives_client_reconnect(
     let id = SessionId::new();
     let create = Request::new(Command::CreateSession {
         id,
-        config: SessionConfig {
-            workspace: source,
-            model: ModelSettings::default(),
-            instructions: String::new(),
-        },
+        request: SessionAdmissionRequest::new(
+            source,
+            ModelSettings::default(),
+            orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        ),
     });
     assert!(
         matches!(ipc::call(&socket,&create,Duration::from_secs(5)).await.unwrap(),Response::Session(view) if view.id==id)

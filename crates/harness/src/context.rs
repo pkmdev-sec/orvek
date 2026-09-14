@@ -11,6 +11,46 @@ use std::collections::BTreeSet;
 const RENDERER: &[u8] =
     b"tact-context-v1:closed-tool-pair-suffix:explicit-archive:interrupted-output-is-unknown";
 
+pub const DEFAULT_WINDOW_TOKENS: u64 = 272_000;
+pub const MIN_WINDOW_TOKENS: u64 = 16_384;
+pub const MAX_WINDOW_TOKENS: u64 = 1_000_000;
+const AUTOMATIC_PROJECTION_PERCENT: u64 = 90;
+const APPROXIMATE_BYTES_PER_TOKEN: u64 = 4;
+const REQUEST_ENVELOPE_BYTES: u64 = 1024 * 1024;
+
+pub const fn automatic_projection_token_limit(window_tokens: u64) -> u64 {
+    window_tokens.saturating_mul(AUTOMATIC_PROJECTION_PERCENT) / 100
+}
+
+pub fn projection_byte_limit(window_tokens: u64) -> Result<usize, ContextError> {
+    validate_window_tokens(window_tokens)?;
+    Ok(usize::try_from(
+        automatic_projection_token_limit(window_tokens).saturating_mul(APPROXIMATE_BYTES_PER_TOKEN),
+    )
+    .unwrap_or(usize::MAX))
+}
+
+/// Bounds the serialized provider request while leaving room for instructions,
+/// tool definitions, and JSON framing outside the projected conversation.
+pub fn request_byte_limit(window_tokens: u64) -> Result<usize, ContextError> {
+    validate_window_tokens(window_tokens)?;
+    Ok(usize::try_from(
+        window_tokens
+            .saturating_mul(APPROXIMATE_BYTES_PER_TOKEN)
+            .saturating_add(REQUEST_ENVELOPE_BYTES),
+    )
+    .unwrap_or(usize::MAX))
+}
+
+fn validate_window_tokens(window_tokens: u64) -> Result<(), ContextError> {
+    if !(MIN_WINDOW_TOKENS..=MAX_WINDOW_TOKENS).contains(&window_tokens) {
+        return Err(ContextError::WindowTokens {
+            value: window_tokens,
+        });
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
     pub version: u32,
@@ -34,6 +74,10 @@ pub enum ContextError {
     Json(#[from] serde_json::Error),
     #[error("context budget must be at least 4096 bytes")]
     Limit,
+    #[error(
+        "context window must be between {MIN_WINDOW_TOKENS} and {MAX_WINDOW_TOKENS} tokens, got {value}"
+    )]
+    WindowTokens { value: u64 },
     #[error("cannot project a tool call that still belongs to the active request")]
     PendingCall,
 }
@@ -140,4 +184,21 @@ fn repair_pending(
         items.push(json!({"type":"function_call_output","call_id":id,"output":"{\"status\":\"unknown\",\"context_only\":true,\"reason\":\"The original request ended without a journaled tool result. This placeholder is not execution or verification evidence. Inspect task_status for authoritative recovery state.\"}"}));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{automatic_projection_token_limit, projection_byte_limit, request_byte_limit};
+
+    #[test]
+    fn million_token_window_projects_at_ninety_percent() {
+        assert_eq!(automatic_projection_token_limit(1_000_000), 900_000);
+        assert_eq!(projection_byte_limit(1_000_000).unwrap(), 3_600_000);
+        assert_eq!(request_byte_limit(1_000_000).unwrap(), 5_048_576);
+    }
+
+    #[test]
+    fn rejects_windows_above_supported_maximum() {
+        assert!(projection_byte_limit(1_000_001).is_err());
+    }
 }

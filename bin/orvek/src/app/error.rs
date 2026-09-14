@@ -1,11 +1,10 @@
 //! Typed errors exposed by the binary's internal module boundaries.
 
-use crate::sessions::{checkpoint::SessionError, error::TranscriptError};
+use crate::tui::session::SessionError;
 use miette::Diagnostic;
-use nanocodex::{
-    NanocodexError,
-    oai::{OpenAiError, auth::ChatGptAuthError, events::EventError},
-    tools::mcp::McpBuildError,
+use orvek_harness::{
+    controller::HostError,
+    inference::{FailureKind, auth::AuthError as ProviderAuthError},
 };
 use orvek_memory::{MemoryError, RemoteClientError};
 use std::{
@@ -18,28 +17,32 @@ pub(crate) type AuthResult<T> = StdResult<T, AuthError>;
 
 #[derive(Debug, Diagnostic, Error)]
 pub(crate) enum Error {
+    #[error("auxiliary request cancelled")]
+    AuxiliaryCancelled,
+    #[error("task ended with {outcome:?}")]
+    TaskOutcome {
+        outcome: orvek_harness::state::Outcome,
+    },
     #[error(transparent)]
-    Agent(#[from] NanocodexError),
+    Host(#[from] HostError),
     #[error(transparent)]
     Auth(#[from] AuthError),
     #[error(transparent)]
     Config(#[from] ConfigError),
-    #[error("failed to process the Nanocodex event stream: {0}")]
-    Event(#[from] EventError),
+    #[error("host connection: {0}")]
+    Connection(#[from] io::Error),
     #[error(transparent)]
     ExternalEditor(#[from] ExternalEditorError),
-    #[error("failed to configure MCP servers: {0}")]
-    Mcp(#[source] McpBuildError),
+    #[error("host request: {0}")]
+    HostRequest(String),
     #[error(transparent)]
-    OpenAi(#[from] OpenAiError),
+    Inference(#[from] FailureKind),
     #[error(transparent)]
     Runtime(#[from] RuntimeError),
     #[error(transparent)]
     MemoryTransfer(#[from] MemoryTransferError),
     #[error(transparent)]
     Session(#[from] SessionError),
-    #[error(transparent)]
-    Transcript(#[from] TranscriptError),
     #[error("update failed: {0}")]
     Update(#[source] Box<dyn StdError + Send + Sync>),
 }
@@ -95,7 +98,7 @@ pub(crate) enum ExternalEditorError {
 #[derive(Debug, Error)]
 pub(crate) enum AuthError {
     #[error(transparent)]
-    ChatGpt(#[from] ChatGptAuthError),
+    ChatGpt(#[from] ProviderAuthError),
     #[error("failed to inspect ChatGPT credential file {path}: {source}")]
     InspectCredentialFile {
         path: PathBuf,
@@ -114,8 +117,6 @@ pub(crate) enum AuthError {
 
 #[derive(Debug, Error)]
 pub(crate) enum ConfigError {
-    #[error("invalid context compaction configuration: {0}")]
-    Compaction(&'static str),
     #[error("could not determine the config directory; set ORVEK_HOME or pass --config")]
     ConfigHomeUnavailable,
     #[error("could not determine the credential directory; set CODEX_HOME or pass --auth-file")]
@@ -146,6 +147,12 @@ pub(crate) enum ConfigError {
     UnsupportedRemoteMemoryPermissions { path: PathBuf },
     #[error("failed to serialize the effective configuration: {0}")]
     Serialize(#[source] toml::ser::Error),
+    #[error("agent context window must be between 16384 and 1000000 tokens, got {0}")]
+    ContextWindowTokens(u64),
+    #[error(
+        "legacy compaction strategy `{0}` is no longer supported; use `provider` context projection"
+    )]
+    UnsupportedCompactionStrategy(String),
     #[error("MCP server `{name}` is already configured")]
     McpServerExists { name: String },
     #[error("MCP server `{name}` has an invalid URL: {source}")]
@@ -226,22 +233,8 @@ pub(crate) enum RuntimeError {
     Terminal(#[source] io::Error),
     #[error("failed to configure remote memory: {0}")]
     RemoteMemory(#[source] RemoteClientError),
-    #[error("the external-editor task stopped unexpectedly: {0}")]
-    ExternalEditorTask(#[source] tokio::task::JoinError),
-    #[error("the effort update task stopped unexpectedly: {0}")]
-    EffortUpdateTask(#[source] tokio::task::JoinError),
-    #[error("the fast-mode update task stopped unexpectedly: {0}")]
-    FastModeUpdateTask(#[source] tokio::task::JoinError),
-    #[error("the new-session task stopped unexpectedly: {0}")]
-    NewSessionTask(#[source] tokio::task::JoinError),
-    #[error("the handoff task stopped unexpectedly: {0}")]
-    HandoffTask(#[source] tokio::task::JoinError),
-    #[error("the session task stopped unexpectedly: {0}")]
-    SessionTask(#[source] tokio::task::JoinError),
-    #[error("the Nanocodex worker stopped before accepting a command")]
-    AgentWorkerStopped,
-    #[error("invalid Nanocodex session ID: {0}")]
-    InvalidSessionId(#[source] nanocodex::oai::session::SessionIdError),
+    #[error("invalid session ID: {0}")]
+    InvalidSessionId(#[source] uuid::Error),
     #[error("failed to resolve workspace {path}: {source}")]
     ResolveWorkspace {
         path: PathBuf,
@@ -250,30 +243,6 @@ pub(crate) enum RuntimeError {
     },
     #[error("workspace is not a directory: {0}")]
     WorkspaceNotDirectory(PathBuf),
-    #[cfg(feature = "harbor-evals")]
-    #[error("failed to create orchestration log {path}: {source}")]
-    CreateOrchestrationLog {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[cfg(feature = "harbor-evals")]
-    #[error("failed to encode orchestration log {path}: {source}")]
-    EncodeOrchestrationLog {
-        path: PathBuf,
-        #[source]
-        source: serde_json::Error,
-    },
-    #[cfg(feature = "harbor-evals")]
-    #[error("failed to write orchestration log {path}: {source}")]
-    WriteOrchestrationLog {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[cfg(feature = "harbor-evals")]
-    #[error("the orchestration log task stopped unexpectedly: {0}")]
-    OrchestrationLogTask(#[source] tokio::task::JoinError),
     #[error("failed to listen for a shutdown signal: {0}")]
     ShutdownSignal(#[source] io::Error),
 }

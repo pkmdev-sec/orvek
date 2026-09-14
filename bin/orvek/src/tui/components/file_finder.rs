@@ -4,24 +4,16 @@ use super::{
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
 };
-use crate::tui::{format::sanitize_terminal_text_inline, theme::Theme};
-use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
-};
+use crate::tui::theme::Theme;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     Frame,
-    layout::{Position, Rect},
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{List, ListItem, ListState, Paragraph},
 };
-use std::{
-    cmp::Reverse,
-    fs,
-    path::Path,
-    time::{Duration, Instant},
-};
-use tokio_util::sync::CancellationToken;
+use std::{cmp::Reverse, fs, path::Path};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -46,43 +38,18 @@ pub(super) struct FileFinder {
     query: String,
     selected: usize,
     matches: Vec<usize>,
-    loading: bool,
-    list_area: Rect,
-    offset: usize,
-    last_click: Option<(usize, Instant)>,
 }
 
 impl FileFinder {
-    #[cfg(test)]
     pub(super) fn new(workspace: &Path) -> Self {
-        Self::from_paths(discover_paths(workspace))
-    }
-
-    pub(super) fn loading() -> Self {
-        Self {
-            loading: true,
-            ..Self::from_paths(Vec::new())
-        }
-    }
-
-    pub(super) fn from_paths(paths: Vec<String>) -> Self {
+        let paths = discover_paths(workspace);
         let matches = (0..paths.len()).collect();
         Self {
             paths,
             query: String::new(),
             selected: 0,
             matches,
-            loading: false,
-            list_area: Rect::default(),
-            offset: 0,
-            last_click: None,
         }
-    }
-
-    pub(super) fn set_paths(&mut self, paths: Vec<String>) {
-        self.paths = paths;
-        self.loading = false;
-        self.refresh_matches();
     }
 
     fn update_key(&mut self, key: KeyEvent) -> ComponentUpdate<FileFinderEffect> {
@@ -90,7 +57,6 @@ impl FileFinder {
             return ComponentUpdate::none();
         }
 
-        self.last_click = None;
         match key.code {
             KeyCode::Esc => Self::dismiss(),
             KeyCode::Enter | KeyCode::Tab => self.handle_enter(),
@@ -140,9 +106,6 @@ impl FileFinder {
         matches.sort_by_key(|(index, score)| (Reverse(*score), self.paths[*index].as_str()));
         self.matches = matches.into_iter().map(|(index, _)| index).collect();
         self.selected = 0;
-        self.offset = 0;
-        self.last_click = None;
-        self.list_area = Rect::default();
     }
 
     fn select_previous(&mut self) {
@@ -175,148 +138,24 @@ impl FileFinder {
         );
     }
 
-    fn update_mouse(
-        &mut self,
-        mouse: MouseEvent,
-        now: Instant,
-    ) -> ComponentUpdate<FileFinderEffect> {
-        if !self
-            .list_area
-            .contains(Position::new(mouse.column, mouse.row))
-        {
-            self.last_click = None;
-            return ComponentUpdate::none();
-        }
-        match mouse.kind {
-            MouseEventKind::ScrollUp => {
-                self.last_click = None;
-                self.select_previous();
-            }
-            MouseEventKind::ScrollDown => {
-                self.last_click = None;
-                self.select_next();
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                let index = self.offset + usize::from(mouse.row - self.list_area.y);
-                if index >= self.matches.len() {
-                    return ComponentUpdate::none();
-                }
-                let confirm = self.last_click.is_some_and(|(previous, at)| {
-                    previous == index
-                        && now.saturating_duration_since(at) <= Duration::from_millis(500)
-                });
-                self.selected = index;
-                self.last_click = Some((index, now));
-                if confirm {
-                    self.last_click = None;
-                    return self.handle_enter();
-                }
-            }
-            _ => return ComponentUpdate::none(),
-        }
-        ComponentUpdate::render(RenderRequest::Immediate)
-    }
-
-    fn render_paths(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        self.list_area = area;
+    fn render_paths(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         if area.is_empty() {
             return;
         }
-        if self.matches.is_empty() {
-            let message = if self.loading {
-                "  Finding workspace paths…"
-            } else if self.paths.is_empty() {
-                "  No workspace paths found"
-            } else {
-                "  No matching paths"
-            };
-            frame.render_widget(
-                Paragraph::new(message).style(Style::default().fg(theme.muted())),
-                area,
-            );
-            return;
-        }
-        let capacity = usize::from(area.height);
-        self.offset = self
-            .offset
-            .min(self.matches.len().saturating_sub(capacity))
-            .min(self.selected);
-        if self.selected >= self.offset + capacity {
-            self.offset = self.selected + 1 - capacity;
-        }
-        let width = usize::from(area.width).saturating_sub(4);
-        for (row, index) in self
-            .matches
-            .iter()
-            .skip(self.offset)
-            .take(capacity)
-            .enumerate()
-        {
-            let path = compact_path(&self.paths[*index], width);
-            let split = path
-                .trim_end_matches('/')
-                .rfind('/')
-                .map_or(0, |index| index + 1);
-            let selected = row + self.offset == self.selected;
-            let style = Style::default().fg(if selected {
-                theme.accent()
-            } else {
-                theme.text()
-            });
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(if selected { FOCUS_MARKER } else { "  " }, style),
-                    Span::styled(path[..split].to_owned(), Style::default().fg(theme.muted())),
-                    Span::styled(path[split..].to_owned(), style.add_modifier(Modifier::BOLD)),
-                ])),
-                Rect::new(area.x, area.y + row as u16, area.width, 1),
-            );
-        }
-    }
 
-    fn render_details(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        let Some(index) = self.matches.get(self.selected) else {
-            return;
-        };
-        if area.is_empty() {
-            return;
-        }
-        let width = usize::from(area.width).saturating_sub(4);
-        if width == 0 {
-            return;
-        }
-        let text = compact_path(
-            &format!("Insert: @{}", self.paths[*index]),
-            width * usize::from(area.height),
-        );
-        let mut lines = Vec::new();
-        let mut line = String::new();
-        let mut used = 0;
-        for grapheme in text.graphemes(true) {
-            if used + grapheme.width() > width {
-                lines.push(std::mem::take(&mut line));
-                used = 0;
-            }
-            line.push_str(grapheme);
-            used += grapheme.width();
-        }
-        lines.push(line);
-        frame.render_widget(
-            Paragraph::new(
-                lines
-                    .into_iter()
-                    .take(usize::from(area.height))
-                    .map(Line::from)
-                    .collect::<Vec<_>>(),
+        let items = self.matches.iter().map(|index| {
+            ListItem::new(self.paths[*index].as_str()).style(Style::default().fg(theme.text()))
+        });
+        let list = List::new(items)
+            .highlight_style(
+                Style::default()
+                    .fg(theme.accent())
+                    .add_modifier(Modifier::BOLD),
             )
-            .style(Style::default().fg(theme.muted())),
-            Rect::new(
-                area.x + 2.min(area.width),
-                area.y,
-                width as u16,
-                area.height,
-            ),
-        );
+            .highlight_symbol(FOCUS_MARKER);
+        let selected = (!self.matches.is_empty()).then_some(self.selected);
+        let mut state = ListState::default().with_selected(selected);
+        frame.render_stateful_widget(list, area, &mut state);
     }
 }
 
@@ -327,16 +166,12 @@ impl Component for FileFinder {
     fn update(&mut self, event: Self::Event) -> ComponentUpdate<Self::Effect> {
         match event {
             FileFinderEvent::Terminal(Event::Key(key)) => self.update_key(key),
-            FileFinderEvent::Terminal(Event::Mouse(mouse)) => {
-                self.update_mouse(mouse, Instant::now())
-            }
             FileFinderEvent::Terminal(_) => ComponentUpdate::none(),
             FileFinderEvent::Query(query) => self.set_query(query),
         }
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        self.list_area = Rect::default();
         if area.is_empty() {
             return;
         }
@@ -350,79 +185,31 @@ impl Component for FileFinder {
             height: 1,
             ..layout.body
         };
-        let detail_height = 2.min(layout.body.height.saturating_sub(2));
-        let paths_area = Rect::new(
-            layout.body.x,
-            layout.body.y + 1,
-            layout.body.width,
-            layout.body.height.saturating_sub(1 + detail_height),
-        );
-        let details_area = Rect::new(
-            layout.body.x,
-            paths_area.bottom(),
-            layout.body.width,
-            detail_height,
-        );
+        let paths_area = Rect {
+            y: layout.body.y + 1,
+            height: layout.body.height.saturating_sub(1),
+            ..layout.body
+        };
         self.render_search(frame, search_area, theme);
         self.render_paths(frame, paths_area, theme);
-        self.render_details(frame, details_area, theme);
     }
 }
 
-fn compact_path(path: &str, width: usize) -> String {
-    let path = sanitize_terminal_text_inline(path);
-    if path.width() <= width {
-        return path.into_owned();
-    }
-    if width == 0 {
-        return String::new();
-    }
-    let left_width = width / 2;
-    let right_width = width - 1 - left_width;
-    let mut left = String::new();
-    for grapheme in path.graphemes(true) {
-        if left.width() + grapheme.width() > left_width {
-            break;
-        }
-        left.push_str(grapheme);
-    }
-    format!("{left}…{}", visible_query_tail(&path, right_width))
-}
-
-#[cfg(test)]
-pub(crate) fn discover_paths(workspace: &Path) -> Vec<String> {
-    discover_paths_cancellable(workspace, &CancellationToken::new())
-}
-
-pub(crate) fn discover_paths_cancellable(
-    workspace: &Path,
-    cancellation: &CancellationToken,
-) -> Vec<String> {
+fn discover_paths(workspace: &Path) -> Vec<String> {
     let mut paths = Vec::new();
-    visit_directory(workspace, workspace, &mut paths, cancellation);
-    if cancellation.is_cancelled() {
-        return Vec::new();
-    }
+    visit_directory(workspace, workspace, &mut paths);
     paths.sort_unstable();
     paths
 }
 
-fn visit_directory(
-    workspace: &Path,
-    directory: &Path,
-    paths: &mut Vec<String>,
-    cancellation: &CancellationToken,
-) {
-    if cancellation.is_cancelled() {
-        return;
-    }
+fn visit_directory(workspace: &Path, directory: &Path, paths: &mut Vec<String>) {
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
-    for entry in entries.flatten() {
-        if cancellation.is_cancelled() {
-            return;
-        }
+    let mut entries = entries.flatten().collect::<Vec<_>>();
+    entries.sort_unstable_by_key(|entry| entry.file_name());
+
+    for entry in entries {
         let path = entry.path();
         let Ok(file_type) = entry.file_type() else {
             continue;
@@ -435,7 +222,7 @@ fn visit_directory(
             if let Some(relative) = relative_path(workspace, &path) {
                 paths.push(format!("{relative}/"));
             }
-            visit_directory(workspace, &path, paths, cancellation);
+            visit_directory(workspace, &path, paths);
         } else if file_type.is_file()
             && let Some(relative) = relative_path(workspace, &path)
         {
@@ -693,70 +480,5 @@ mod tests {
             .unwrap();
 
         assert_eq!(terminal.backend().buffer().area.width, 3);
-    }
-    fn render(finder: &mut FileFinder, width: u16, height: u16) -> String {
-        let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
-        terminal
-            .draw(|frame| finder.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
-            .unwrap();
-        terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect()
-    }
-
-    #[test]
-    fn loading_snapshot_preserves_the_query_and_cannot_insert_stale_paths() {
-        let mut finder = FileFinder::loading();
-        finder.update(FileFinderEvent::Query("source".into()));
-        assert!(finder.update(key(KeyCode::Enter)).effects.is_empty());
-        assert!(render(&mut finder, 72, 14).contains("Finding workspace paths"));
-        finder.set_paths(vec![
-            "docs/".into(),
-            "source/".into(),
-            "source/main.rs".into(),
-        ]);
-        assert_eq!(finder.query, "source");
-        assert_eq!(
-            finder.update(key(KeyCode::Enter)).effects,
-            [FileFinderEffect::Insert("source/".into())]
-        );
-        finder.update(FileFinderEvent::Query("missing".into()));
-        assert!(render(&mut finder, 72, 14).contains("No matching paths"));
-        finder.set_paths(vec![]);
-        assert!(render(&mut finder, 72, 14).contains("No workspace paths found"));
-    }
-
-    #[test]
-    fn mouse_uses_the_original_path_and_fixed_details_survive_tiny_layouts() {
-        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-        let now = std::time::Instant::now();
-        let path = "日本語/very-long-directory-name/source/file.rs";
-        let mut finder = FileFinder::from_paths(vec![path.into()]);
-        let text = render(&mut finder, 32, 14);
-        assert!(text.contains("Insert: @"));
-        let area = finder.list_area;
-        let mouse = MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: area.x,
-            row: area.y,
-            modifiers: KeyModifiers::NONE,
-        };
-        assert!(finder.update_mouse(mouse, now).effects.is_empty());
-        assert_eq!(
-            finder
-                .update_mouse(mouse, now + std::time::Duration::from_millis(100))
-                .effects,
-            [FileFinderEffect::Insert(path.into())]
-        );
-        for width in 0..20 {
-            for height in 0..15 {
-                render(&mut finder, width, height);
-            }
-        }
     }
 }

@@ -1,12 +1,14 @@
 //! Displayable prompt text paired with model-only image content.
 
-use nanocodex::agent::input::{Prompt, UserInput};
+use orvek_harness::Digest;
+use serde_json::{Value, json};
 use std::{fmt, ops::Range};
 
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct Submission {
     text: String,
     images: Vec<SubmissionImage>,
+    reviews: Vec<Digest>,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -20,6 +22,7 @@ impl Submission {
         Self {
             text,
             images: Vec::new(),
+            reviews: Vec::new(),
         }
     }
 
@@ -31,75 +34,79 @@ impl Submission {
             .into_iter()
             .map(|(range, data_url)| SubmissionImage { range, data_url })
             .collect();
-        Self { text, images }
+        Self {
+            text,
+            images,
+            reviews: Vec::new(),
+        }
     }
 
-    pub(crate) fn join(submissions: Vec<Self>) -> Self {
-        let mut text = String::new();
-        let mut images = Vec::new();
-        for (index, submission) in submissions.into_iter().enumerate() {
-            if index > 0 {
-                text.push_str("\n\n");
-            }
-            let offset = text.len();
-            text.push_str(&submission.text);
-            images.extend(submission.images.into_iter().map(|mut image| {
-                image.range.start += offset;
-                image.range.end += offset;
-                image
-            }));
-        }
-        Self { text, images }
-    }
-
-    pub(crate) fn prepend_text(mut self, prefix: String) -> Self {
-        if prefix.is_empty() {
-            return self;
-        }
-        let separator = if self.text.is_empty() { "" } else { "\n\n" };
-        let offset = prefix.len() + separator.len();
-        self.text = format!("{prefix}{separator}{}", self.text);
-        for image in &mut self.images {
-            image.range.start += offset;
-            image.range.end += offset;
+    pub(crate) fn attach_review(mut self, digest: Digest) -> Self {
+        if !self.reviews.contains(&digest) {
+            self.reviews.push(digest);
         }
         self
+    }
+
+    pub(crate) fn reviews(&self) -> &[Digest] {
+        &self.reviews
+    }
+
+    pub(crate) fn images(&self) -> impl Iterator<Item = (Range<usize>, String)> + '_ {
+        self.images
+            .iter()
+            .map(|image| (image.range.clone(), image.data_url.clone()))
     }
 
     pub(crate) fn display_text(&self) -> &str {
         &self.text
     }
 
-    pub(crate) fn into_parts(self) -> (String, impl Iterator<Item = (Range<usize>, String)>) {
-        (
-            self.text,
-            self.images
-                .into_iter()
-                .map(|image| (image.range, image.data_url)),
-        )
+    pub(crate) fn from_host_content(parts: Vec<Value>) -> Result<Self, &'static str> {
+        let mut text = String::new();
+        let mut images = Vec::new();
+        for part in parts {
+            match part["type"].as_str() {
+                Some("input_text") => {
+                    text.push_str(part["text"].as_str().ok_or("missing input text")?)
+                }
+                Some("input_image") => {
+                    let start = text.len();
+                    text.push_str(&format!("[Image #{}]", images.len() + 1));
+                    images.push((
+                        start..text.len(),
+                        part["image_url"]
+                            .as_str()
+                            .ok_or("missing image bytes")?
+                            .to_owned(),
+                    ));
+                }
+                _ => return Err("unsupported input part"),
+            }
+        }
+        Ok(Self::multimodal(text, images))
     }
 
-    pub(crate) fn agent_prompt(&self) -> Prompt {
+    pub(crate) fn host_content(&self) -> Vec<Value> {
         let mut content = Vec::new();
+        for digest in &self.reviews {
+            content.push(json!({"type":"input_review","digest":digest}));
+        }
         let mut cursor = 0;
         for image in &self.images {
             if cursor < image.range.start {
-                content.push(UserInput::Text {
-                    text: self.text[cursor..image.range.start].to_owned(),
-                });
+                content.push(
+                    json!({"type":"input_text", "text":self.text[cursor..image.range.start]}),
+                );
             }
-            content.push(UserInput::Image {
-                image_url: image.data_url.clone(),
-                detail: None,
-            });
+            content
+                .push(json!({"type":"input_image", "image_url":image.data_url, "detail":"auto"}));
             cursor = image.range.end;
         }
         if cursor < self.text.len() {
-            content.push(UserInput::Text {
-                text: self.text[cursor..].to_owned(),
-            });
+            content.push(json!({"type":"input_text", "text":self.text[cursor..]}));
         }
-        Prompt::content(content)
+        content
     }
 }
 
@@ -122,7 +129,7 @@ impl From<String> for Submission {
 #[cfg(test)]
 mod tests {
     use super::Submission;
-    use nanocodex::agent::input::{PromptInput, UserInput};
+    use serde_json::json;
 
     #[test]
     fn multimodal_prompt_replaces_markers_with_ordered_images() {
@@ -130,15 +137,23 @@ mod tests {
             "before [Image #1] after".to_owned(),
             [(7..17, "data:image/png;base64,a".to_owned())],
         );
-        let prompt = submission.agent_prompt();
-        let PromptInput::Content(content) = prompt.instruction else {
-            panic!("multimodal submissions should use content input");
-        };
-
-        assert!(matches!(&content[0], UserInput::Text { text } if text == "before "));
-        assert!(
-            matches!(&content[1], UserInput::Image { image_url, .. } if image_url.ends_with(",a"))
+        assert_eq!(
+            submission.host_content(),
+            vec![
+                json!({"type":"input_text","text":"before "}),
+                json!({"type":"input_image","image_url":"data:image/png;base64,a","detail":"auto"}),
+                json!({"type":"input_text","text":" after"}),
+            ]
         );
-        assert!(matches!(&content[2], UserInput::Text { text } if text == " after"));
+    }
+
+    #[test]
+    fn review_attachment_is_sent_as_a_separate_input_part() {
+        let digest = "0".repeat(64).parse().unwrap();
+        let submission =
+            Submission::text("Please address this review.".to_owned()).attach_review(digest);
+        assert_eq!(submission.host_content()[0]["type"], "input_review");
+        assert_eq!(submission.host_content()[0]["digest"], json!(digest));
+        assert_eq!(submission.display_text(), "Please address this review.");
     }
 }

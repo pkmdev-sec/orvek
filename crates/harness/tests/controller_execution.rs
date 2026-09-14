@@ -1,12 +1,6 @@
-use serde_json::{Value, json};
-use std::{
-    collections::BTreeMap,
-    fs,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
 use orvek_harness::{
-    Digest, Store,
+    Channel, Digest, Store,
+    artifacts::PublicArtifactRef,
     contract::*,
     controller::{Host, HostUpdate},
     inference::{
@@ -14,9 +8,16 @@ use orvek_harness::{
         auth::{Auth, SecretString},
     },
     runtime::DockerExecutor,
-    session::SessionConfig,
+    session::{SessionAdmissionRequest, SessionConfig},
     state::Outcome,
     verification::{CheckProgram, ControlFailure, Expectation, Probe},
+};
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeMap,
+    fs,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -92,7 +93,7 @@ async fn human_shell_keeps_private_changes_across_requests_without_model_calls_o
     fs::write(source.join("value"), "before").unwrap();
     let state_root = root.path().join("state");
     let store = Store::open(&state_root).unwrap();
-    let artifacts = store.artifacts().clone();
+    let artifacts = store.public_artifacts().clone();
     drop(store);
     let client = ResponsesClient::new(
         Auth::api_key(SecretString::new("fixture".into())).unwrap(),
@@ -114,11 +115,12 @@ async fn human_shell_keeps_private_changes_across_requests_without_model_calls_o
         .unwrap(),
     );
     let session = host
-        .create_session(SessionConfig {
-            workspace: source.clone(),
-            model: ModelSettings::default(),
-            instructions: String::new(),
-        })
+        .create_session(SessionAdmissionRequest::new(
+            source.clone(),
+            ModelSettings::default(),
+            orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        ))
         .await
         .unwrap();
     let request = uuid::Uuid::new_v4();
@@ -143,7 +145,12 @@ async fn human_shell_keeps_private_changes_across_requests_without_model_calls_o
         orvek_harness::runtime::ExecutionStatus::Exited(0)
     ));
     assert!(report.adopted);
-    assert_eq!(artifacts.read(report.stdout).unwrap(), b"done");
+    assert_eq!(
+        artifacts
+            .resolve(PublicArtifactRef::from_digest(report.stdout))
+            .unwrap(),
+        b"done"
+    );
     let state = host.session(session.id).await.unwrap();
     assert!(
         state.history.is_empty(),
@@ -178,7 +185,12 @@ async fn human_shell_keeps_private_changes_across_requests_without_model_calls_o
     .await
     .unwrap();
     let report = wait_shell(&host, &artifacts, session.id, next).await;
-    assert_eq!(artifacts.read(report.stdout).unwrap(), b"afteruser note");
+    assert_eq!(
+        artifacts
+            .resolve(PublicArtifactRef::from_digest(report.stdout))
+            .unwrap(),
+        b"afteruser note"
+    );
     assert!(report.adopted);
     let snapshot = Snapshot::load(report.after.unwrap(), &artifacts).unwrap();
     assert!(
@@ -221,13 +233,14 @@ async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_cod
                 workspace: source.clone().canonicalize().unwrap(),
                 model: ModelSettings::default(),
                 instructions: String::new(),
+                context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
             },
             None,
         )
         .unwrap();
     let policy = store
-        .artifacts()
-        .put(
+        .public_artifacts()
+        .write(
             &serde_json::to_vec(&orvek_harness::admission::RequestPolicy {
                 version: 1,
                 delivery: DeliveryKind::Source,
@@ -239,7 +252,8 @@ async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_cod
             })
             .unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .digest();
     let original = uuid::Uuid::new_v4();
     let (session, task, _) = store
         .start_request(
@@ -271,7 +285,7 @@ async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_cod
         )
         .unwrap();
     let original_history = session.history.clone();
-    let artifacts = store.artifacts().clone();
+    let artifacts = store.public_artifacts().clone();
     drop(store);
     let forbidden = json!({"type":"function_call","id":"fc_forbidden_aux","call_id":"call_forbidden_aux","name":"write_file","arguments":"{\"path\":\"value\",\"content\":\"must not run\"}","status":"completed"});
     let (endpoint, served) =
@@ -340,7 +354,9 @@ async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_cod
     );
     let report: AuxiliaryReport = serde_json::from_slice(
         &artifacts
-            .read(settled.result.expect("durable answer artifact"))
+            .resolve(PublicArtifactRef::from_digest(
+                settled.result.expect("durable answer artifact"),
+            ))
             .unwrap(),
     )
     .unwrap();
@@ -484,7 +500,7 @@ async fn run_ordinary_classifier(output: Vec<Value>, usage: Option<Value>) -> Cl
     fs::create_dir(&source).unwrap();
     let state_root = root.path().join("state");
     let store = Store::open(&state_root).unwrap();
-    let artifacts = store.artifacts().clone();
+    let artifacts = store.public_artifacts().clone();
     drop(store);
     let (endpoint, served) = provider_with_usage(vec![(output, usage)]).await;
     let client = ResponsesClient::new(
@@ -507,11 +523,12 @@ async fn run_ordinary_classifier(output: Vec<Value>, usage: Option<Value>) -> Cl
         .unwrap(),
     );
     let session = host
-        .create_session(SessionConfig {
-            workspace: source.clone(),
-            model: ModelSettings::default(),
-            instructions: String::new(),
-        })
+        .create_session(SessionAdmissionRequest::new(
+            source.clone(),
+            ModelSettings::default(),
+            orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        ))
         .await
         .unwrap();
     let policy = orvek_harness::admission::RequestPolicy {
@@ -559,7 +576,14 @@ async fn run_ordinary_classifier(output: Vec<Value>, usage: Option<Value>) -> Cl
     let records = settled
         .records
         .iter()
-        .map(|digest| serde_json::from_slice(&artifacts.read(*digest).unwrap()).unwrap())
+        .map(|digest| {
+            serde_json::from_slice(
+                &artifacts
+                    .resolve(PublicArtifactRef::from_digest(*digest))
+                    .unwrap(),
+            )
+            .unwrap()
+        })
         .collect();
     let state = host.session(session.id).await.unwrap();
     ClassifierRun {
@@ -818,11 +842,12 @@ async fn ordinary_action_continues_an_incomplete_task_and_charges_its_classifier
         .unwrap(),
     );
     let session = host
-        .create_session(SessionConfig {
-            workspace: source.clone(),
-            model: ModelSettings::default(),
-            instructions: String::new(),
-        })
+        .create_session(SessionAdmissionRequest::new(
+            source.clone(),
+            ModelSettings::default(),
+            orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        ))
         .await
         .unwrap();
     let policy = orvek_harness::admission::RequestPolicy {
@@ -1037,11 +1062,12 @@ async fn ordinary_cancellation_during_classification_settles_without_admitting_a
         .unwrap(),
     );
     let session = host
-        .create_session(SessionConfig {
-            workspace: source.clone(),
-            model: ModelSettings::default(),
-            instructions: String::new(),
-        })
+        .create_session(SessionAdmissionRequest::new(
+            source.clone(),
+            ModelSettings::default(),
+            orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        ))
         .await
         .unwrap();
     let policy = orvek_harness::admission::RequestPolicy {
@@ -1181,7 +1207,7 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
     // shorter `state` name the other tests in this file already use.
     let state_root = root.path().join("state");
     let store = Store::open(&state_root).unwrap();
-    let artifacts = store.artifacts().clone();
+    let artifacts = store.public_artifacts().clone();
     let program = CheckProgram {
         version: 1,
         probes: vec![Probe::Command {
@@ -1198,9 +1224,10 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         }),
     };
     let verifier = store
-        .artifacts()
-        .put(&serde_json::to_vec(&program).unwrap())
-        .unwrap();
+        .public_artifacts()
+        .write(&serde_json::to_vec(&program).unwrap())
+        .unwrap()
+        .digest();
     drop(store);
     let contract = Contract {
         request: "Fix addition".into(),
@@ -1371,11 +1398,12 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         .unwrap();
     let mut host = Arc::new(Host::open(&state_root, client, executor).unwrap());
     let session = host
-        .create_session(SessionConfig {
-            workspace: source.clone(),
-            model: ModelSettings::default(),
-            instructions: String::new(),
-        })
+        .create_session(SessionAdmissionRequest::new(
+            source.clone(),
+            ModelSettings::default(),
+            orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        ))
         .await
         .unwrap();
     let updates = Arc::new(Mutex::new(Vec::new()));
@@ -1577,7 +1605,9 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         );
         let report: orvek_harness::auxiliary::AuxiliaryReport = serde_json::from_slice(
             &artifacts
-                .read(settled.result.expect("durable answer"))
+                .resolve(PublicArtifactRef::from_digest(
+                    settled.result.expect("durable answer"),
+                ))
                 .unwrap(),
         )
         .unwrap();
@@ -1906,9 +1936,11 @@ async fn wait_shell(
             if !submission.status.pending() {
                 return serde_json::from_slice(
                     &artifacts
-                        .read(submission.result.unwrap_or_else(|| {
-                            panic!("shell has no report: {:?}", submission.status)
-                        }))
+                        .resolve(PublicArtifactRef::from_digest(
+                            submission.result.unwrap_or_else(|| {
+                                panic!("shell has no report: {:?}", submission.status)
+                            }),
+                        ))
                         .unwrap(),
                 )
                 .unwrap();

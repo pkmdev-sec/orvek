@@ -94,9 +94,39 @@ Useful files under each trial:
 | `verifier/test-stdout.txt` | Failed checks or environment errors |
 | `trial.log` | Trial lifecycle |
 | `agent/stderr.log` | Orvek diagnostics |
-| `agent/events.jsonl` | Root events |
-| `agent/orchestration.jsonl` | Child lifecycle and messages |
-| `agent/trajectory.json` | ATIF trajectory and root-plus-child usage |
+| `agent/events.jsonl` | Durable host journal and terminal receipt |
+| `agent/trajectory.json` | ATIF trajectory and exact available durable usage |
 
 Inspect verifier output before interpreting a surprising reward. Crashes, missing dependencies,
 timeouts, and missing verifier output can invalidate the result.
+
+## Self-harness evaluation contract
+
+The self-evolving harness uses three non-interchangeable evidence roles. `MiningEvaluation`
+contains only sanitized failure facts and pass anchors. `AdaptivePromotionDataset` contains paired
+confirmatory evidence used during candidate selection. `FinalAuditDataset` belongs to a hidden,
+one-use audit epoch. No role is implicitly converted into another, and mining evidence cannot
+satisfy a promotion gate.
+
+Every cohort freezes the model, protocol, evaluator, environment, cases, repeats, independence
+blocks, estimator version, partitions, policy, budgets, and complete multiplicity family before a
+candidate is evaluated. The adaptive and final-audit query/error ledgers are Store-global for that
+cohort. Starting or restarting a campaign cannot reset them. Each decision debits the exact number
+of metric-by-stratum hypotheses declared by the frozen family; final-audit access also burns its
+epoch globally.
+
+Outcomes are classified as `Pass`, `BehavioralFailure`, or `InfrastructureUnknown`. A valid
+evaluator rejection, attributable candidate crash, budget exhaustion, or protocol timeout is
+negative behavioral evidence. Drift, transport loss, missing or tampered receipts, and
+unreconciled external attempts are unknown and make promotion inconclusive. Repeats aggregate
+within each case before cases aggregate through their declared independence blocks.
+
+Partition membership is bound with distinct keyed HMAC-SHA-256 commitments. The opening key or
+sealed nonce is not public, so low-entropy membership cannot be enumerated from the commitment.
+Candidate labels are presentation only and do not enter the verdict or evidence root.
+
+The Phase 1 reference uses estimator `paired-case-block-exact-sign-v1`. Its margins, repeat count,
+minimum block count, and ledger allocation are synthetic mechanism-calibration fixtures. They do
+not authorize production activation. A representative repository-owned suite must separately
+calibrate effect margins, power, resource gates, and recovery behavior; until then production
+activation remains `INCONCLUSIVE` and registry writes remain disabled.

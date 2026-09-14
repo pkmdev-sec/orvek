@@ -3,7 +3,8 @@ use crate::{
     Digest,
     import::PreparedImport,
     session::{
-        ImportedSource, SessionCommand, SessionConfig, SessionEvent, SessionId, SessionState,
+        ImportedSource, SessionAdmissionProfile, SessionCommand, SessionConfig, SessionEvent,
+        SessionId, SessionState,
     },
 };
 use rusqlite::Connection;
@@ -39,10 +40,27 @@ impl Store {
         config: SessionConfig,
         prepared: PreparedImport,
     ) -> Result<SessionState, StoreError> {
+        let profile =
+            self.fixture_admission(&config, crate::evolution::BaselineReason::LegacyImport)?;
+        self.commit_bound_legacy_import(operation, fingerprint, profile, prepared)
+    }
+
+    pub(crate) fn commit_bound_legacy_import(
+        &mut self,
+        operation: Uuid,
+        fingerprint: Digest,
+        profile: SessionAdmissionProfile,
+        prepared: PreparedImport,
+    ) -> Result<SessionState, StoreError> {
         if let Some(existing) = self.lookup_legacy_import(operation, fingerprint)? {
             return Ok(existing);
         }
-        let target = Digest::of_value(&("tact.import.target.v1", prepared.import_id, &config))?;
+        let target = Digest::of_value(&(
+            "orvek.import.target.v2",
+            prepared.import_id,
+            profile.request_digest(),
+            profile.binding(),
+        ))?;
         let id = SessionId(Uuid::new_v5(
             &Uuid::NAMESPACE_URL,
             target.to_string().as_bytes(),
@@ -50,7 +68,7 @@ impl Store {
         match self.load_session(id) {
             Ok(existing) => {
                 if existing.parent.is_some()
-                    || existing.initial_config != config
+                    || existing.admission.as_ref() != Some(&profile)
                     || !existing
                         .imported
                         .as_ref()
@@ -77,7 +95,7 @@ impl Store {
                     request_fingerprint: fingerprint,
                     first_operation: Some(operation),
                 };
-                self.create_imported_session(id, config, source, prepared.history)
+                self.create_bound_imported_session(id, profile, source, prepared.history)
             }
             Err(error) => Err(error),
         }

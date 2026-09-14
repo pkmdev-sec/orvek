@@ -1,11 +1,16 @@
 use crate::{
     Digest,
-    artifacts::{ArtifactError, ArtifactStore},
+    artifacts::{ArtifactError, ArtifactStaging, ArtifactStore},
     completion::{self, Rejection},
     contract::{Contract, ContractError},
+    evolution::{
+        BaselineReason, CampaignId, CampaignTransitionError, Channel, CohortId, CompositionError,
+        EnvironmentIdentity, ManifestError, ModelIdentity, ProtocolIdentity, ScoringError,
+        TargetProfile, TaskProfileIdentity,
+    },
     session::{
-        JournalRecord, SessionCommand, SessionConfig, SessionCursor, SessionEvent, SessionId,
-        SessionState,
+        JournalRecord, SessionAdmissionProfile, SessionAdmissionRequest, SessionCommand,
+        SessionConfig, SessionCursor, SessionEvent, SessionId, SessionState,
     },
     state::*,
     submission::OrdinaryKind,
@@ -16,15 +21,19 @@ use std::{
     collections::BTreeSet,
     fs::{self, File, OpenOptions},
     path::Path,
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 6;
 const MAX_EVENT_BYTES: usize = 512 * 1024;
+const MAX_JOURNAL_PAGE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_HOST_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
 mod auxiliary;
+mod evolution;
 mod imports;
 mod manual;
 mod submissions;
@@ -41,16 +50,36 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Artifact(#[from] ArtifactError),
+    #[error("artifact storage is unavailable")]
+    ArtifactStorageUnavailable,
+    #[error("sealed evidence is unavailable")]
+    EvidenceUnavailable,
     #[error(transparent)]
     Contract(#[from] ContractError),
+    #[error(transparent)]
+    Manifest(#[from] ManifestError),
     #[error("unsupported harness schema {0}")]
     Schema(i32),
     #[error("task not found: {0}")]
     Missing(TaskId),
     #[error("session not found: {0}")]
     MissingSession(SessionId),
+    #[error("evaluation cohort not found: {0}")]
+    MissingCohort(CohortId),
+    #[error("evolution campaign not found: {0}")]
+    MissingCampaign(CampaignId),
+    #[error("harness revision not found: {0}")]
+    MissingHarnessRevision(Digest),
     #[error("task revision changed: expected {expected}, found {actual}")]
     Revision { expected: u64, actual: u64 },
+    #[error("campaign revision changed: expected {expected}, found {actual}")]
+    CampaignRevision { expected: u64, actual: u64 },
+    #[error(transparent)]
+    Campaign(#[from] CampaignTransitionError),
+    #[error(transparent)]
+    Scoring(#[from] ScoringError),
+    #[error(transparent)]
+    Composition(#[from] CompositionError),
     #[error("task already ended")]
     Terminal,
     #[error("task cancellation has been requested")]
@@ -63,6 +92,8 @@ pub enum StoreError {
     Lease,
     #[error("execution budget exhausted")]
     Budget,
+    #[error("evaluation cohort ledger exhausted")]
+    CohortLedgerExhausted,
     #[error("completion rejected: {0:?}")]
     Incomplete(Vec<Rejection>),
 }
@@ -92,11 +123,20 @@ impl std::fmt::Debug for VerificationLease {
 pub struct Store {
     connection: Connection,
     artifacts: ArtifactStore,
-    _owner: File,
+    sealed_artifacts: ArtifactStore,
+    artifact_staging: ArtifactStaging,
+    _owner: Arc<File>,
 }
 
 impl Store {
     pub fn open(root: &Path) -> Result<Self, StoreError> {
+        Self::open_with_artifact_limit(root, MAX_HOST_ARTIFACT_BYTES)
+    }
+
+    pub fn open_with_artifact_limit(
+        root: &Path,
+        max_artifact_bytes: u64,
+    ) -> Result<Self, StoreError> {
         fs::create_dir_all(root)?;
         if fs::symlink_metadata(root)?.file_type().is_symlink() {
             return Err(StoreError::Invalid("state directory cannot be a symlink"));
@@ -113,33 +153,93 @@ impl Store {
             .truncate(false)
             .open(root.join("owner.lock"))?;
         owner.try_lock_exclusive()?;
-        let connection = Connection::open(root.join("v1.sqlite3"))?;
+        let owner = Arc::new(owner);
+        let database = root.join("v1.sqlite3");
+        let connection = Connection::open(&database)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;",
         )?;
         let version: i32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version != 0 && version != SCHEMA_VERSION {
-            return Err(StoreError::Schema(version));
+        match version {
+            0 => initialize_schema(&connection)?,
+            1 => {
+                migrate_v1_to_v2(&connection)?;
+                migrate_v2_to_v3(&connection)?;
+                migrate_v3_to_v4(&connection)?;
+                migrate_v4_to_v5(&connection)?;
+                migrate_v5_to_v6(&connection)?;
+            }
+            2 => {
+                migrate_v2_to_v3(&connection)?;
+                migrate_v3_to_v4(&connection)?;
+                migrate_v4_to_v5(&connection)?;
+                migrate_v5_to_v6(&connection)?;
+            }
+            3 => {
+                migrate_v3_to_v4(&connection)?;
+                migrate_v4_to_v5(&connection)?;
+                migrate_v5_to_v6(&connection)?;
+            }
+            4 => {
+                migrate_v4_to_v5(&connection)?;
+                migrate_v5_to_v6(&connection)?;
+            }
+            5 => migrate_v5_to_v6(&connection)?,
+            SCHEMA_VERSION => {}
+            unsupported => return Err(StoreError::Schema(unsupported)),
         }
-        if version == 0 {
-            connection.execute_batch(
-                "BEGIN IMMEDIATE;
-                 CREATE TABLE tasks(id TEXT PRIMARY KEY, revision INTEGER NOT NULL, state BLOB NOT NULL, head TEXT NOT NULL) STRICT;
-                 CREATE TABLE events(sequence INTEGER PRIMARY KEY AUTOINCREMENT, aggregate TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('task','session')), revision INTEGER NOT NULL, event BLOB NOT NULL, hash TEXT NOT NULL, UNIQUE(aggregate,kind,revision)) STRICT;
-                 CREATE TABLE sessions(id TEXT PRIMARY KEY, revision INTEGER NOT NULL, state BLOB NOT NULL, head TEXT NOT NULL) STRICT;
-                 CREATE TABLE leases(task TEXT NOT NULL REFERENCES tasks(id), job TEXT NOT NULL, token_digest TEXT NOT NULL, PRIMARY KEY(task,job)) STRICT;
-                 PRAGMA user_version=1; COMMIT;"
-            )?;
-        }
-        Ok(Self {
+        let (artifacts, sealed_artifacts, artifact_staging) = ArtifactStore::open_host(
+            &root.join("artifacts"),
+            &root.join("sealed-artifacts"),
+            &root.join("evolution-artifact-staging"),
+            &database,
+            max_artifact_bytes,
+            owner.clone(),
+        )
+        .map_err(|_| StoreError::ArtifactStorageUnavailable)?;
+        let mut store = Self {
             connection,
-            artifacts: ArtifactStore::open(&root.join("artifacts"), 256 * 1024 * 1024)?,
+            artifacts,
+            sealed_artifacts,
+            artifact_staging,
             _owner: owner,
-        })
+        };
+        store.recover_evolution_artifacts()?;
+        Ok(store)
     }
 
-    pub fn artifacts(&self) -> &ArtifactStore {
+    pub(crate) fn artifacts(&self) -> &ArtifactStore {
+        &self.artifacts
+    }
+
+    fn fixture_admission(
+        &self,
+        config: &SessionConfig,
+        reason: BaselineReason,
+    ) -> Result<SessionAdmissionProfile, StoreError> {
+        let request = SessionAdmissionRequest::new(
+            config.workspace.clone(),
+            config.model,
+            config.context_window_tokens,
+            Channel::Stable,
+        );
+        let target = TargetProfile::new(
+            ModelIdentity::from_digest(Digest::of_value(&config.model)?),
+            ProtocolIdentity::from_digest(Digest::of(b"orvek:store-fixture-protocol:v1")),
+            EnvironmentIdentity::from_digest(Digest::of(b"orvek:store-fixture-environment:v1")),
+            TaskProfileIdentity::from_digest(Digest::of(b"orvek:store-fixture-tools:v1")),
+            Channel::Stable,
+        );
+        self.bind_baseline_session_request(
+            request,
+            target,
+            Digest::of(b"orvek:store-fixture-authority:v1"),
+            reason,
+        )
+    }
+
+    pub fn public_artifacts(&self) -> &ArtifactStore {
         &self.artifacts
     }
 
@@ -166,7 +266,7 @@ impl Store {
         let before = i64::try_from(before.unwrap_or(i64::MAX as u64))
             .map_err(|_| StoreError::Invalid("recent input cursor exceeds its bound"))?;
         let workspace = workspace.map(|path| path.to_string_lossy().into_owned());
-        let mut query = self.connection.prepare("SELECT e.aggregate,e.revision,e.sequence,e.event,e.hash,p.hash,c.event,c.hash FROM events e JOIN events p ON p.aggregate=e.aggregate AND p.kind='session' AND p.revision=e.revision-1 JOIN events c ON c.aggregate=e.aggregate AND c.kind='session' AND c.revision=1 WHERE e.kind='session' AND e.sequence<?1 AND json_extract(e.event,'$.type')='command' AND json_extract(e.event,'$.data.command.type')='input' AND json_extract(e.event,'$.data.command.data.kind') IN ('task','conversation') AND (?2 IS NULL OR json_extract(c.event,'$.data.config.workspace')=?2) ORDER BY e.sequence DESC LIMIT ?3")?;
+        let mut query = self.connection.prepare("SELECT e.aggregate,e.revision,e.sequence,e.event,e.hash,p.hash,c.event,c.hash FROM events e JOIN events p ON p.aggregate=e.aggregate AND p.kind='session' AND p.revision=e.revision-1 JOIN events c ON c.aggregate=e.aggregate AND c.kind='session' AND c.revision=1 WHERE e.kind='session' AND e.sequence<?1 AND json_extract(e.event,'$.type')='command' AND json_extract(e.event,'$.data.command.type')='input' AND json_extract(e.event,'$.data.command.data.kind') IN ('task','conversation') AND (?2 IS NULL OR COALESCE(json_extract(c.event,'$.data.admission.request.workspace'),json_extract(c.event,'$.data.config.workspace'))=?2) ORDER BY e.sequence DESC LIMIT ?3")?;
         let mut rows = query.query(params![before, workspace, limit as i64])?;
         let mut result = Vec::new();
         while let Some(row) = rows.next()? {
@@ -194,7 +294,10 @@ impl Store {
             {
                 return Err(StoreError::Integrity("session origin integrity"));
             }
-            let SessionEvent::Created { config, .. } = serde_json::from_slice(&created)? else {
+            let SessionEvent::Created {
+                config, admission, ..
+            } = serde_json::from_slice(&created)?
+            else {
                 return Err(StoreError::Integrity("session origin is not a creation"));
             };
             let SessionEvent::Command {
@@ -226,7 +329,9 @@ impl Store {
                 revision,
                 sequence,
                 at_ms,
-                workspace: config.workspace,
+                workspace: admission
+                    .as_ref()
+                    .map_or(config.workspace, |profile| profile.workspace().clone()),
                 text: text.chars().take(512).collect(),
                 truncated,
             });
@@ -240,7 +345,24 @@ impl Store {
         config: SessionConfig,
         parent: Option<SessionCursor>,
     ) -> Result<SessionState, StoreError> {
-        self.create_session_seeded(id, config, parent, None, false)
+        let profile = self.fixture_admission(&config, BaselineReason::StoreFixture)?;
+        self.create_session_seeded(id, config, profile, parent, None, false)
+    }
+
+    pub(crate) fn create_bound_session(
+        &mut self,
+        id: SessionId,
+        profile: SessionAdmissionProfile,
+        parent: Option<SessionCursor>,
+    ) -> Result<SessionState, StoreError> {
+        self.validate_session_profile(&profile)?;
+        let config = SessionConfig {
+            workspace: profile.workspace().clone(),
+            model: profile.model(),
+            instructions: String::new(),
+            context_window_tokens: profile.context_window_tokens(),
+        };
+        self.create_session_seeded(id, config, profile, parent, None, false)
     }
 
     pub fn create_handoff_session(
@@ -249,7 +371,11 @@ impl Store {
         parent: SessionCursor,
     ) -> Result<SessionState, StoreError> {
         let source = self.load_session_cursor(&parent)?;
-        self.create_session_seeded(id, source.config, Some(parent), None, true)
+        let profile = source
+            .admission
+            .clone()
+            .ok_or(StoreError::Invalid("source session is not admission-bound"))?;
+        self.create_session_seeded(id, source.config, profile, Some(parent), None, true)
     }
 
     pub fn create_imported_session(
@@ -261,13 +387,34 @@ impl Store {
     ) -> Result<SessionState, StoreError> {
         self.artifacts.read(source.manifest)?;
         self.artifacts.read(source.source_snapshot)?;
-        self.create_session_seeded(id, config, None, Some((source, history)), false)
+        let profile = self.fixture_admission(&config, BaselineReason::LegacyImport)?;
+        self.create_session_seeded(id, config, profile, None, Some((source, history)), false)
+    }
+
+    pub(crate) fn create_bound_imported_session(
+        &mut self,
+        id: SessionId,
+        profile: SessionAdmissionProfile,
+        source: crate::session::ImportedSource,
+        history: Vec<serde_json::Value>,
+    ) -> Result<SessionState, StoreError> {
+        self.validate_session_profile(&profile)?;
+        self.artifacts.read(source.manifest)?;
+        self.artifacts.read(source.source_snapshot)?;
+        let config = SessionConfig {
+            workspace: profile.workspace().clone(),
+            model: profile.model(),
+            instructions: String::new(),
+            context_window_tokens: profile.context_window_tokens(),
+        };
+        self.create_session_seeded(id, config, profile, None, Some((source, history)), false)
     }
 
     fn create_session_seeded(
         &mut self,
         id: SessionId,
         config: SessionConfig,
+        admission: SessionAdmissionProfile,
         parent: Option<SessionCursor>,
         seed: Option<(crate::session::ImportedSource, Vec<serde_json::Value>)>,
         fresh_context: bool,
@@ -280,6 +427,7 @@ impl Store {
         match self.load_session(id) {
             Ok(existing) => {
                 return if existing.initial_config == config
+                    && existing.admission.as_ref() == Some(&admission)
                     && existing.branch.fresh_context == fresh_context
                     && existing.parent == parent
                     && seed.as_ref().map_or(
@@ -324,6 +472,11 @@ impl Store {
                         "parent has an unresolved shell operation",
                     ));
                 }
+                if parent.admission.as_ref() != Some(&admission) {
+                    return Err(StoreError::Invalid(
+                        "child session admission differs from its parent",
+                    ));
+                }
                 (
                     if fresh_context {
                         Vec::new()
@@ -354,6 +507,7 @@ impl Store {
         let event = SessionEvent::Created {
             branch: branch.clone(),
             config: config.clone(),
+            admission: Some(Box::new(admission.clone())),
             parent: parent.clone(),
             history: history.clone(),
             at_ms,
@@ -365,7 +519,18 @@ impl Store {
                 "initial session context exceeds journal limit",
             ));
         }
-        let state = SessionState::create(id, config, parent, history, at_ms, imported, branch);
+        let state = SessionState::create(
+            id,
+            crate::session::SessionCreation {
+                branch,
+                config,
+                admission: Some(admission),
+                parent,
+                history,
+                started_ms: at_ms,
+                imported,
+            },
+        );
         let hash = aggregate_hash("session", id.0, 1, None, &bytes)?;
         let transaction = self
             .connection
@@ -390,11 +555,76 @@ impl Store {
         load_session_state(&self.connection, id, None).map(|(state, _)| state)
     }
 
+    pub(crate) fn unbound_session_ids(&self) -> Result<Vec<SessionId>, StoreError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id FROM sessions ORDER BY id")?;
+        let ids = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        ids.into_iter()
+            .map(|id| {
+                let id = id
+                    .parse::<SessionId>()
+                    .map_err(|_| StoreError::Integrity("invalid session identity"))?;
+                self.load_session(id)
+                    .map(|state| state.admission.is_none().then_some(id))
+            })
+            .filter_map(|result| match result {
+                Ok(Some(id)) => Some(Ok(id)),
+                Ok(None) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect()
+    }
+
+    pub(crate) fn pin_session_admission(
+        &mut self,
+        id: SessionId,
+        profile: SessionAdmissionProfile,
+    ) -> Result<SessionState, StoreError> {
+        self.validate_session_profile(&profile)?;
+        let state = self.load_session(id)?;
+        if let Some(existing) = &state.admission {
+            return if existing == &profile {
+                Ok(state)
+            } else {
+                Err(StoreError::Integrity(
+                    "session admission is already pinned differently",
+                ))
+            };
+        }
+        if state.config.workspace != *profile.workspace()
+            || state.config.model != profile.model()
+            || state.config.context_window_tokens != profile.context_window_tokens()
+        {
+            return Err(StoreError::Integrity(
+                "legacy session configuration differs from its admission",
+            ));
+        }
+        let legacy_config_digest = Digest::of_value(&state.config)?;
+        self.session_command(
+            id,
+            state.revision,
+            Uuid::new_v5(&id.0, b"orvek-admission-pin-v1"),
+            SessionCommand::AdmissionPinned {
+                profile: Box::new(profile),
+                legacy_config_digest,
+            },
+        )
+    }
+
     pub fn load_session_cursor(&self, cursor: &SessionCursor) -> Result<SessionState, StoreError> {
         if cursor.version != 1 {
             return Err(StoreError::Invalid("unsupported session cursor"));
         }
-        Ok(load_session_state(&self.connection, cursor.session, Some(cursor.revision))?.0)
+        let state = load_session_state(&self.connection, cursor.session, Some(cursor.revision))?.0;
+        if state.admission.is_none() {
+            return Err(StoreError::Invalid(
+                "session cursor predates trusted admission",
+            ));
+        }
+        Ok(state)
     }
 
     pub fn scoped_history(
@@ -815,6 +1045,7 @@ impl Store {
         }
         match &command {
             SessionCommand::Response { request, .. }
+            | SessionCommand::ProviderUsage { request, .. }
             | SessionCommand::WorkspaceSaved { request, .. }
             | SessionCommand::ToolResult { request, .. }
             | SessionCommand::TaskLinked { request, .. }
@@ -959,6 +1190,7 @@ impl Store {
         let mut statement = self.connection.prepare("SELECT sequence,aggregate,kind,revision,event,hash FROM events WHERE sequence>?1 ORDER BY sequence LIMIT ?2")?;
         let mut rows = statement.query(params![after, limit])?;
         let mut records = Vec::new();
+        let mut encoded_bytes = 0usize;
         while let Some(row) = rows.next()? {
             let aggregate: String = row.get(1)?;
             let kind: String = row.get(2)?;
@@ -992,13 +1224,24 @@ impl Store {
             {
                 return Err(StoreError::Integrity("journal event integrity"));
             }
-            records.push(JournalRecord {
+            let record = JournalRecord {
                 sequence: row.get::<_, i64>(0)? as u64,
                 aggregate,
                 kind,
                 revision,
                 event: serde_json::from_slice(&bytes)?,
-            });
+            };
+            let record_bytes = serde_json::to_vec(&record)?.len();
+            let separator = usize::from(!records.is_empty());
+            if encoded_bytes
+                .checked_add(separator)
+                .and_then(|bytes| bytes.checked_add(record_bytes))
+                .is_none_or(|bytes| bytes > MAX_JOURNAL_PAGE_BYTES)
+            {
+                break;
+            }
+            encoded_bytes += separator + record_bytes;
+            records.push(record);
         }
         Ok(records)
     }
@@ -1989,6 +2232,276 @@ impl Store {
     }
 }
 
+const EVOLUTION_SCHEMA_V2: &str = "
+CREATE TABLE harness_revisions(
+    digest TEXT PRIMARY KEY CHECK(length(digest)=64),
+    parent_digest TEXT NOT NULL CHECK(length(parent_digest)=64),
+    behavior_digest TEXT NOT NULL CHECK(length(behavior_digest)=64),
+    envelope_digest TEXT NOT NULL CHECK(length(envelope_digest)=64),
+    policy_id TEXT NOT NULL,
+    policy_digest TEXT NOT NULL CHECK(length(policy_digest)=64),
+    manifest BLOB NOT NULL,
+    created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0)
+) STRICT;
+CREATE TRIGGER harness_revisions_no_update BEFORE UPDATE ON harness_revisions
+BEGIN SELECT RAISE(ABORT,'harness revisions are immutable'); END;
+CREATE TRIGGER harness_revisions_no_delete BEFORE DELETE ON harness_revisions
+BEGIN SELECT RAISE(ABORT,'harness revisions are immutable'); END;
+
+CREATE TABLE harness_targets(
+    model_digest TEXT NOT NULL CHECK(length(model_digest)=64),
+    protocol_digest TEXT NOT NULL CHECK(length(protocol_digest)=64),
+    environment_digest TEXT NOT NULL CHECK(length(environment_digest)=64),
+    task_profile_digest TEXT NOT NULL CHECK(length(task_profile_digest)=64),
+    channel TEXT NOT NULL CHECK(channel IN ('canary','stable')),
+    baseline_revision TEXT NOT NULL REFERENCES harness_revisions(digest),
+    active_revision TEXT NOT NULL REFERENCES harness_revisions(digest),
+    updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms>=0),
+    PRIMARY KEY(model_digest,protocol_digest,environment_digest,task_profile_digest,channel)
+) STRICT;
+
+CREATE TABLE evaluation_cohorts(
+    id TEXT PRIMARY KEY,
+    model_digest TEXT NOT NULL,
+    protocol_digest TEXT NOT NULL,
+    environment_digest TEXT NOT NULL,
+    task_profile_digest TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    base_revision TEXT NOT NULL REFERENCES harness_revisions(digest),
+    evaluator_digest TEXT NOT NULL CHECK(length(evaluator_digest)=64),
+    policy_digest TEXT NOT NULL CHECK(length(policy_digest)=64),
+    mining_commitment TEXT NOT NULL CHECK(length(mining_commitment)=64),
+    adaptive_commitment TEXT NOT NULL CHECK(length(adaptive_commitment)=64),
+    final_commitment TEXT NOT NULL CHECK(length(final_commitment)=64),
+    block_manifest BLOB NOT NULL,
+    created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0),
+    FOREIGN KEY(model_digest,protocol_digest,environment_digest,task_profile_digest,channel)
+      REFERENCES harness_targets(model_digest,protocol_digest,environment_digest,task_profile_digest,channel),
+    CHECK(mining_commitment<>adaptive_commitment),
+    CHECK(mining_commitment<>final_commitment),
+    CHECK(adaptive_commitment<>final_commitment)
+) STRICT;
+CREATE TRIGGER evaluation_cohorts_no_update BEFORE UPDATE ON evaluation_cohorts
+BEGIN SELECT RAISE(ABORT,'evaluation cohorts are immutable'); END;
+CREATE TRIGGER evaluation_cohorts_no_delete BEFORE DELETE ON evaluation_cohorts
+BEGIN SELECT RAISE(ABORT,'evaluation cohorts are immutable'); END;
+
+CREATE TABLE cohort_ledgers(
+    cohort TEXT NOT NULL REFERENCES evaluation_cohorts(id),
+    role TEXT NOT NULL CHECK(role IN ('adaptive_promotion','final_audit')),
+    query_limit INTEGER NOT NULL CHECK(query_limit>0),
+    error_limit_nanos INTEGER NOT NULL CHECK(error_limit_nanos>0),
+    query_used INTEGER NOT NULL DEFAULT 0 CHECK(query_used>=0 AND query_used<=query_limit),
+    error_used_nanos INTEGER NOT NULL DEFAULT 0 CHECK(error_used_nanos>=0 AND error_used_nanos<=error_limit_nanos),
+    PRIMARY KEY(cohort,role)
+) STRICT;
+
+CREATE TABLE cohort_ledger_uses(
+    cohort TEXT NOT NULL,
+    role TEXT NOT NULL,
+    use_id TEXT NOT NULL CHECK(length(use_id)=64),
+    campaign TEXT NOT NULL,
+    queries INTEGER NOT NULL CHECK(queries>=0),
+    error_nanos INTEGER NOT NULL CHECK(error_nanos>=0),
+    created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0),
+    PRIMARY KEY(cohort,role,use_id),
+    FOREIGN KEY(cohort,role) REFERENCES cohort_ledgers(cohort,role),
+    CHECK(queries>0 OR error_nanos>0)
+) STRICT;
+
+CREATE TABLE audit_epochs(
+    cohort TEXT PRIMARY KEY REFERENCES evaluation_cohorts(id),
+    epoch TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK(status IN ('active','retired')),
+    created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0),
+    retired_at_ms INTEGER CHECK(retired_at_ms IS NULL OR retired_at_ms>=created_at_ms),
+    CHECK((status='active' AND retired_at_ms IS NULL) OR (status='retired' AND retired_at_ms IS NOT NULL))
+) STRICT;
+CREATE TRIGGER audit_epochs_identity_immutable BEFORE UPDATE OF cohort,epoch ON audit_epochs
+BEGIN SELECT RAISE(ABORT,'audit epoch identity is immutable'); END;
+CREATE TRIGGER audit_epochs_no_reopen BEFORE UPDATE OF status ON audit_epochs
+WHEN OLD.status='retired' OR NEW.status<>'retired'
+BEGIN SELECT RAISE(ABORT,'retired audit epochs cannot be reopened'); END;
+CREATE TRIGGER audit_epochs_no_delete BEFORE DELETE ON audit_epochs
+BEGIN SELECT RAISE(ABORT,'audit epochs cannot be replaced'); END;
+";
+
+const EVOLUTION_ARTIFACT_SCHEMA_V3: &str = "
+CREATE TABLE IF NOT EXISTS evolution_artifact_reservations(
+    id TEXT PRIMARY KEY,
+    cohort TEXT NOT NULL REFERENCES evaluation_cohorts(id),
+    purpose TEXT NOT NULL CHECK(purpose IN ('mining','adaptive_promotion','final_audit')),
+    max_bytes INTEGER NOT NULL CHECK(max_bytes>0),
+    staged_digest TEXT CHECK(staged_digest IS NULL OR length(staged_digest)=64),
+    staged_bytes INTEGER CHECK(staged_bytes IS NULL OR staged_bytes>=0),
+    created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0),
+    CHECK((staged_digest IS NULL AND staged_bytes IS NULL) OR
+          (staged_digest IS NOT NULL AND staged_bytes IS NOT NULL AND staged_bytes<=max_bytes))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS evolution_evidence(
+    digest TEXT NOT NULL CHECK(length(digest)=64),
+    cohort TEXT NOT NULL REFERENCES evaluation_cohorts(id),
+    purpose TEXT NOT NULL CHECK(purpose IN ('mining','adaptive_promotion','final_audit')),
+    bytes INTEGER NOT NULL CHECK(bytes>=0),
+    created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0),
+    PRIMARY KEY(digest,cohort,purpose)
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS evolution_evidence_no_update BEFORE UPDATE ON evolution_evidence
+BEGIN SELECT RAISE(ABORT,'evolution evidence is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS evolution_evidence_no_delete BEFORE DELETE ON evolution_evidence
+BEGIN SELECT RAISE(ABORT,'evolution evidence is immutable'); END;
+";
+
+const EVOLUTION_CAMPAIGN_SCHEMA_V5: &str = "
+CREATE TABLE harness_target_revisions(
+    model_digest TEXT NOT NULL,
+    protocol_digest TEXT NOT NULL,
+    environment_digest TEXT NOT NULL,
+    task_profile_digest TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    revision TEXT NOT NULL REFERENCES harness_revisions(digest),
+    bound_at_ms INTEGER NOT NULL CHECK(bound_at_ms>=0),
+    PRIMARY KEY(
+        model_digest,protocol_digest,environment_digest,task_profile_digest,channel,revision
+    ),
+    FOREIGN KEY(model_digest,protocol_digest,environment_digest,task_profile_digest,channel)
+      REFERENCES harness_targets(model_digest,protocol_digest,environment_digest,task_profile_digest,channel)
+) STRICT;
+CREATE INDEX harness_target_revisions_by_revision ON harness_target_revisions(revision);
+CREATE TRIGGER harness_target_revisions_no_update BEFORE UPDATE ON harness_target_revisions
+BEGIN SELECT RAISE(ABORT,'target revision bindings are immutable'); END;
+CREATE TRIGGER harness_target_revisions_no_delete BEFORE DELETE ON harness_target_revisions
+BEGIN SELECT RAISE(ABORT,'target revision bindings are immutable'); END;
+
+CREATE TABLE campaigns(
+    id TEXT PRIMARY KEY,
+    cohort TEXT NOT NULL REFERENCES evaluation_cohorts(id),
+    revision INTEGER NOT NULL CHECK(revision>0),
+    state BLOB NOT NULL,
+    head TEXT NOT NULL CHECK(length(head)=64)
+) STRICT;
+CREATE INDEX campaigns_by_cohort ON campaigns(cohort,id);
+";
+
+const EVOLUTION_SCORING_SCHEMA_V6: &str = "
+ALTER TABLE evaluation_cohorts ADD COLUMN cohort_spec BLOB;
+ALTER TABLE evaluation_cohorts ADD COLUMN cohort_spec_digest TEXT
+    CHECK(cohort_spec_digest IS NULL OR length(cohort_spec_digest)=64);
+
+CREATE TABLE adaptive_score_reports(
+    result_id TEXT PRIMARY KEY CHECK(length(result_id)=64),
+    cohort TEXT NOT NULL REFERENCES evaluation_cohorts(id),
+    campaign TEXT NOT NULL REFERENCES campaigns(id),
+    round TEXT NOT NULL CHECK(length(round)=64),
+    candidate TEXT NOT NULL CHECK(length(candidate)=64),
+    coordinate_candidate INTEGER NOT NULL CHECK(coordinate_candidate>=0),
+    coordinate_round INTEGER NOT NULL CHECK(coordinate_round>=0),
+    coordinate_composite INTEGER NOT NULL CHECK(coordinate_composite>=0),
+    coordinate_fallback INTEGER NOT NULL CHECK(coordinate_fallback>=0),
+    coordinate_campaign INTEGER NOT NULL CHECK(coordinate_campaign>=0),
+    coordinate_activation_attempt INTEGER NOT NULL CHECK(coordinate_activation_attempt>=0),
+    policy_digest TEXT NOT NULL CHECK(length(policy_digest)=64),
+    evidence_root TEXT NOT NULL CHECK(length(evidence_root)=64),
+    report BLOB NOT NULL,
+    created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0),
+    UNIQUE(campaign,round,candidate),
+    UNIQUE(
+        cohort,coordinate_candidate,coordinate_round,coordinate_composite,
+        coordinate_fallback,coordinate_campaign,coordinate_activation_attempt
+    )
+) STRICT;
+CREATE INDEX adaptive_score_reports_by_campaign
+    ON adaptive_score_reports(campaign,round,candidate);
+CREATE TRIGGER adaptive_score_reports_no_update BEFORE UPDATE ON adaptive_score_reports
+BEGIN SELECT RAISE(ABORT,'adaptive score reports are immutable'); END;
+CREATE TRIGGER adaptive_score_reports_no_delete BEFORE DELETE ON adaptive_score_reports
+BEGIN SELECT RAISE(ABORT,'adaptive score reports are immutable'); END;
+";
+
+fn initialize_schema(connection: &Connection) -> Result<(), StoreError> {
+    connection.execute_batch(&format!(
+        "BEGIN IMMEDIATE;
+         CREATE TABLE tasks(id TEXT PRIMARY KEY, revision INTEGER NOT NULL, state BLOB NOT NULL, head TEXT NOT NULL) STRICT;
+         CREATE TABLE events(sequence INTEGER PRIMARY KEY AUTOINCREMENT, aggregate TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('task','session','campaign')), revision INTEGER NOT NULL, event BLOB NOT NULL, hash TEXT NOT NULL, UNIQUE(aggregate,kind,revision)) STRICT;
+         CREATE TABLE sessions(id TEXT PRIMARY KEY, revision INTEGER NOT NULL, state BLOB NOT NULL, head TEXT NOT NULL) STRICT;
+         CREATE TABLE leases(task TEXT NOT NULL REFERENCES tasks(id), job TEXT NOT NULL, token_digest TEXT NOT NULL, PRIMARY KEY(task,job)) STRICT;
+         {EVOLUTION_SCHEMA_V2}
+         {EVOLUTION_ARTIFACT_SCHEMA_V3}
+         {EVOLUTION_CAMPAIGN_SCHEMA_V5}
+         {EVOLUTION_SCORING_SCHEMA_V6}
+         PRAGMA user_version=6;
+         COMMIT;"
+    ))?;
+    Ok(())
+}
+
+fn migrate_v1_to_v2(connection: &Connection) -> Result<(), StoreError> {
+    connection.execute_batch(&format!(
+        "BEGIN IMMEDIATE;
+         ALTER TABLE events RENAME TO events_v1;
+         CREATE TABLE events(sequence INTEGER PRIMARY KEY AUTOINCREMENT, aggregate TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('task','session','campaign')), revision INTEGER NOT NULL, event BLOB NOT NULL, hash TEXT NOT NULL, UNIQUE(aggregate,kind,revision)) STRICT;
+         INSERT INTO events(sequence,aggregate,kind,revision,event,hash)
+           SELECT sequence,aggregate,kind,revision,event,hash FROM events_v1 ORDER BY sequence;
+         DROP TABLE events_v1;
+         {EVOLUTION_SCHEMA_V2}
+         PRAGMA user_version=2;
+         COMMIT;"
+    ))?;
+    Ok(())
+}
+
+fn migrate_v2_to_v3(connection: &Connection) -> Result<(), StoreError> {
+    connection.execute_batch(&format!(
+        "BEGIN IMMEDIATE;
+         {EVOLUTION_ARTIFACT_SCHEMA_V3}
+         PRAGMA user_version=3;
+         COMMIT;"
+    ))?;
+    Ok(())
+}
+
+fn migrate_v3_to_v4(connection: &Connection) -> Result<(), StoreError> {
+    connection.execute_batch(
+        "BEGIN IMMEDIATE;
+         PRAGMA user_version=4;
+         COMMIT;",
+    )?;
+    Ok(())
+}
+
+fn migrate_v4_to_v5(connection: &Connection) -> Result<(), StoreError> {
+    connection.execute_batch(&format!(
+        "BEGIN IMMEDIATE;
+         {EVOLUTION_CAMPAIGN_SCHEMA_V5}
+         INSERT OR IGNORE INTO harness_target_revisions(
+            model_digest,protocol_digest,environment_digest,task_profile_digest,channel,
+            revision,bound_at_ms
+         ) SELECT model_digest,protocol_digest,environment_digest,task_profile_digest,channel,
+                  baseline_revision,updated_at_ms
+             FROM harness_targets;
+         INSERT OR IGNORE INTO harness_target_revisions(
+            model_digest,protocol_digest,environment_digest,task_profile_digest,channel,
+            revision,bound_at_ms
+         ) SELECT model_digest,protocol_digest,environment_digest,task_profile_digest,channel,
+                  active_revision,updated_at_ms
+             FROM harness_targets;
+         PRAGMA user_version=5;
+         COMMIT;"
+    ))?;
+    Ok(())
+}
+
+fn migrate_v5_to_v6(connection: &Connection) -> Result<(), StoreError> {
+    connection.execute_batch(&format!(
+        "BEGIN IMMEDIATE;
+         {EVOLUTION_SCORING_SCHEMA_V6}
+         PRAGMA user_version=6;
+         COMMIT;"
+    ))?;
+    Ok(())
+}
+
 fn append_session_command(
     transaction: &Transaction<'_>,
     state: &mut SessionState,
@@ -2459,6 +2972,7 @@ fn load_session_state(
                 SessionEvent::Created {
                     branch,
                     config,
+                    admission,
                     parent,
                     history,
                     at_ms,
@@ -2467,12 +2981,15 @@ fn load_session_state(
             ) => {
                 state = Some(SessionState::create(
                     id,
-                    config,
-                    parent,
-                    history,
-                    at_ms,
-                    imported.map(|imported| *imported),
-                    branch,
+                    crate::session::SessionCreation {
+                        branch,
+                        config,
+                        admission: admission.map(|profile| *profile),
+                        parent,
+                        history,
+                        started_ms: at_ms,
+                        imported: imported.map(|imported| *imported),
+                    },
                 ))
             }
             (
@@ -2505,4 +3022,167 @@ pub fn now_ms() -> u64 {
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod admission_store_tests {
+    use super::*;
+    use crate::{
+        HarnessBinding, HarnessProvenance, PolicyIdentity, ValidatedHarnessRevision,
+        inference::ModelSettings,
+        session::{SessionBranch, SessionCreation},
+    };
+
+    fn config(workspace: &Path) -> SessionConfig {
+        SessionConfig {
+            workspace: workspace.to_owned(),
+            model: ModelSettings::default(),
+            instructions: "legacy forensic instructions".into(),
+            context_window_tokens: crate::context::DEFAULT_WINDOW_TOKENS,
+        }
+    }
+
+    fn target(model: ModelSettings, namespace: &[u8]) -> TargetProfile {
+        TargetProfile::new(
+            ModelIdentity::from_digest(Digest::of_value(&model).unwrap()),
+            ProtocolIdentity::from_digest(Digest::of(&[namespace, b":protocol"].concat())),
+            EnvironmentIdentity::from_digest(Digest::of(&[namespace, b":environment"].concat())),
+            TaskProfileIdentity::from_digest(Digest::of(&[namespace, b":task"].concat())),
+            Channel::Stable,
+        )
+    }
+
+    #[test]
+    fn registered_admission_requires_an_immutable_target_revision_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let mut store = Store::open(root.path()).unwrap();
+        let model = ModelSettings::default();
+        let registered = target(model, b"registered");
+        let registered_binding = store.register_supported_target(registered).unwrap();
+        let request = SessionAdmissionRequest::new(
+            workspace.path().to_owned(),
+            model,
+            crate::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        );
+        let profile = store
+            .bind_session_request(
+                request.clone(),
+                registered,
+                Digest::of(b"registered authority"),
+                BaselineReason::UnregisteredTarget,
+            )
+            .unwrap();
+        store.validate_session_profile(&profile).unwrap();
+
+        let revision = ValidatedHarnessRevision::compiled_baseline().unwrap();
+        let unregistered = target(model, b"unregistered");
+        let forged_binding = HarnessBinding::registered(
+            unregistered,
+            revision.digest(),
+            revision.behavior_digest(),
+            revision.envelope_digest(),
+            PolicyIdentity::from_digest(Digest::of(revision.policy_id().as_bytes())),
+        );
+        assert_eq!(forged_binding.revision(), registered_binding.revision());
+        let forged = SessionAdmissionProfile::new(
+            request,
+            forged_binding,
+            HarnessProvenance::Registered,
+            Digest::of(b"forged authority"),
+            &revision,
+        )
+        .unwrap();
+        forged.validate().unwrap();
+
+        assert!(matches!(
+            store.validate_session_profile(&forged),
+            Err(StoreError::Integrity(
+                "session admission revision is not registered for its target"
+            ))
+        ));
+    }
+
+    #[test]
+    fn legacy_pin_is_durable_and_pre_pin_cursors_stay_untrusted() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let mut store = Store::open(root.path()).unwrap();
+        let id = SessionId::new();
+        let config = config(workspace.path());
+        let at_ms = now_ms();
+        let event = SessionEvent::Created {
+            branch: SessionBranch::default(),
+            config: config.clone(),
+            admission: None,
+            parent: None,
+            history: Vec::new(),
+            at_ms,
+            imported: None,
+        };
+        let bytes = serde_json::to_vec(&event).unwrap();
+        let head = aggregate_hash("session", id.0, 1, None, &bytes).unwrap();
+        let state = SessionState::create(
+            id,
+            SessionCreation {
+                branch: SessionBranch::default(),
+                config: config.clone(),
+                admission: None,
+                parent: None,
+                history: Vec::new(),
+                started_ms: at_ms,
+                imported: None,
+            },
+        );
+        store
+            .connection
+            .execute(
+                "INSERT INTO events(aggregate,kind,revision,event,hash)
+                 VALUES (?1,'session',1,?2,?3)",
+                params![id.to_string(), bytes, head.to_string()],
+            )
+            .unwrap();
+        store
+            .connection
+            .execute(
+                "INSERT INTO sessions(id,revision,state,head) VALUES (?1,1,?2,?3)",
+                params![
+                    id.to_string(),
+                    serde_json::to_vec(&state).unwrap(),
+                    head.to_string()
+                ],
+            )
+            .unwrap();
+
+        let before_pin = SessionCursor {
+            version: 1,
+            session: id,
+            revision: 1,
+        };
+        assert!(matches!(
+            store.load_session_cursor(&before_pin),
+            Err(StoreError::Invalid(
+                "session cursor predates trusted admission"
+            ))
+        ));
+
+        let profile = store
+            .fixture_admission(&config, BaselineReason::UnregisteredTarget)
+            .unwrap();
+        let pinned = store.pin_session_admission(id, profile.clone()).unwrap();
+        assert_eq!(pinned.revision, 2);
+        assert_eq!(pinned.admission(), Some(&profile));
+        assert!(store.load_session_cursor(&before_pin).is_err());
+        assert_eq!(
+            store.load_session_cursor(&pinned.fork_cursor()).unwrap(),
+            pinned
+        );
+        drop(store);
+
+        let mut reopened = Store::open(root.path()).unwrap();
+        assert_eq!(reopened.load_session(id).unwrap(), pinned);
+        assert_eq!(reopened.pin_session_admission(id, profile).unwrap(), pinned);
+        assert!(reopened.load_session_cursor(&before_pin).is_err());
+    }
 }

@@ -21,7 +21,7 @@ pub(super) fn render(source: &str, width: u16, theme: &Theme) -> Vec<Line<'stati
         if !rendered.is_empty() {
             rendered.push(Line::default());
         }
-        render_file(&mut rendered, &file, width, theme, syntax_theme);
+        render_file(&mut rendered, &file, width, theme, &syntax_theme);
     }
     rendered
 }

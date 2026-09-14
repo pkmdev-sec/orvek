@@ -1,15 +1,15 @@
 #![cfg(unix)]
+use orvek_harness::{
+    Digest, Store,
+    artifacts::{ArtifactError, ArtifactStore, PublicArtifactRef},
+    delivery::{DeliveryError, PatchArtifact, PatchBuilder, PatchLimits},
+    workspace::{Snapshot, SnapshotPolicy},
+};
 use std::{
     fs,
     os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
     time::Duration,
-};
-use orvek_harness::{
-    Digest,
-    artifacts::{ArtifactError, ArtifactStore},
-    delivery::{DeliveryError, PatchArtifact, PatchBuilder, PatchLimits},
-    workspace::{Snapshot, SnapshotPolicy},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -30,8 +30,10 @@ impl Fixture {
             fs::create_dir(path).unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
         }
-        let artifacts =
-            ArtifactStore::open(&directory.path().join("artifacts"), 64 * 1024 * 1024).unwrap();
+        let artifacts = Store::open_with_artifact_limit(directory.path(), 64 * 1024 * 1024)
+            .unwrap()
+            .public_artifacts()
+            .clone();
         Self {
             _directory: directory,
             base,
@@ -73,7 +75,11 @@ fn dump_error(error: &DeliveryError, store: &ArtifactStore) {
     if let DeliveryError::GitFailed { stderr, .. } = error {
         eprintln!(
             "Git diagnostics: {}",
-            String::from_utf8_lossy(&store.read(*stderr).unwrap())
+            String::from_utf8_lossy(
+                &store
+                    .resolve(PublicArtifactRef::from_digest(*stderr))
+                    .unwrap(),
+            )
         );
     }
 }
@@ -116,7 +122,13 @@ async fn text_add_delete_and_executable_changes_round_trip_without_touching_sour
         candidate.publish(&fixture.artifacts).unwrap()
     );
     assert_eq!(built.receipt.applied_snapshot, built.candidate);
-    let patch = String::from_utf8(fixture.artifacts.read(built.patch).unwrap()).unwrap();
+    let patch = String::from_utf8(
+        fixture
+            .artifacts
+            .resolve(PublicArtifactRef::from_digest(built.patch))
+            .unwrap(),
+    )
+    .unwrap();
     assert!(patch.contains("-before"));
     assert!(patch.contains("+after"));
     assert!(patch.contains("new file mode 100644"));
@@ -142,7 +154,12 @@ async fn text_add_delete_and_executable_changes_round_trip_without_touching_sour
         fs::read(fixture.base.join(".git/index")).unwrap(),
         b"original index sentinel"
     );
-    assert!(fixture.artifacts.read(built.receipt_digest).is_ok());
+    assert!(
+        fixture
+            .artifacts
+            .resolve(PublicArtifactRef::from_digest(built.receipt_digest))
+            .is_ok()
+    );
     assert_eq!(fs::read_dir(&fixture.scratch).unwrap().count(), 0);
 }
 
@@ -172,7 +189,10 @@ async fn binary_and_quoted_paths_produce_real_apply_compatible_patches() {
         .await
         .inspect_err(|error| dump_error(error, &fixture.artifacts))
         .unwrap();
-    let bytes = fixture.artifacts.read(built.patch).unwrap();
+    let bytes = fixture
+        .artifacts
+        .resolve(PublicArtifactRef::from_digest(built.patch))
+        .unwrap();
     assert!(String::from_utf8_lossy(&bytes).contains("GIT binary patch"));
     assert!(String::from_utf8_lossy(&bytes).contains("\\n"));
     let (base, candidate) = fixture.snapshots();
@@ -206,7 +226,13 @@ async fn symlinks_and_nested_directory_additions_round_trip() {
         .unwrap();
     assert_eq!(built.receipt.applied_snapshot, built.candidate);
     assert!(
-        String::from_utf8_lossy(&fixture.artifacts.read(built.patch).unwrap()).contains("120000")
+        String::from_utf8_lossy(
+            &fixture
+                .artifacts
+                .resolve(PublicArtifactRef::from_digest(built.patch))
+                .unwrap(),
+        )
+        .contains("120000")
     );
 }
 
@@ -238,7 +264,13 @@ async fn unchanged_empty_directories_are_preserved_but_changed_empty_directories
         .await
         .inspect_err(|error| dump_error(error, &fixture.artifacts))
         .unwrap();
-    assert!(fixture.artifacts.read(unchanged.patch).unwrap().is_empty());
+    assert!(
+        fixture
+            .artifacts
+            .resolve(PublicArtifactRef::from_digest(unchanged.patch))
+            .unwrap()
+            .is_empty()
+    );
     fs::create_dir(fixture.candidate.join("new-empty")).unwrap();
     fs::set_permissions(
         fixture.candidate.join("new-empty"),
@@ -292,8 +324,9 @@ async fn a_different_valid_patch_cannot_receive_a_receipt_for_the_requested_cand
     let (base, mut wrong_candidate) = fixture.snapshots();
     let content = fixture
         .artifacts
-        .put(b"not the requested output\n")
-        .unwrap();
+        .write(b"not the requested output\n")
+        .unwrap()
+        .digest();
     wrong_candidate.entries.insert(
         "file".into(),
         orvek_harness::workspace::Entry::File {
@@ -315,7 +348,15 @@ async fn a_different_valid_patch_cannot_receive_a_receipt_for_the_requested_cand
             .await,
         Err(DeliveryError::ReproductionMismatch(_))
     ));
-    fs::write(fixture.artifacts.path(built.patch), b"tampered patch").unwrap();
+    fs::write(
+        fixture
+            ._directory
+            .path()
+            .join("artifacts")
+            .join(built.patch.to_string()),
+        b"tampered patch",
+    )
+    .unwrap();
     assert!(matches!(
         PatchBuilder::new(PatchLimits::default())
             .unwrap()
@@ -339,7 +380,7 @@ async fn malformed_patch_and_tampered_source_artifact_never_get_success_receipts
     file(&fixture.candidate, "file", b"after", 0o644);
     let (base, candidate) = fixture.snapshots();
     let builder = PatchBuilder::new(PatchLimits::default()).unwrap();
-    let invalid = fixture.artifacts.put(b"not a patch\n").unwrap();
+    let invalid = fixture.artifacts.write(b"not a patch\n").unwrap().digest();
     assert!(matches!(
         builder
             .verify_patch(
@@ -354,7 +395,15 @@ async fn malformed_patch_and_tampered_source_artifact_never_get_success_receipts
         Err(DeliveryError::GitFailed { .. })
     ));
     let content = Digest::of(b"before");
-    fs::write(fixture.artifacts.path(content), b"corrupt").unwrap();
+    fs::write(
+        fixture
+            ._directory
+            .path()
+            .join("artifacts")
+            .join(content.to_string()),
+        b"corrupt",
+    )
+    .unwrap();
     assert!(matches!(
         builder
             .build(
@@ -526,8 +575,9 @@ async fn nonempty_garbage_is_not_accepted_as_an_empty_patch_on_identical_snapsho
     let (base, candidate) = fixture.snapshots();
     let garbage = fixture
         .artifacts
-        .put(b"arbitrary output is not a patch\n")
-        .unwrap();
+        .write(b"arbitrary output is not a patch\n")
+        .unwrap()
+        .digest();
     let result = PatchBuilder::new(PatchLimits::default())
         .unwrap()
         .verify_patch(
@@ -555,7 +605,7 @@ async fn excluded_paths_cannot_hide_extra_patch_effects() {
         let patch = format!(
             "diff --git a/{name} b/{name}\nnew file mode 100644\n--- /dev/null\n+++ b/{name}\n@@ -0,0 +1 @@\n+hidden effect\n"
         );
-        let digest = fixture.artifacts.put(patch.as_bytes()).unwrap();
+        let digest = fixture.artifacts.write(patch.as_bytes()).unwrap().digest();
         let result = PatchBuilder::new(PatchLimits::default())
             .unwrap()
             .verify_patch(
@@ -584,7 +634,7 @@ async fn escaping_patch_paths_cannot_modify_the_original_source() {
     let patch = format!(
         "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-safe\n+overwritten\n"
     );
-    let digest = fixture.artifacts.put(patch.as_bytes()).unwrap();
+    let digest = fixture.artifacts.write(patch.as_bytes()).unwrap().digest();
     let result = PatchBuilder::new(PatchLimits::default())
         .unwrap()
         .verify_patch(

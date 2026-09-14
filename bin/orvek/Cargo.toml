@@ -38,7 +38,7 @@ image.workspace = true
 jsonschema.workspace = true
 miette.workspace = true
 minisign-verify.workspace = true
-nanocodex.workspace = true
+orvek-harness.workspace = true
 png.workspace = true
 pulldown-cmark.workspace = true
 ratatui.workspace = true
@@ -57,8 +57,6 @@ shlex.workspace = true
 syntect.workspace = true
 tar.workspace = true
 orvek-memory = { workspace = true, features = ["client", "local", "native-server", "tool"] }
-orvek-harness.workspace = true
-orvek-subagents.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -68,6 +66,7 @@ toml_edit.workspace = true
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
 url.workspace = true
+uuid.workspace = true
 zeroize.workspace = true
 zstd.workspace = true
 
@@ -86,3 +85,6 @@ harbor-evals = []
 name = "tui"
 path = "src/tui/bench.rs"
 harness = false
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["fs", "process"] }

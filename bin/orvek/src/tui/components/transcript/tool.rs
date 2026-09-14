@@ -336,7 +336,6 @@ fn summary_lines(
     }
 
     if matches!(presentation.summary_overflow, SummaryOverflow::Truncate) {
-        const PREFIX_WIDTH: u16 = 6;
         let title_span_count = prefix.len() + usize::from(!content.is_empty());
         let leading = prefix.into_iter().chain(content).collect::<Vec<_>>();
         let full_summary = leading
@@ -351,44 +350,18 @@ fn summary_lines(
         }
 
         let suffix = outcome_spans
-            .iter()
-            .chain(&duration_spans)
-            .cloned()
+            .into_iter()
+            .chain(duration_spans)
             .collect::<Vec<_>>();
         let suffix_width = spans_width(&suffix);
         let minimum_leading_width =
             spans_width(&leading[..title_span_count]).saturating_add(TRUNCATION_MARKER_WIDTH);
         if suffix_width >= width || width - suffix_width < minimum_leading_width {
-            let mut lines = vec![truncate_spans_with_ellipsis(
-                &leading
-                    .iter()
-                    .chain(&outcome_spans)
-                    .chain(&duration_spans)
-                    .cloned()
-                    .collect::<Vec<_>>(),
+            return vec![truncate_spans_with_ellipsis(
+                &full_summary,
                 width,
                 Style::default().fg(theme.muted()),
             )];
-            if tool.state == ToolState::Failed && !error_spans.is_empty() {
-                let error_spans = error_spans
-                    .iter()
-                    .flat_map(|span| {
-                        span.content
-                            .split('\n')
-                            .filter(|line| !line.is_empty())
-                            .map(|line| Span::styled(line.to_owned(), span.style))
-                    })
-                    .collect::<Vec<_>>();
-                let error_width = width.saturating_sub(PREFIX_WIDTH);
-                let mut error = truncate_spans_with_ellipsis(
-                    &error_spans,
-                    error_width,
-                    Style::default().fg(theme.muted()),
-                );
-                error.spans.splice(0..0, [Span::raw(" ".repeat(6))]);
-                lines.push(error);
-            }
-            return lines;
         }
 
         let leading_width = width - suffix_width;
@@ -398,18 +371,7 @@ fn summary_lines(
             Style::default().fg(theme.muted()),
         );
         line.spans.extend(suffix);
-        let mut lines = vec![line];
-        if tool.state == ToolState::Failed && !error_spans.is_empty() {
-            let error_width = width.saturating_sub(PREFIX_WIDTH);
-            let mut error = truncate_spans_with_ellipsis(
-                &error_spans,
-                error_width,
-                Style::default().fg(theme.muted()),
-            );
-            error.spans.splice(0..0, [Span::raw(" ".repeat(6))]);
-            lines.push(error);
-        }
-        return lines;
+        return vec![line];
     }
 
     content.extend(outcome_spans);
@@ -678,6 +640,10 @@ fn truncate(text: &str, width: u16) -> String {
 
 fn status_symbol(state: ToolState) -> &'static str {
     match state {
+        ToolState::Proposed => "◇",
+        ToolState::Received => "·",
+        ToolState::Unknown => "?",
+        ToolState::Cancelled | ToolState::Fenced => "□",
         ToolState::Running => "◌",
         ToolState::Succeeded => "✓",
         ToolState::Failed => "×",
@@ -686,6 +652,10 @@ fn status_symbol(state: ToolState) -> &'static str {
 
 fn status_style(state: ToolState, theme: &Theme) -> Style {
     let color = match state {
+        ToolState::Proposed | ToolState::Received | ToolState::Cancelled | ToolState::Fenced => {
+            theme.muted()
+        }
+        ToolState::Unknown => theme.thinking_high(),
         ToolState::Running => theme.accent(),
         ToolState::Succeeded => Color::Green,
         ToolState::Failed => theme.thinking_xhigh(),
@@ -887,27 +857,6 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert!(lines[0].to_string().contains("compilation failed"));
         assert!(!lines[0].to_string().contains("more diagnostics"));
-    }
-
-    #[test]
-    fn collapsed_failure_moves_a_bounded_error_excerpt_below_a_full_summary() {
-        let mut shell = tool(
-            "exec_command",
-            json!({"cmd": "cargo test --workspace --all-targets --no-fail-fast"}),
-        );
-        shell.state = ToolState::Failed;
-        shell.result = Some(json!({
-            "output": "the linker failed because a required symbol was unavailable and more detail follows",
-            "exit_code": 101,
-        }));
-
-        let lines = render(&shell, 31, &Theme::default());
-
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].to_string().contains("Shell"));
-        assert!(lines[0].to_string().contains("exit 101"));
-        assert!(lines[1].to_string().contains("the linker failed"));
-        assert!(lines.iter().all(|line| line.width() <= 31));
     }
 
     #[test]

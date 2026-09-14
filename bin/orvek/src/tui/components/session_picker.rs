@@ -4,25 +4,18 @@ use super::{
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
 };
-use crate::{
-    app::config::ReasoningMode,
-    sessions::checkpoint::SessionSummary,
-    tui::{
-        format::{format_age, sanitize_terminal_text_inline, truncate_display, wrap_display_lines},
-        theme::Theme,
-    },
+use crate::tui::{
+    session::{SessionSummary, format_age},
+    theme::Theme,
 };
-use crossterm::event::{
-    Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     Frame,
-    layout::{Position, Rect},
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{List, ListItem, ListState, Paragraph},
 };
-use std::time::{Duration, Instant};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -55,9 +48,6 @@ pub(super) struct SessionPicker {
     matches: Vec<usize>,
     selected: usize,
     mode: SessionPickerMode,
-    list_area: Rect,
-    offset: usize,
-    last_click: Option<(usize, Instant)>,
 }
 
 impl SessionPicker {
@@ -69,9 +59,6 @@ impl SessionPicker {
             matches,
             selected: 0,
             mode,
-            list_area: Rect::default(),
-            offset: 0,
-            last_click: None,
         }
     }
 
@@ -82,7 +69,6 @@ impl SessionPicker {
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             return ComponentUpdate::none();
         }
-        self.last_click = None;
         match key.code {
             KeyCode::Esc => Self::effect(SessionPickerEffect::Dismiss),
             KeyCode::Backspace if !self.query.is_empty() => {
@@ -153,9 +139,6 @@ impl SessionPicker {
             .map(|(index, _)| index)
             .collect();
         self.selected = 0;
-        self.offset = 0;
-        self.last_click = None;
-        self.list_area = Rect::default();
     }
 
     fn render_search(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
@@ -177,64 +160,14 @@ impl SessionPicker {
         );
     }
 
-    fn update_mouse(
-        &mut self,
-        mouse: MouseEvent,
-        now: Instant,
-    ) -> ComponentUpdate<SessionPickerEffect> {
-        if !self
-            .list_area
-            .contains(Position::new(mouse.column, mouse.row))
-        {
-            self.last_click = None;
-            return ComponentUpdate::none();
-        }
-        match mouse.kind {
-            MouseEventKind::ScrollUp => {
-                self.last_click = None;
-                self.selected = self.selected.saturating_sub(1);
-            }
-            MouseEventKind::ScrollDown => {
-                self.last_click = None;
-                self.selected = (self.selected + 1).min(self.matches.len().saturating_sub(1));
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                let index = self.offset + usize::from((mouse.row - self.list_area.y) / 2);
-                if index >= self.matches.len() {
-                    return ComponentUpdate::none();
-                }
-                let confirm = self.last_click.is_some_and(|(previous, time)| {
-                    previous == index
-                        && now.saturating_duration_since(time) <= Duration::from_millis(500)
-                });
-                self.selected = index;
-                self.last_click = Some((index, now));
-                if confirm {
-                    self.last_click = None;
-                    return self.select();
-                }
-            }
-            _ => return ComponentUpdate::none(),
-        }
-        ComponentUpdate::render(RenderRequest::Immediate)
-    }
-
-    fn render_sessions(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        self.list_area = Rect {
-            height: area.height / 2 * 2,
-            ..area
-        };
+    fn render_sessions(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         if area.is_empty() {
             return;
         }
         if self.matches.is_empty() {
-            let message = if !self.sessions.is_empty() {
-                "  No matching sessions"
-            } else {
-                match self.mode {
-                    SessionPickerMode::Resume => "  No resumable sessions found",
-                    SessionPickerMode::Mention => "  No other sessions found",
-                }
+            let message = match self.mode {
+                SessionPickerMode::Resume => "  No resumable sessions found",
+                SessionPickerMode::Mention => "  No other sessions found",
             };
             frame.render_widget(
                 Paragraph::new(message).style(Style::default().fg(theme.muted())),
@@ -242,95 +175,42 @@ impl SessionPicker {
             );
             return;
         }
-        let capacity = usize::from(self.list_area.height / 2);
-        if capacity == 0 {
-            return;
-        }
-        self.offset = self
-            .offset
-            .min(self.matches.len().saturating_sub(capacity))
-            .min(self.selected);
-        if self.selected >= self.offset + capacity {
-            self.offset = self.selected + 1 - capacity;
-        }
-        let width = usize::from(area.width).saturating_sub(4);
-        for (row, index) in self
-            .matches
-            .iter()
-            .skip(self.offset)
-            .take(capacity)
-            .enumerate()
-        {
+        let items = self.matches.iter().map(|index| {
             let session = &self.sessions[*index];
-            let selected = row + self.offset == self.selected;
-            let preview = sanitize_terminal_text_inline(&session.preview);
-            let preview = if preview.trim().is_empty() {
-                "No preview available"
-            } else {
-                &preview
-            };
-            let age = truncate_display(&format_age(session.started_at_unix_ms), width.min(7));
-            let title = truncate_display(preview, width.saturating_sub(age.width() + 2));
-            let padding = width.saturating_sub(title.width() + age.width());
-            let style = Style::default()
-                .fg(if selected {
-                    theme.accent()
-                } else {
-                    theme.text()
-                })
-                .add_modifier(Modifier::BOLD);
-            let y = area.y + row as u16 * 2;
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(if selected { "› " } else { "  " }, style),
-                    Span::styled(title, style),
-                    Span::raw(" ".repeat(padding)),
-                    Span::styled(age, Style::default().fg(theme.muted())),
-                ])),
-                Rect::new(area.x, y, area.width, 1),
+            let title = format!(
+                "{} · {}",
+                format_age(session.started_at_unix_ms),
+                session.session_id,
             );
-            let suffix = format!(
-                " · {}{}",
-                session.effort.as_str(),
-                if session.reasoning_mode == ReasoningMode::Pro {
-                    " · pro"
-                } else {
-                    ""
-                }
+            let detail = format!(
+                "{} · {} · {} · {}",
+                session.preview,
+                session.model,
+                session
+                    .effort
+                    .map(|effort| effort.as_str())
+                    .unwrap_or("unknown effort"),
+                session.workspace.display()
             );
-            let model = truncate_display(&session.model, width.saturating_sub(suffix.width()));
-            frame.render_widget(
-                Paragraph::new(format!(
-                    "  {}",
-                    truncate_display(&format!("{model}{suffix}"), width)
-                ))
-                .style(Style::default().fg(theme.muted())),
-                Rect::new(area.x, y + 1, area.width, 1),
-            );
-        }
-    }
-
-    fn details(&self, width: usize) -> Vec<String> {
-        let Some(index) = self.matches.get(self.selected) else {
-            return Vec::new();
-        };
-        let session = &self.sessions[*index];
-        let mut lines = wrap_display_lines(
-            &sanitize_terminal_text_inline(&session.session_id),
-            width.saturating_sub(4),
-        )
-        .into_iter()
-        .enumerate()
-        .map(|(index, line)| format!("{}{line}", if index == 0 { "ID: " } else { "    " }))
-        .collect::<Vec<_>>();
-        lines.extend(wrap_display_lines(
-            &format!(
-                "Workspace: {}",
-                sanitize_terminal_text_inline(&session.workspace.to_string_lossy())
-            ),
-            width,
-        ));
-        lines
+            ListItem::new(vec![
+                Line::from(Span::styled(
+                    crate::tui::format::sanitize_terminal_text_inline(&title).into_owned(),
+                    Style::default()
+                        .fg(theme.text())
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(
+                    crate::tui::format::sanitize_terminal_text_inline(&detail).into_owned(),
+                    Style::default().fg(theme.muted()),
+                )),
+            ])
+        });
+        let list = List::new(items)
+            .highlight_symbol("› ")
+            .highlight_style(Style::default().fg(theme.accent()));
+        let selected = (!self.matches.is_empty()).then_some(self.selected);
+        let mut state = ListState::default().with_selected(selected);
+        frame.render_stateful_widget(list, area, &mut state);
     }
 }
 
@@ -355,16 +235,12 @@ impl Component for SessionPicker {
     fn update(&mut self, event: Self::Event) -> ComponentUpdate<Self::Effect> {
         match event {
             SessionPickerEvent::Terminal(Event::Key(key)) => self.update_key(key),
-            SessionPickerEvent::Terminal(Event::Mouse(mouse)) => {
-                self.update_mouse(mouse, Instant::now())
-            }
             SessionPickerEvent::Terminal(Event::Paste(text)) => self.insert_paste(&text),
             SessionPickerEvent::Terminal(_) => ComponentUpdate::none(),
         }
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        self.list_area = Rect::default();
         let (title, key_bindings) = match self.mode {
             SessionPickerMode::Resume => ("Resume session", &RESUME_KEY_BINDINGS),
             SessionPickerMode::Mention => ("Mention session", &MENTION_KEY_BINDINGS),
@@ -377,40 +253,13 @@ impl Component for SessionPicker {
             height: 1,
             ..layout.body
         };
-        let width = usize::from(layout.body.width).saturating_sub(4);
-        let details = self.details(width);
-        let detail_height = (details.len().max(1) as u16).min(layout.body.height.saturating_sub(4));
-        let sessions = Rect::new(
-            layout.body.x,
-            layout.body.y + 2,
-            layout.body.width,
-            layout.body.height.saturating_sub(2 + detail_height),
-        )
-        .intersection(layout.body);
+        let sessions = Rect {
+            y: layout.body.y + 1,
+            height: layout.body.height.saturating_sub(1),
+            ..layout.body
+        };
         self.render_search(frame, search, theme);
-        if layout.body.height > 1 {
-            let header = if width >= 16 {
-                format!("  Session{}Started", " ".repeat(width.saturating_sub(14)))
-            } else {
-                "  Session".to_owned()
-            };
-            frame.render_widget(
-                Paragraph::new(header).style(Style::default().fg(theme.muted())),
-                Rect::new(layout.body.x, layout.body.y + 1, layout.body.width, 1),
-            );
-        }
         self.render_sessions(frame, sessions, theme);
-        for (row, line) in details.iter().take(usize::from(detail_height)).enumerate() {
-            frame.render_widget(
-                Paragraph::new(line.as_str()).style(Style::default().fg(theme.muted())),
-                Rect::new(
-                    layout.body.x + 2.min(layout.body.width),
-                    layout.body.bottom() - detail_height + row as u16,
-                    width as u16,
-                    1,
-                ),
-            );
-        }
     }
 }
 
@@ -432,7 +281,7 @@ mod tests {
     };
     use crate::{
         app::config::{ReasoningEffort, ReasoningMode},
-        sessions::checkpoint::SessionSummary,
+        tui::session::SessionSummary,
     };
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use std::path::PathBuf;
@@ -446,8 +295,8 @@ mod tests {
             session_id: id.to_owned(),
             started_at_unix_ms: 1,
             model: "gpt".to_owned(),
-            effort: ReasoningEffort::Medium,
-            reasoning_mode: ReasoningMode::Standard,
+            effort: Some(ReasoningEffort::Medium),
+            reasoning_mode: Some(ReasoningMode::Standard),
             workspace: PathBuf::from("/work"),
             preview: preview.to_owned(),
         }
@@ -516,167 +365,5 @@ mod tests {
         assert_eq!(picker.query, "fix");
         assert_eq!(picker.matches, [0]);
         assert_eq!(picker.selected, 0);
-    }
-    fn render(
-        picker: &mut SessionPicker,
-        width: u16,
-        height: u16,
-    ) -> ratatui::Terminal<ratatui::backend::TestBackend> {
-        let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
-        terminal
-            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
-            .unwrap();
-        terminal
-    }
-
-    #[test]
-    fn preview_metadata_and_wrapped_id_use_saved_values() {
-        let id = "019ce701-8101-7001-8a01-000000000001";
-        let mut session = summary(id, "Same preview");
-        session.reasoning_mode = ReasoningMode::Pro;
-        let mut picker = SessionPicker::new(vec![session], SessionPickerMode::Resume);
-        let terminal = render(&mut picker, 76, 18);
-        let text = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-        for label in [
-            "Same preview",
-            "Started",
-            "gpt · medium · pro",
-            id,
-            "Workspace: /work",
-        ] {
-            assert!(text.contains(label), "{label}");
-        }
-        let lines = picker.details(26);
-        assert_eq!(
-            lines
-                .iter()
-                .take(2)
-                .map(|line| &line[4..])
-                .collect::<String>(),
-            id
-        );
-        assert_eq!(
-            picker.update(key(KeyCode::Enter)).effects,
-            [SessionPickerEffect::Resume(id.into())]
-        );
-    }
-
-    #[test]
-    fn mouse_inspects_then_confirms_the_same_exact_session_as_keyboard() {
-        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-        let now = std::time::Instant::now();
-        for mode in [SessionPickerMode::Resume, SessionPickerMode::Mention] {
-            let mut picker = SessionPicker::new(
-                (0..12)
-                    .map(|index| summary(&format!("id-{index}"), "Duplicate preview"))
-                    .collect(),
-                mode,
-            );
-            for _ in 0..11 {
-                picker.update(key(KeyCode::Down));
-            }
-            render(&mut picker, 32, 18);
-            let target = picker.list_area;
-            let index = picker.offset;
-            let mouse = MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: target.x,
-                row: target.y,
-                modifiers: KeyModifiers::NONE,
-            };
-            assert!(picker.update_mouse(mouse, now).effects.is_empty());
-            assert_eq!(picker.selected, index);
-            let clicked = picker
-                .update_mouse(mouse, now + std::time::Duration::from_millis(100))
-                .effects;
-            let keyboard = picker.update(key(KeyCode::Tab)).effects;
-            assert_eq!(clicked, keyboard);
-            let expected = match mode {
-                SessionPickerMode::Resume => SessionPickerEffect::Resume(format!("id-{index}")),
-                SessionPickerMode::Mention => SessionPickerEffect::Mention(format!("id-{index}")),
-            };
-            assert_eq!(clicked, [expected]);
-        }
-    }
-
-    #[test]
-    fn empty_discovery_differs_from_no_matches_and_display_is_sanitized() {
-        let mut picker = SessionPicker::new(vec![], SessionPickerMode::Resume);
-        let terminal = render(&mut picker, 76, 18);
-        let text = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-        assert!(text.contains("No resumable sessions found"));
-        let mut picker = SessionPicker::new(
-            vec![summary("one", "漢字\x1b\npreview")],
-            SessionPickerMode::Mention,
-        );
-        let terminal = render(&mut picker, 32, 18);
-        assert!(
-            terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .all(|cell| !cell.symbol().contains(char::is_control))
-        );
-        picker.update(SessionPickerEvent::Terminal(Event::Paste("zzzz".into())));
-        let terminal = render(&mut picker, 76, 18);
-        let text = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-        assert!(text.contains("No matching sessions"));
-        assert!(picker.update(key(KeyCode::Enter)).effects.is_empty());
-        for width in 0..18 {
-            for height in 0..12 {
-                render(&mut picker, width, height);
-            }
-        }
-    }
-    #[test]
-    fn wheel_and_arrow_navigation_have_the_same_clamped_selection() {
-        use crossterm::event::{MouseEvent, MouseEventKind};
-        let mut wheel = SessionPicker::new(
-            vec![summary("one", "First"), summary("two", "Second")],
-            SessionPickerMode::Resume,
-        );
-        let mut arrows = SessionPicker::new(
-            vec![summary("one", "First"), summary("two", "Second")],
-            SessionPickerMode::Resume,
-        );
-        render(&mut wheel, 76, 18);
-        for (kind, code) in [
-            (MouseEventKind::ScrollDown, KeyCode::Down),
-            (MouseEventKind::ScrollDown, KeyCode::Down),
-            (MouseEventKind::ScrollUp, KeyCode::Up),
-            (MouseEventKind::ScrollUp, KeyCode::Up),
-        ] {
-            wheel.update(SessionPickerEvent::Terminal(Event::Mouse(MouseEvent {
-                kind,
-                column: wheel.list_area.x,
-                row: wheel.list_area.y,
-                modifiers: KeyModifiers::NONE,
-            })));
-            arrows.update(key(code));
-            assert_eq!(
-                wheel.update(key(KeyCode::Enter)).effects,
-                arrows.update(key(KeyCode::Enter)).effects
-            );
-        }
     }
 }

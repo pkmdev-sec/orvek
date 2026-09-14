@@ -1,5 +1,6 @@
 use super::{ExecutionLimits, RuntimeError};
 use crate::{Digest, workspace::Entry};
+use orvek_executor::{self as wire, Complete, Hello};
 use sha2::{Digest as _, Sha256};
 use std::{
     collections::BTreeMap,
@@ -9,7 +10,6 @@ use std::{
     path::{Component, Path, PathBuf},
     time::Duration,
 };
-use orvek_executor::{self as wire, Complete, Hello};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::sync::CancellationToken;
 

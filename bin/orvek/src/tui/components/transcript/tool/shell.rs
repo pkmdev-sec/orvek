@@ -76,7 +76,7 @@ fn command_spans(command: &str) -> Vec<Span<'static>> {
     let assets = super::super::highlight::assets();
     let syntax = super::super::highlight::syntax_for_token(&assets.syntaxes, "sh");
     let syntax_theme = super::super::highlight::theme();
-    let mut highlighter = HighlightLines::new(syntax, syntax_theme);
+    let mut highlighter = HighlightLines::new(syntax, &syntax_theme);
     let mut spans = vec![Span::styled("$ ", Style::default().fg(Color::Yellow))];
 
     for (index, line) in command.split('\n').enumerate() {

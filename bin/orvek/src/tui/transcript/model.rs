@@ -1,49 +1,36 @@
+//! Bounded visual projection. All task and execution facts originate in host records.
+
 use super::{
-    DirectedMessageEntry, EntryId, EntryKind, MessageDelivery, MessagePhase, ToolEntry, ToolState,
-    TranscriptEntry, TransientStatus,
+    DirectedMessageEntry, EntryId, EntryKind, LocalEvent, MessageDelivery, ToolEntry, ToolState,
+    TranscriptEntry, TranscriptRecord, TransientStatus,
 };
 use crate::{
     app::config::ReasoningEffort,
-    sessions::record::{SessionStarted, ShellId, TranscriptRecord},
-    tui::format::humanize_tool,
-};
-use nanocodex::{
-    agent::events::{
-        AssistantDelta, AssistantMessage, CompactionCompleted, CompactionFailed,
-        ReasoningSummaryDelta, RunError,
+    tui::{
+        children::{
+            MessageDeliveryState, MessageDisposition, MessageOrigin, MessageUpdate, ThreadId,
+        },
+        host_projection::ViewChange,
     },
-    oai::responses::MessagePhase as AgentMessagePhase,
 };
-use orvek_subagents::{
-    AgentMessageUpdate, MessageDeliveryState, MessageDisposition, MessageSender, ThreadId,
+use orvek_harness::{
+    inference::Thinking,
+    state::{JobStatus, Outcome, TaskEvent},
 };
-use serde::Deserialize;
 use serde_json::Value;
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet, VecDeque};
+use uuid::Uuid;
+
 const MAX_RETAINED_MESSAGE_THREADS: usize = 256;
+const MAX_ENTRIES: usize = 2048;
+const MAX_TEXT_BYTES: usize = 64 * 1024;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum EventVisibility {
-    Persistent,
-    Transient,
-    StateOnly,
-    ErrorFallback,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CodeCellTerminal {
-    Completed,
-    Terminated,
-}
+type MessageKey = (Option<Uuid>, String);
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ModelChange {
     pub(crate) changed: bool,
-    pub(crate) removed: Option<EntryId>,
+    pub(crate) removed: Vec<EntryId>,
 }
 
 #[derive(Default)]
@@ -51,40 +38,43 @@ pub(crate) struct TranscriptModel {
     entries: Vec<TranscriptEntry>,
     entry_indices: HashMap<EntryId, usize>,
     next_entry_id: usize,
-    assistants: HashMap<AssistantKey, EntryId>,
-    active_assistants: HashMap<(u32, MessagePhase), EntryId>,
-    reasoning: HashMap<ReasoningKey, EntryId>,
+    assistants: HashMap<MessageKey, EntryId>,
+    reasoning: HashMap<MessageKey, EntryId>,
+    users: HashMap<Uuid, EntryId>,
     tools: HashMap<String, EntryId>,
-    shell_sessions: HashMap<i64, EntryId>,
-    shell_followups: HashMap<String, EntryId>,
-    code_children: HashMap<EntryId, Vec<EntryId>>,
-    code_cells: HashMap<String, EntryId>,
-    local_shells: HashMap<ShellId, EntryId>,
+    jobs: HashMap<Uuid, EntryId>,
+    active_requests: HashMap<Uuid, u64>,
+    running_tools: HashSet<EntryId>,
+    transient: Option<TransientStatus>,
     message_threads: HashMap<ThreadId, EntryId>,
     message_order: VecDeque<ThreadId>,
-    running_tools: HashSet<EntryId>,
-    active_runs: usize,
-    run_started_at_unix_ms: VecDeque<u64>,
-    transient: Option<TransientStatus>,
-    pending_error: Option<String>,
-    pending_compaction_error: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct AssistantKey {
-    call: u32,
-    item: Option<String>,
-    phase: MessagePhase,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct ReasoningKey {
-    request: Option<Arc<str>>,
-    call: u32,
+    evicted: Vec<EntryId>,
+    history_truncated: bool,
 }
 
 impl TranscriptModel {
-    /// Copies the latest stable visual history without carrying live projection state.
+    pub(crate) fn entries(&self) -> &[TranscriptEntry] {
+        &self.entries
+    }
+    pub(crate) fn entry(&self, id: EntryId) -> Option<&TranscriptEntry> {
+        self.index_of(id).and_then(|index| self.entries.get(index))
+    }
+    pub(crate) fn index_of(&self, id: EntryId) -> Option<usize> {
+        self.entry_indices.get(&id).copied()
+    }
+    pub(crate) fn transient(&self) -> Option<&TransientStatus> {
+        self.transient.as_ref()
+    }
+    pub(crate) fn is_active(&self) -> bool {
+        !self.active_requests.is_empty() || !self.running_tools.is_empty()
+    }
+    pub(crate) fn has_running_tools(&self) -> bool {
+        !self.running_tools.is_empty()
+    }
+    pub(crate) fn running_tool_ids(&self) -> impl Iterator<Item = EntryId> + '_ {
+        self.running_tools.iter().copied()
+    }
+
     pub(crate) fn fork_snapshot(&self) -> Self {
         let end = if self.is_active() {
             self.entries
@@ -98,82 +88,380 @@ impl TranscriptModel {
             .iter()
             .filter(|entry| match &entry.kind {
                 EntryKind::Assistant { complete, .. } => *complete,
-                EntryKind::Tool(tool) => tool.state != ToolState::Running,
+                EntryKind::Tool(tool) => {
+                    !matches!(tool.state, ToolState::Running | ToolState::Proposed)
+                }
                 _ => true,
             })
             .cloned()
             .collect::<Vec<_>>();
-        let entry_indices = entries
-            .iter()
-            .enumerate()
-            .map(|(index, entry)| (entry.id, index))
-            .collect();
-        let message_threads = entries
-            .iter()
-            .filter_map(|entry| match &entry.kind {
-                EntryKind::DirectedMessage(message) => Some((message.thread.id, entry.id)),
-                _ => None,
-            })
-            .collect();
-        let message_order = entries
-            .iter()
-            .filter_map(|entry| match &entry.kind {
-                EntryKind::DirectedMessage(message) => Some(message.thread.id),
-                _ => None,
-            })
-            .collect();
         Self {
+            entry_indices: entries
+                .iter()
+                .enumerate()
+                .map(|(i, entry)| (entry.id, i))
+                .collect(),
             entries,
-            entry_indices,
             next_entry_id: self.next_entry_id,
-            message_threads,
-            message_order,
             ..Self::default()
         }
     }
 
-    pub(crate) fn entries(&self) -> &[TranscriptEntry] {
-        &self.entries
-    }
-
-    pub(crate) fn entry(&self, id: EntryId) -> Option<&TranscriptEntry> {
-        self.index_of(id).and_then(|index| self.entries.get(index))
-    }
-
-    pub(crate) fn index_of(&self, id: EntryId) -> Option<usize> {
-        self.entry_indices.get(&id).copied()
-    }
-
-    pub(crate) fn transient(&self) -> Option<&TransientStatus> {
-        self.transient.as_ref()
-    }
-
-    pub(crate) const fn is_active(&self) -> bool {
-        self.active_runs > 0
-    }
-
-    pub(crate) fn has_running_tools(&self) -> bool {
-        !self.running_tools.is_empty()
-    }
-
-    pub(crate) fn running_tool_ids(&self) -> impl Iterator<Item = EntryId> + '_ {
-        self.running_tools.iter().copied()
-    }
-
     pub(crate) fn apply(&mut self, record: &TranscriptRecord) -> ModelChange {
-        if record.source() == "tact" {
-            return self.apply_local(record);
+        let mut changed = false;
+        for change in record.host_changes() {
+            changed |= self.apply_host(change, record.recorded_at_unix_ms());
         }
-        if record.source() != "agent" {
-            return ModelChange::default();
+        if record.host_changes().is_empty() {
+            changed |= record.local().is_some_and(|event| self.apply_local(event));
         }
-        self.apply_agent(record)
+        if !self.evicted.is_empty() && !self.history_truncated {
+            self.history_truncated = true;
+            self.push(EntryKind::HostStatus {
+                text: "Earlier display rows were unloaded; their originals remain in host history."
+                    .into(),
+                verified: false,
+            });
+        }
+        ModelChange {
+            changed,
+            removed: std::mem::take(&mut self.evicted),
+        }
+    }
+
+    fn apply_host(&mut self, change: &ViewChange, at_ms: u64) -> bool {
+        match change {
+            ViewChange::ProviderUsage { .. }
+            | ViewChange::WorkspaceSaved(_)
+            | ViewChange::QueueChanged
+            | ViewChange::Submission(_)
+            | ViewChange::SubmissionChanged { .. } => return false,
+            ViewChange::HistoricalImport {
+                manifest,
+                source_session,
+            } => {
+                self.push(EntryKind::HostStatus {text:format!("Historical context from {source_session} · manifest {manifest} · previous results are unverified"),verified:false});
+            }
+            ViewChange::Session { parent, .. } => {
+                if let Some(parent) = parent {
+                    self.push(EntryKind::ForkedFrom {
+                        session_id: parent.session.to_string(),
+                    });
+                }
+            }
+            ViewChange::User { request, text } => {
+                if request.is_some_and(|id| self.users.contains_key(&id)) {
+                    return false;
+                }
+                let id = self.push(EntryKind::User {
+                    text: bounded(text),
+                });
+                if let Some(request) = request {
+                    self.users.insert(*request, id);
+                }
+            }
+            ViewChange::RequestStarted { request } => {
+                self.active_requests.insert(*request, at_ms);
+                self.transient = Some(TransientStatus::Thinking);
+            }
+            ViewChange::Assistant {
+                request,
+                item,
+                text,
+                replace,
+                confirmed,
+            } => {
+                let key = (*request, item.clone());
+                let id = match self.assistants.get(&key).copied() {
+                    Some(id) => id,
+                    None => {
+                        let id = self.push(EntryKind::Assistant {
+                            text: String::new(),
+                            complete: false,
+                        });
+                        self.assistants.insert(key, id);
+                        id
+                    }
+                };
+                self.update(id, |kind| {
+                    if let EntryKind::Assistant {
+                        text: current,
+                        complete,
+                    } = kind
+                    {
+                        if *replace {
+                            *current = bounded(text);
+                        } else {
+                            append_bounded(current, text);
+                        }
+                        *complete = *confirmed;
+                    }
+                });
+                self.transient = self.is_active().then_some(if *confirmed {
+                    TransientStatus::Thinking
+                } else {
+                    TransientStatus::Responding
+                });
+            }
+            ViewChange::Reasoning {
+                request,
+                item,
+                text,
+                replace,
+            } => {
+                if text.is_empty() {
+                    return false;
+                }
+                let key = (*request, item.clone());
+                let id = match self.reasoning.get(&key).copied() {
+                    Some(id) => id,
+                    None => {
+                        let id = self.push(EntryKind::Reasoning {
+                            text: String::new(),
+                        });
+                        self.reasoning.insert(key, id);
+                        id
+                    }
+                };
+                self.update(id, |kind| {
+                    if let EntryKind::Reasoning { text: current } = kind {
+                        if *replace {
+                            *current = bounded(text);
+                        } else {
+                            append_bounded(current, text);
+                        }
+                    }
+                });
+            }
+            ViewChange::ToolProposed {
+                call_id,
+                name,
+                arguments,
+                ..
+            } => {
+                if self.tools.contains_key(call_id) {
+                    return false;
+                }
+                let id = self.push(EntryKind::Tool(ToolEntry {
+                    name: name.clone(),
+                    arguments: serde_json::from_str(&bounded(arguments))
+                        .unwrap_or_else(|_| Value::String(bounded(arguments))),
+                    started_at_unix_ms: at_ms,
+                    state: ToolState::Proposed,
+                    duration_ns: None,
+                    result: None,
+                    metadata: None,
+                    substeps: Vec::new(),
+                    child_count: 0,
+                }));
+                self.tools.insert(call_id.clone(), id);
+            }
+            ViewChange::ToolResult {
+                call_id, output, ..
+            } => {
+                if let Some(id) = self.tools.get(call_id).copied() {
+                    self.update(id, |kind| {
+                        if let EntryKind::Tool(tool) = kind {
+                            if tool.state == ToolState::Proposed {
+                                tool.state = ToolState::Received;
+                            }
+                            let parsed = serde_json::from_str(&bounded(output))
+                                .unwrap_or_else(|_| Value::String(bounded(output)));
+                            let (result, elapsed) = display_tool_result(&tool.name, parsed);
+                            tool.result = Some(result);
+                            tool.duration_ns = elapsed;
+                        }
+                    });
+                }
+            }
+            ViewChange::RequestSettled { request, error } => {
+                let started = self.active_requests.remove(request);
+                if let Some(error) = error {
+                    self.push(EntryKind::Error {
+                        message: bounded(error),
+                    });
+                } else {
+                    self.push(EntryKind::TurnCompleted {
+                        duration_ns: started
+                            .filter(|started| *started > 0)
+                            .map(|started| at_ms.saturating_sub(started).saturating_mul(1_000_000))
+                            .unwrap_or(0),
+                    });
+                }
+                self.transient = self.is_active().then_some(TransientStatus::Thinking);
+            }
+            ViewChange::Settings(settings) => {
+                self.push(EntryKind::EffortChanged {
+                    to: effort(settings.thinking),
+                });
+                self.push(EntryKind::FastModeChanged {
+                    enabled: settings.fast_mode,
+                });
+            }
+            ViewChange::TaskLinked(task) => {
+                self.push(EntryKind::HostStatus {
+                    text: format!("Task {task} registered with the host"),
+                    verified: false,
+                });
+            }
+            ViewChange::Task { id, event } => {
+                if let TaskEvent::JobStarted(job) = event {
+                    if let Some(invocation) = &job.invocation
+                        && let Some(call_id) = &invocation.call_id
+                    {
+                        let entry = self.tools.get(call_id).copied().unwrap_or_else(|| {
+                            let entry = self.push(EntryKind::Tool(ToolEntry {
+                                name: invocation.capability.clone(),
+                                arguments: Value::Null,
+                                started_at_unix_ms: job.started_ms,
+                                state: ToolState::Running,
+                                duration_ns: None,
+                                result: None,
+                                metadata: Some(
+                                    serde_json::json!({"input_artifact":invocation.input}),
+                                ),
+                                substeps: Vec::new(),
+                                child_count: 0,
+                            }));
+                            self.tools.insert(call_id.clone(), entry);
+                            entry
+                        });
+                        self.jobs.insert(job.id, entry);
+                        self.running_tools.insert(entry);
+                        self.transient = Some(if invocation.capability == "wait" {
+                            TransientStatus::WaitingForBackgroundWork
+                        } else {
+                            TransientStatus::Tool(crate::tui::format::humanize_tool(
+                                &invocation.capability,
+                            ))
+                        });
+                        self.update(entry, |kind| {
+                            if let EntryKind::Tool(tool) = kind {
+                                tool.state = ToolState::Running;
+                                tool.started_at_unix_ms = job.started_ms;
+                            }
+                        });
+                    }
+                    return true;
+                }
+                if let TaskEvent::JobSettled { id, status, .. } = event {
+                    if let Some(entry) = self.jobs.get(id).copied() {
+                        let state = match status {
+                            JobStatus::Running => ToolState::Running,
+                            JobStatus::Succeeded => ToolState::Succeeded,
+                            JobStatus::Failed => ToolState::Failed,
+                            JobStatus::Cancelled => ToolState::Cancelled,
+                            JobStatus::Unknown => ToolState::Unknown,
+                            JobStatus::Fenced => ToolState::Fenced,
+                        };
+                        self.update(entry, |kind| {
+                            if let EntryKind::Tool(tool) = kind {
+                                tool.state = state;
+                            }
+                        });
+                        if !status.unresolved() {
+                            self.running_tools.remove(&entry);
+                        }
+                        self.transient = if *status == JobStatus::Unknown {
+                            Some(TransientStatus::Error(
+                                "Execution outcome unknown; host reconciliation required".into(),
+                            ))
+                        } else {
+                            self.is_active().then_some(TransientStatus::Thinking)
+                        };
+                    }
+                    return true;
+                }
+                if let TaskEvent::JobFenced { id, receipt } = event {
+                    if let Some(entry) = self.jobs.get(id).copied() {
+                        self.update(entry, |kind| {
+                            if let EntryKind::Tool(tool) = kind {
+                                tool.state = ToolState::Fenced;
+                                tool.metadata = Some(serde_json::json!({"fence_receipt":receipt}));
+                            }
+                        });
+                        self.running_tools.remove(&entry);
+                    }
+                    return true;
+                }
+                let (text, verified) = match event {
+                    TaskEvent::ContractAdmitted { contract, .. }
+                    | TaskEvent::ContractAmended { contract, .. } => (
+                        format!(
+                            "Task {id}: {} required outcomes; {} acceptance checks",
+                            contract.requirements.len(),
+                            contract.checks.len()
+                        ),
+                        false,
+                    ),
+                    TaskEvent::PhaseChanged(phase) => (format!("Task {id}: {phase:?}"), false),
+                    TaskEvent::Completed(certificate) => (
+                        format!(
+                            "Task {id} complete · artifact {} · {} accepted evidence records",
+                            certificate.artifact,
+                            certificate.evidence.len()
+                        ),
+                        true,
+                    ),
+                    TaskEvent::Stopped { outcome, reason } => (
+                        format!("Task {id}: {} · {reason}", outcome_name(*outcome)),
+                        false,
+                    ),
+                    TaskEvent::EvidenceInvalidated { reason }
+                    | TaskEvent::WorkspaceChanged { reason } => {
+                        (format!("Task {id}: evidence stale · {reason}"), false)
+                    }
+                    TaskEvent::Delivered(delivery) => (
+                        format!(
+                            "Task {id}: {:?} artifact prepared · {}",
+                            delivery.kind, delivery.artifact
+                        ),
+                        false,
+                    ),
+                    TaskEvent::Interrupted { reason } | TaskEvent::Reopened { reason } => {
+                        (format!("Task {id}: {reason}"), false)
+                    }
+                    _ => return false,
+                };
+                self.push(EntryKind::HostStatus {
+                    text: bounded(&text),
+                    verified,
+                });
+            }
+            ViewChange::ContextProjected {
+                source_revision,
+                items,
+            } => {
+                self.push(EntryKind::HostStatus {text:format!("Context projected from revision {source_revision} · {items} items · original history retained"),verified:false});
+            }
+            ViewChange::DiscardPreviews => {
+                let pending = self.assistants.values().copied().collect::<Vec<_>>();
+                for id in pending {
+                    self.update(id, |kind| {
+                        if let EntryKind::Assistant {
+                            text,
+                            complete: false,
+                        } = kind
+                        {
+                            *text =
+                                "[Preview interrupted; waiting for the recorded response]".into();
+                        }
+                    });
+                }
+            }
+            ViewChange::Warning(message) => {
+                self.push(EntryKind::Error {
+                    message: bounded(message),
+                });
+            }
+        }
+        true
     }
 
     pub(crate) fn apply_message(
         &mut self,
-        perspective: MessageSender,
-        update: AgentMessageUpdate,
+        perspective: MessageOrigin,
+        update: MessageUpdate,
     ) -> ModelChange {
         let Some(id) = self.message_threads.get(&update.thread.id).copied() else {
             let thread_id = update.thread.id;
@@ -189,7 +477,7 @@ impl TranscriptModel {
             self.message_order.push_back(thread_id);
             return ModelChange {
                 changed: true,
-                removed: self.trim_message_history(),
+                removed: self.trim_message_history().into_iter().collect(),
             };
         };
 
@@ -239,836 +527,8 @@ impl TranscriptModel {
         self.entries[index].revision = self.entries[index].revision.saturating_add(1);
         ModelChange {
             changed: true,
-            removed: self.trim_message_history(),
+            removed: self.trim_message_history().into_iter().collect(),
         }
-    }
-
-    fn apply_local(&mut self, record: &TranscriptRecord) -> ModelChange {
-        let changed = match record.kind() {
-            "session.started" => self.decode_local::<SessionStarted>(record).map(|payload| {
-                if let Some(session_id) = payload.parent_session_id {
-                    *self = self.fork_snapshot();
-                    self.push(EntryKind::ForkedFrom { session_id });
-                }
-            }),
-            "user.submitted" => self.decode_local::<UserSubmitted>(record).map(|payload| {
-                self.push(EntryKind::User { text: payload.text });
-            }),
-            "user.steered" => self.decode_local::<UserSteered>(record).map(|payload| {
-                self.push(EntryKind::User { text: payload.text });
-            }),
-            "reflection.started" => self.decode_local::<ReflectionStarted>(record).map(|_| {
-                self.push(EntryKind::ReflectionStarted);
-            }),
-            "shell.started" => self
-                .decode_local::<ShellStarted>(record)
-                .map(|payload| self.shell_started(payload, record.recorded_at_unix_ms())),
-            "shell.finished" => self
-                .decode_local::<ShellFinished>(record)
-                .map(|payload| self.shell_finished(payload)),
-            "effort.changed" => self.decode_local::<EffortChanged>(record).map(|payload| {
-                self.push(EntryKind::EffortChanged { to: payload.to });
-            }),
-            "fast_mode.changed" => self.decode_local::<FastModeChanged>(record).map(|payload| {
-                self.push(EntryKind::FastModeChanged {
-                    enabled: payload.to,
-                });
-            }),
-            "worker.turn_finished" => {
-                self.decode_local::<WorkerTurnFinished>(record)
-                    .map(|payload| {
-                        if let Some(error) = payload.error {
-                            self.pending_error = Some(error);
-                        }
-                    })
-            }
-            "worker.turns_interrupted" => return self.apply_interruption(record),
-            "worker.steer_failed" => {
-                self.decode_local::<WorkerSteerFailed>(record)
-                    .map(|payload| {
-                        self.push(EntryKind::Error {
-                            message: format!("Could not steer response: {}", payload.error),
-                        });
-                    })
-            }
-            "worker.stopped" => self.decode_local::<WorkerStopped>(record).map(|payload| {
-                if let Some(error) = payload.error {
-                    self.pending_error = Some(error);
-                }
-            }),
-            "session.ended" => self.decode_local::<SessionEnded>(record).map(|payload| {
-                if payload.outcome == "failed" {
-                    self.finish_failed(payload.error);
-                }
-                self.agent_stream_closed();
-            }),
-            _ => return ModelChange::default(),
-        };
-        match changed {
-            Ok(()) => ModelChange {
-                changed: true,
-                ..ModelChange::default()
-            },
-            Err(error) => self.projection_error(record, error, true),
-        }
-    }
-
-    fn apply_interruption(&mut self, record: &TranscriptRecord) -> ModelChange {
-        let payload = match self.decode_local::<WorkerTurnsInterrupted>(record) {
-            Ok(payload) => payload,
-            Err(error) => return self.projection_error(record, error, true),
-        };
-        if let Some(error) = payload.error {
-            self.push(EntryKind::Error {
-                message: format!("Could not interrupt response: {error}"),
-            });
-            return ModelChange {
-                changed: true,
-                ..ModelChange::default()
-            };
-        }
-        if payload.count == 0 {
-            return ModelChange::default();
-        }
-        self.push(EntryKind::Interrupted {
-            count: payload.count,
-        });
-        ModelChange {
-            changed: true,
-            ..ModelChange::default()
-        }
-    }
-
-    fn shell_started(&mut self, payload: ShellStarted, started_at_unix_ms: u64) {
-        let id = self.push(EntryKind::Tool(ToolEntry {
-            name: "exec_command".to_owned(),
-            arguments: serde_json::json!({
-                "cmd": payload.command,
-                "workdir": payload.workspace,
-            }),
-            started_at_unix_ms,
-            state: ToolState::Running,
-            duration_ns: None,
-            result: None,
-            metadata: None,
-            substeps: Vec::new(),
-            child_count: 0,
-        }));
-        self.local_shells.insert(payload.id, id);
-        self.running_tools.insert(id);
-    }
-
-    fn shell_finished(&mut self, payload: ShellFinished) {
-        let Some(id) = self.local_shells.remove(&payload.id) else {
-            return;
-        };
-        self.reasoning.clear();
-        let failed = payload.error.is_some() || payload.exit_code != Some(0);
-        self.update(id, |kind| {
-            if let EntryKind::Tool(tool) = kind {
-                tool.state = if failed {
-                    ToolState::Failed
-                } else {
-                    ToolState::Succeeded
-                };
-                tool.duration_ns = Some(payload.duration_ns);
-                tool.result = Some(serde_json::json!({
-                    "output": payload.output,
-                    "exit_code": payload.exit_code,
-                    "truncated": payload.truncated,
-                    "error": payload.error,
-                }));
-            }
-        });
-        self.running_tools.remove(&id);
-    }
-
-    fn apply_agent(&mut self, record: &TranscriptRecord) -> ModelChange {
-        let previous_activity = self.transient.clone();
-        if matches!(
-            record.kind(),
-            "assistant.delta"
-                | "assistant.message"
-                | "run.started"
-                | "run.completed"
-                | "run.failed"
-                | "tool.call"
-                | "tool.result"
-        ) {
-            self.reasoning.clear();
-        }
-        let result = match record.kind() {
-            "assistant.delta" => self.assistant_delta(record),
-            "assistant.message" => self.assistant_message(record),
-            "reasoning.summary.delta" => self.reasoning_delta(record),
-            "run.started" => {
-                self.active_runs = self.active_runs.saturating_add(1);
-                self.run_started_at_unix_ms
-                    .push_back(record.recorded_at_unix_ms());
-                self.transient = Some(TransientStatus::Thinking);
-                Ok(true)
-            }
-            "run.error" => self.decode_local::<RunError>(record).map(|payload| {
-                self.pending_error = Some(payload.message.clone());
-                self.transient = Some(TransientStatus::Error(payload.message));
-                true
-            }),
-            "run.completed" => {
-                self.complete_turn(record);
-                Ok(true)
-            }
-            "run.failed" => {
-                self.run_started_at_unix_ms.pop_front();
-                self.finish_failed(None);
-                Ok(true)
-            }
-            "tool.call" => self.tool_call(record),
-            "tool.result" => self.tool_result(record),
-            "model.warmup.started" => {
-                self.transient = Some(TransientStatus::Warming);
-                Ok(true)
-            }
-            "model.warmup.completed" => {
-                self.transient = self.is_active().then_some(TransientStatus::Thinking);
-                Ok(true)
-            }
-            "model.warmup.failed"
-            | "model.call.failed"
-            | "model.attempt.failed"
-            | "model.connection.failed" => self.capture_error(record),
-            "model.call.started" => {
-                self.materialize_compaction_failure();
-                self.transient = Some(TransientStatus::Thinking);
-                Ok(true)
-            }
-            "model.call.completed" => {
-                self.transient = self.is_active().then_some(TransientStatus::Thinking);
-                Ok(true)
-            }
-            "model.compaction.started" => {
-                self.transient = Some(TransientStatus::Compacting);
-                Ok(true)
-            }
-            "model.compaction.completed" => self.compaction_completed(record),
-            "model.compaction.failed" => self.compaction_failed(record),
-            "model.attempt.retrying" => self.retrying(record),
-            "model.connection.started" => self.connection_started(record),
-            "model.connection.completed" => {
-                self.transient = self.is_active().then_some(TransientStatus::Thinking);
-                self.pending_error = None;
-                Ok(true)
-            }
-            _ => Ok(false),
-        };
-        let activity_changed = previous_activity != self.transient;
-        match result {
-            Ok(changed) => ModelChange {
-                changed: changed || activity_changed,
-                ..ModelChange::default()
-            },
-            Err(error) => self.projection_error(
-                record,
-                error,
-                visibility(record.source(), record.kind()) == EventVisibility::Persistent,
-            ),
-        }
-    }
-
-    fn assistant_delta(&mut self, record: &TranscriptRecord) -> Result<bool, serde_json::Error> {
-        let payload = record.decode_payload::<AssistantDelta>()?;
-        let phase = message_phase(payload.phase);
-        let key = AssistantKey {
-            call: payload.model_call_index,
-            item: payload.item_id,
-            phase,
-        };
-        let id = if let Some(&id) = self.assistants.get(&key) {
-            id
-        } else {
-            let id = self.push(EntryKind::Assistant {
-                text: String::new(),
-                complete: false,
-            });
-            self.assistants.insert(key, id);
-            self.active_assistants
-                .insert((payload.model_call_index, phase), id);
-            id
-        };
-        self.update(id, |kind| {
-            if let EntryKind::Assistant { text, .. } = kind {
-                text.push_str(&payload.text);
-            }
-        });
-        self.transient = Some(TransientStatus::Responding);
-        Ok(true)
-    }
-
-    fn assistant_message(&mut self, record: &TranscriptRecord) -> Result<bool, serde_json::Error> {
-        let payload = record.decode_payload::<AssistantMessage>()?;
-        let phase = message_phase(payload.phase);
-        let key = AssistantKey {
-            call: payload.model_call_index,
-            item: payload.item_id,
-            phase,
-        };
-        let id = self
-            .assistants
-            .get(&key)
-            .copied()
-            .or_else(|| {
-                self.active_assistants
-                    .get(&(payload.model_call_index, phase))
-                    .copied()
-            })
-            .unwrap_or_else(|| {
-                let id = self.push(EntryKind::Assistant {
-                    text: String::new(),
-                    complete: false,
-                });
-                self.assistants.insert(key, id);
-                id
-            });
-        self.update(id, |kind| {
-            if let EntryKind::Assistant { text, complete, .. } = kind {
-                *text = payload.text;
-                *complete = true;
-            }
-        });
-        self.transient = self.is_active().then_some(TransientStatus::Thinking);
-        Ok(true)
-    }
-
-    fn reasoning_delta(&mut self, record: &TranscriptRecord) -> Result<bool, serde_json::Error> {
-        let payload = record.decode_payload::<ReasoningSummaryDelta>()?;
-        let key = ReasoningKey {
-            request: record.agent_request_id(),
-            call: payload.model_call_index,
-        };
-        let id = self
-            .reasoning
-            .get(&key)
-            .copied()
-            .filter(|id| self.entries.last().is_some_and(|entry| entry.id == *id))
-            .unwrap_or_else(|| {
-                let id = self.push(EntryKind::Reasoning {
-                    text: String::new(),
-                });
-                self.reasoning.insert(key, id);
-                id
-            });
-        self.update(id, |kind| {
-            if let EntryKind::Reasoning { text } = kind {
-                if text.ends_with("**") && payload.text.starts_with("**") {
-                    text.push_str("  \n");
-                }
-                text.push_str(&payload.text);
-            }
-        });
-        Ok(true)
-    }
-
-    fn tool_call(&mut self, record: &TranscriptRecord) -> Result<bool, serde_json::Error> {
-        let ToolCallPayload {
-            call_id,
-            tool,
-            arguments,
-        } = record.decode_payload::<ToolCallPayload>()?;
-        let parent = self.code_parent(&call_id);
-        if tool == "write_stdin"
-            && let Some(session_id) = arguments.get("session_id").and_then(Value::as_i64)
-            && let Some(id) = self.shell_sessions.get(&session_id).copied()
-        {
-            if parent.is_some() {
-                self.shell_followups.insert(call_id.clone(), id);
-            } else {
-                let substep = arguments
-                    .get("chars")
-                    .and_then(Value::as_str)
-                    .filter(|chars| !chars.is_empty())
-                    .map_or_else(
-                        || "polled process".to_owned(),
-                        |chars| format!("sent {chars:?}"),
-                    );
-                self.update(id, |kind| {
-                    if let EntryKind::Tool(tool) = kind {
-                        tool.state = ToolState::Running;
-                        tool.substeps.push(substep);
-                    }
-                });
-                self.tools.insert(call_id, id);
-                self.running_tools.insert(id);
-                self.transient = Some(TransientStatus::Tool("Shell".to_owned()));
-                return Ok(true);
-            }
-        }
-        let displayed_parent = parent.and_then(|parent| self.next_code_child_parent(parent));
-        let hidden = tool == "wait" && parent.is_none();
-        let transient = if hidden {
-            TransientStatus::WaitingForBackgroundWork
-        } else {
-            TransientStatus::Tool(humanize_tool(&tool))
-        };
-        let id = self.push_with_parent(
-            EntryKind::Tool(ToolEntry {
-                name: tool,
-                arguments,
-                started_at_unix_ms: record.recorded_at_unix_ms(),
-                state: ToolState::Running,
-                duration_ns: None,
-                result: None,
-                metadata: None,
-                substeps: Vec::new(),
-                child_count: 0,
-            }),
-            hidden,
-            displayed_parent,
-        );
-        if let Some(parent) = parent {
-            self.register_code_child(parent, id);
-        }
-        self.tools.insert(call_id, id);
-        self.running_tools.insert(id);
-        self.transient = Some(transient);
-        Ok(true)
-    }
-
-    fn tool_result(&mut self, record: &TranscriptRecord) -> Result<bool, serde_json::Error> {
-        let payload = record.decode_payload::<ToolResultPayload>()?;
-        let resumed_shell = self.shell_followups.remove(&payload.call_id);
-        let shell_followup = payload.tool == "write_stdin";
-        let result = if matches!(payload.tool.as_str(), "exec_command" | "write_stdin") {
-            normalize_result(payload.structured_result)
-        } else {
-            normalize_result(payload.result)
-        };
-        let resumed_result = resumed_shell.map(|_| result.clone());
-        let state = tool_result_state(&payload.tool, &payload.status, &result);
-        let entry_state = if resumed_shell.is_some() && state == ToolState::Running {
-            ToolState::Succeeded
-        } else {
-            state
-        };
-        let shell_session = (payload.tool == "exec_command")
-            .then(|| tool_session_id(&result))
-            .flatten();
-        let id = self
-            .tools
-            .get(&payload.call_id)
-            .copied()
-            .unwrap_or_else(|| {
-                let parent = self.code_parent(&payload.call_id);
-                let displayed_parent =
-                    parent.and_then(|parent| self.next_code_child_parent(parent));
-                let id = self.push_with_parent(
-                    EntryKind::Tool(ToolEntry {
-                        name: payload.tool.clone(),
-                        arguments: Value::Null,
-                        started_at_unix_ms: record.recorded_at_unix_ms(),
-                        state: ToolState::Running,
-                        duration_ns: None,
-                        result: None,
-                        metadata: None,
-                        substeps: Vec::new(),
-                        child_count: 0,
-                    }),
-                    false,
-                    displayed_parent,
-                );
-                if let Some(parent) = parent {
-                    self.register_code_child(parent, id);
-                }
-                self.tools.insert(payload.call_id.clone(), id);
-                id
-            });
-        let running_code_cell = (payload.tool == "exec")
-            .then(|| running_code_cell_id(&result))
-            .flatten()
-            .map(str::to_owned);
-        let observed_code_cell = (payload.tool == "wait")
-            .then(|| self.requested_code_cell(id))
-            .flatten()
-            .map(str::to_owned);
-        let code_cell_terminal = code_cell_terminal(&result);
-        self.update(id, |kind| {
-            if let EntryKind::Tool(tool) = kind {
-                tool.state = entry_state;
-                tool.duration_ns = Some(if shell_followup {
-                    elapsed_nanoseconds(tool.started_at_unix_ms, record.recorded_at_unix_ms())
-                        .max(payload.duration_ns)
-                } else {
-                    payload.duration_ns
-                });
-                tool.result = Some(if shell_followup {
-                    merge_shell_result(tool.result.take(), result)
-                } else {
-                    result
-                });
-                tool.metadata = payload.metadata;
-            }
-        });
-        if let Some(shell) = resumed_shell {
-            let resumed_result = resumed_result.expect("resumed shell result was retained");
-            self.update(shell, |kind| {
-                if let EntryKind::Tool(tool) = kind {
-                    tool.state = state;
-                    tool.duration_ns = Some(
-                        elapsed_nanoseconds(tool.started_at_unix_ms, record.recorded_at_unix_ms())
-                            .max(payload.duration_ns),
-                    );
-                    tool.result = Some(merge_shell_result(tool.result.take(), resumed_result));
-                }
-            });
-            if state != ToolState::Running {
-                self.shell_sessions.retain(|_, entry| *entry != shell);
-                self.running_tools.remove(&shell);
-            }
-        }
-        if payload.tool == "wait"
-            && state == ToolState::Failed
-            && let Some(index) = self.index_of(id)
-        {
-            self.entries[index].hidden = false;
-        }
-        if entry_state == ToolState::Running {
-            if let Some(session_id) = shell_session {
-                self.shell_sessions.insert(session_id, id);
-            }
-            self.running_tools.insert(id);
-        } else {
-            self.shell_sessions
-                .retain(|_, shell_entry| *shell_entry != id);
-            self.running_tools.remove(&id);
-        }
-        if let Some(cell_id) = running_code_cell {
-            self.code_cells.insert(cell_id, id);
-        }
-        if let Some(cell_id) = observed_code_cell
-            && let Some(terminal) = code_cell_terminal
-            && let Some(parent) = self.code_cells.remove(&cell_id)
-            && terminal == CodeCellTerminal::Terminated
-        {
-            self.fail_unfinished_code_children(parent);
-        }
-        self.transient = self.is_active().then_some(TransientStatus::Thinking);
-        Ok(true)
-    }
-
-    fn compaction_completed(
-        &mut self,
-        record: &TranscriptRecord,
-    ) -> Result<bool, serde_json::Error> {
-        let payload = record.decode_payload::<CompactionCompleted>()?;
-        self.push(EntryKind::ContextCompacted {
-            duration_ns: payload.duration_ns,
-            pages: payload.pages,
-            estimated_tokens: payload.before_tokens.zip(payload.after_tokens),
-        });
-        self.transient = self.is_active().then_some(TransientStatus::Thinking);
-        Ok(true)
-    }
-
-    fn compaction_failed(&mut self, record: &TranscriptRecord) -> Result<bool, serde_json::Error> {
-        let payload = record.decode_payload::<CompactionFailed>()?;
-        self.pending_compaction_error = Some(payload.error.clone());
-        self.pending_error = Some(payload.error);
-        self.transient = self.is_active().then_some(TransientStatus::Thinking);
-        Ok(true)
-    }
-
-    fn retrying(&mut self, record: &TranscriptRecord) -> Result<bool, serde_json::Error> {
-        let payload = record.decode_payload::<RetryPayload>()?;
-        self.pending_error = Some(payload.error);
-        self.transient = Some(TransientStatus::Retrying(payload.delay_ns));
-        Ok(true)
-    }
-
-    fn connection_started(&mut self, record: &TranscriptRecord) -> Result<bool, serde_json::Error> {
-        let payload = record.decode_payload::<ConnectionPayload>()?;
-        self.transient = Some(if payload.purpose == "reconnect" {
-            TransientStatus::Reconnecting
-        } else {
-            TransientStatus::Connecting
-        });
-        Ok(true)
-    }
-
-    fn capture_error(&mut self, record: &TranscriptRecord) -> Result<bool, serde_json::Error> {
-        let payload = record.decode_payload::<ErrorPayload>()?;
-        self.pending_error = Some(payload.error);
-        Ok(false)
-    }
-
-    fn finish_success(&mut self) {
-        self.materialize_compaction_failure();
-        self.finish_activity();
-        self.pending_error = None;
-    }
-
-    fn complete_turn(&mut self, record: &TranscriptRecord) {
-        let payload_duration_ns = record
-            .decode_payload::<RunDurationPayload>()
-            .ok()
-            .and_then(|payload| payload.duration_ns);
-        let recorded_duration_ns = self.run_started_at_unix_ms.pop_front().map(|started_at| {
-            record
-                .recorded_at_unix_ms()
-                .saturating_sub(started_at)
-                .saturating_mul(1_000_000)
-        });
-        let duration_ns = payload_duration_ns.or(recorded_duration_ns);
-        self.finish_success();
-        let Some(duration_ns) = duration_ns else {
-            return;
-        };
-        self.push(EntryKind::TurnCompleted { duration_ns });
-    }
-
-    fn finish_failed(&mut self, error: Option<String>) {
-        self.pending_compaction_error = None;
-        if error.is_none()
-            && self.pending_error.is_none()
-            && self
-                .entries
-                .last()
-                .is_some_and(|entry| matches!(entry.kind, EntryKind::Error { .. }))
-        {
-            self.finish_activity();
-            return;
-        }
-        let message = error
-            .or_else(|| self.pending_error.take())
-            .unwrap_or_else(|| "The agent run failed".to_owned());
-        if !self.entries.last().is_some_and(|entry| {
-            matches!(&entry.kind, EntryKind::Error { message: existing } if existing == &message)
-        }) {
-            self.push(EntryKind::Error { message });
-        }
-        self.finish_activity();
-    }
-
-    fn finish_activity(&mut self) {
-        self.active_runs = self.active_runs.saturating_sub(1);
-        if self.active_runs == 0 {
-            self.fail_orphaned_tools();
-        }
-        self.transient = self.is_active().then_some(TransientStatus::Thinking);
-    }
-
-    fn fail_orphaned_tools(&mut self) {
-        let local_shells = self.local_shells.values().copied().collect::<HashSet<_>>();
-        let orphaned = self
-            .running_tools
-            .iter()
-            .copied()
-            .filter(|id| !local_shells.contains(id))
-            .collect::<Vec<_>>();
-        self.fail_unfinished_tools(&orphaned);
-    }
-
-    fn fail_unfinished_code_children(&mut self, parent: EntryId) {
-        let unfinished = self
-            .code_children
-            .get(&parent)
-            .into_iter()
-            .flatten()
-            .filter(|id| self.running_tools.contains(id))
-            .copied()
-            .collect::<Vec<_>>();
-        self.fail_unfinished_tools(&unfinished);
-    }
-
-    fn fail_unfinished_tools(&mut self, unfinished: &[EntryId]) {
-        for id in unfinished {
-            self.update(*id, |kind| {
-                let EntryKind::Tool(tool) = kind else {
-                    return;
-                };
-                tool.state = ToolState::Failed;
-                let result = tool.result.get_or_insert_with(|| serde_json::json!({}));
-                if let Value::Object(result) = result
-                    && result.get("error").is_none_or(Value::is_null)
-                {
-                    result.insert(
-                        "error".to_owned(),
-                        Value::String("tool call ended without a terminal result".to_owned()),
-                    );
-                }
-            });
-            self.running_tools.remove(id);
-        }
-        self.shell_sessions.retain(|_, id| !unfinished.contains(id));
-        self.shell_followups
-            .retain(|_, id| !unfinished.contains(id));
-    }
-
-    pub(crate) fn agent_stream_closed(&mut self) -> bool {
-        let changed = self.active_runs > 0
-            || self.running_tools.iter().any(|id| {
-                !self
-                    .local_shells
-                    .values()
-                    .any(|local_shell| local_shell == id)
-            });
-        self.active_runs = 0;
-        self.run_started_at_unix_ms.clear();
-        self.fail_orphaned_tools();
-        self.transient = self.is_active().then_some(TransientStatus::Thinking);
-        changed
-    }
-
-    fn materialize_compaction_failure(&mut self) {
-        let Some(message) = self.pending_compaction_error.take() else {
-            return;
-        };
-        self.push(EntryKind::ContextCompactionFailed { message });
-    }
-
-    fn projection_error(
-        &mut self,
-        record: &TranscriptRecord,
-        error: serde_json::Error,
-        visible: bool,
-    ) -> ModelChange {
-        let message = format!("Could not render {}: {error}", record.kind());
-        if visible {
-            self.push(EntryKind::Error { message });
-        } else {
-            self.pending_error = Some(message);
-        }
-        ModelChange {
-            changed: visible,
-            ..ModelChange::default()
-        }
-    }
-
-    fn decode_local<T: serde::de::DeserializeOwned>(
-        &self,
-        record: &TranscriptRecord,
-    ) -> Result<T, serde_json::Error> {
-        record.decode_payload()
-    }
-
-    fn push(&mut self, kind: EntryKind) -> EntryId {
-        self.push_with_visibility(kind, false)
-    }
-
-    fn push_with_visibility(&mut self, kind: EntryKind, hidden: bool) -> EntryId {
-        self.push_with_parent(kind, hidden, None)
-    }
-
-    fn push_with_parent(
-        &mut self,
-        kind: EntryKind,
-        hidden: bool,
-        parent: Option<EntryId>,
-    ) -> EntryId {
-        if let Some(parent) = parent {
-            self.join_workflow(parent);
-        }
-        let id = EntryId::from_index(self.next_entry_id);
-        self.next_entry_id = self.next_entry_id.saturating_add(1);
-        self.entry_indices.insert(id, self.entries.len());
-        self.entries.push(TranscriptEntry {
-            id,
-            revision: 1,
-            kind,
-            hidden,
-            parent,
-            trailing_spacer: true,
-        });
-        id
-    }
-
-    fn join_workflow(&mut self, parent: EntryId) {
-        let Some(previous) = self.entries.iter_mut().rev().find(|entry| !entry.hidden) else {
-            return;
-        };
-        if previous.id != parent && previous.parent != Some(parent) {
-            return;
-        }
-        previous.trailing_spacer = false;
-        previous.revision = previous.revision.saturating_add(1);
-    }
-
-    fn code_parent(&self, call_id: &str) -> Option<EntryId> {
-        let (parent_call_id, child) = call_id.rsplit_once("/code-")?;
-        child.parse::<u64>().ok()?;
-        let parent = self.tools.get(parent_call_id).copied()?;
-        let entry = self.entry(parent)?;
-        matches!(&entry.kind, EntryKind::Tool(tool) if tool.name == "exec").then_some(parent)
-    }
-
-    fn requested_code_cell(&self, id: EntryId) -> Option<&str> {
-        let EntryKind::Tool(tool) = &self.entry(id)?.kind else {
-            return None;
-        };
-        tool.arguments.get("cell_id")?.as_str()
-    }
-
-    fn next_code_child_parent(&self, parent: EntryId) -> Option<EntryId> {
-        self.code_children
-            .get(&parent)
-            .is_some_and(|children| !children.is_empty())
-            .then_some(parent)
-    }
-
-    fn register_code_child(&mut self, parent: EntryId, child: EntryId) {
-        self.update(parent, |kind| {
-            if let EntryKind::Tool(tool) = kind {
-                tool.child_count = tool.child_count.saturating_add(1);
-            }
-        });
-        let children = self.code_children.entry(parent).or_default();
-        children.push(child);
-        let child_count = children.len();
-
-        if child_count == 1 {
-            let index = self.index_of(parent).expect("code parent is retained");
-            self.entries[index].hidden = true;
-            self.entries[index].revision = self.entries[index].revision.saturating_add(1);
-            return;
-        }
-        let previous_child = self.code_children[&parent][child_count - 2];
-        if child_count == 2 {
-            let parent_index = self.index_of(parent).expect("code parent is retained");
-            self.entries[parent_index].hidden = false;
-            self.entries[parent_index].trailing_spacer = false;
-            self.entries[parent_index].revision =
-                self.entries[parent_index].revision.saturating_add(1);
-
-            self.move_entry_after(previous_child, parent);
-        }
-
-        let previous_index = self
-            .index_of(previous_child)
-            .expect("code child is retained");
-        self.entries[previous_index].parent = Some(parent);
-        self.entries[previous_index].trailing_spacer = false;
-        self.entries[previous_index].revision =
-            self.entries[previous_index].revision.saturating_add(1);
-
-        let child_index = self.index_of(child).expect("code child is retained");
-        self.entries[child_index].parent = Some(parent);
-        self.entries[child_index].trailing_spacer = true;
-        self.entries[child_index].revision = self.entries[child_index].revision.saturating_add(1);
-        self.move_entry_after(child, previous_child);
-    }
-
-    fn move_entry_after(&mut self, id: EntryId, previous: EntryId) {
-        let index = self.index_of(id).expect("moved entry is retained");
-        let entry = self.entries.remove(index);
-        let previous_index = self
-            .entries
-            .iter()
-            .position(|entry| entry.id == previous)
-            .expect("preceding entry is retained");
-        self.entries.insert(previous_index + 1, entry);
-        self.entry_indices = self
-            .entries
-            .iter()
-            .enumerate()
-            .map(|(index, entry)| (entry.id, index))
-            .collect();
     }
 
     fn trim_message_history(&mut self) -> Option<EntryId> {
@@ -1107,1708 +567,175 @@ impl TranscriptModel {
         Some(id)
     }
 
-    fn update(&mut self, id: EntryId, update: impl FnOnce(&mut EntryKind)) {
-        let Some(index) = self.index_of(id) else {
-            return;
-        };
-        update(&mut self.entries[index].kind);
-        self.entries[index].revision = self.entries[index].revision.saturating_add(1);
+    fn apply_local(&mut self, event: &LocalEvent) -> bool {
+        match event {
+            LocalEvent::UserSubmitted { text, .. } | LocalEvent::UserSteered { text } => {
+                self.push(EntryKind::User {
+                    text: bounded(text),
+                });
+                true
+            }
+            LocalEvent::SessionStarted(start) => {
+                if let Some(parent) = &start.parent_session_id {
+                    *self = self.fork_snapshot();
+                    self.push(EntryKind::ForkedFrom {
+                        session_id: parent.clone(),
+                    });
+                    true
+                } else {
+                    false
+                }
+            }
+            LocalEvent::EffortChanged { to, .. } => {
+                self.push(EntryKind::EffortChanged { to: *to });
+                true
+            }
+            LocalEvent::FastModeChanged { to, .. } => {
+                self.push(EntryKind::FastModeChanged { enabled: *to });
+                true
+            }
+            LocalEvent::ReflectionStarted { .. } => {
+                self.push(EntryKind::ReflectionStarted);
+                true
+            }
+
+            LocalEvent::WorkerSteerFailed { error }
+            | LocalEvent::WorkerStopped { error: Some(error) } => {
+                self.push(EntryKind::Error {
+                    message: bounded(error),
+                });
+                true
+            }
+            LocalEvent::SessionEnded(_) => {
+                self.transient = Some(TransientStatus::Reconnecting);
+                true
+            }
+            // Local notices only affect presentation. Execution and task outcomes require host records.
+            _ => false,
+        }
+    }
+
+    pub(crate) fn view_disconnected(&mut self) -> bool {
+        self.transient = Some(TransientStatus::Reconnecting);
+        true
+    }
+
+    fn push(&mut self, kind: EntryKind) -> EntryId {
+        if self.entries.len() >= MAX_ENTRIES {
+            let removed = self.entries.remove(0).id;
+            self.evicted.push(removed);
+            self.users.retain(|_, id| *id != removed);
+            self.assistants.retain(|_, id| *id != removed);
+            self.reasoning.retain(|_, id| *id != removed);
+            self.tools.retain(|_, id| *id != removed);
+            self.jobs.retain(|_, id| *id != removed);
+            self.running_tools.remove(&removed);
+            self.entry_indices = self
+                .entries
+                .iter()
+                .enumerate()
+                .map(|(i, e)| (e.id, i))
+                .collect();
+        }
+        let id = EntryId::from_index(self.next_entry_id);
+        self.next_entry_id = self.next_entry_id.saturating_add(1);
+        self.entry_indices.insert(id, self.entries.len());
+        self.entries.push(TranscriptEntry {
+            id,
+            revision: 0,
+            kind,
+            hidden: false,
+            parent: None,
+            trailing_spacer: true,
+        });
+        id
+    }
+
+    fn update(&mut self, id: EntryId, change: impl FnOnce(&mut EntryKind)) {
+        if let Some(index) = self.index_of(id) {
+            change(&mut self.entries[index].kind);
+            self.entries[index].revision = self.entries[index].revision.saturating_add(1);
+        }
     }
 }
 
+fn bounded(text: &str) -> String {
+    if text.len() <= MAX_TEXT_BYTES {
+        return text.into();
+    }
+    let mut end = MAX_TEXT_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}\n[Display truncated; full data remains in host history]",
+        &text[..end]
+    )
+}
+fn append_bounded(current: &mut String, text: &str) {
+    if current.len() > MAX_TEXT_BYTES {
+        return;
+    }
+    current.push_str(text);
+    if current.len() > MAX_TEXT_BYTES {
+        *current = bounded(current);
+    }
+}
+fn effort(value: Thinking) -> ReasoningEffort {
+    match value {
+        Thinking::Low => ReasoningEffort::Low,
+        Thinking::Medium => ReasoningEffort::Medium,
+        Thinking::High => ReasoningEffort::High,
+        Thinking::Xhigh => ReasoningEffort::Xhigh,
+        Thinking::Max => ReasoningEffort::Max,
+    }
+}
+fn outcome_name(value: Outcome) -> &'static str {
+    match value {
+        Outcome::Complete => "complete",
+        Outcome::DeliveredWithExceptions => "delivered with exceptions",
+        Outcome::Blocked => "blocked",
+        Outcome::BudgetExhausted => "budget exhausted",
+        Outcome::Cancelled => "cancelled",
+        Outcome::Failed => "failed",
+    }
+}
 fn delivery_advances(current: &MessageDeliveryState, next: &MessageDeliveryState) -> bool {
     current != next && matches!(current, MessageDeliveryState::Admitted { .. })
 }
 
-fn message_phase(phase: Option<AgentMessagePhase>) -> MessagePhase {
-    match phase {
-        Some(AgentMessagePhase::Commentary) => MessagePhase::Commentary,
-        Some(AgentMessagePhase::FinalAnswer) | None => MessagePhase::Final,
-    }
-}
-
-fn visibility(source: &str, kind: &str) -> EventVisibility {
-    if source == "tact" {
-        return match kind {
-            "user.submitted"
-            | "reflection.started"
-            | "worker.turns_interrupted"
-            | "effort.changed"
-            | "fast_mode.changed" => EventVisibility::Persistent,
-            "worker.turn_finished" | "worker.stopped" | "session.ended" => {
-                EventVisibility::ErrorFallback
-            }
-            _ => EventVisibility::StateOnly,
-        };
-    }
-    match kind {
-        "assistant.delta"
-        | "assistant.message"
-        | "reasoning.summary.delta"
-        | "tool.call"
-        | "tool.result"
-        | "model.compaction.completed"
-        | "model.compaction.failed" => EventVisibility::Persistent,
-        "run.started"
-        | "model.warmup.started"
-        | "model.call.started"
-        | "model.compaction.started"
-        | "model.attempt.retrying"
-        | "model.connection.started" => EventVisibility::Transient,
-        "run.error"
-        | "run.failed"
-        | "model.warmup.failed"
-        | "model.call.failed"
-        | "model.attempt.failed"
-        | "model.connection.failed" => EventVisibility::ErrorFallback,
-        _ => EventVisibility::StateOnly,
-    }
-}
-
-fn tool_session_id(result: &Value) -> Option<i64> {
-    if let Value::String(text) = result {
-        let decoded = serde_json::from_str::<Value>(text).ok()?;
-        return decoded.get("session_id").and_then(Value::as_i64);
-    }
-    result.get("session_id").and_then(Value::as_i64)
-}
-
-fn running_code_cell_id(result: &Value) -> Option<&str> {
-    code_mode_status(result)?
-        .strip_prefix("Script running with cell ID ")?
-        .split_whitespace()
-        .next()
-}
-
-fn code_cell_terminal(result: &Value) -> Option<CodeCellTerminal> {
-    let status = code_mode_status(result)?;
-    if status.starts_with("Script completed") {
-        Some(CodeCellTerminal::Completed)
-    } else if status.starts_with("Script terminated") {
-        Some(CodeCellTerminal::Terminated)
+fn display_tool_result(name: &str, value: Value) -> (Value, Option<u64>) {
+    let value = if value.get("task_id").is_some()
+        && value.get("job_id").is_some()
+        && value.get("generation").is_some()
+    {
+        value.get("result").cloned().unwrap_or(value)
     } else {
-        None
-    }
-}
-
-fn code_mode_status(result: &Value) -> Option<&str> {
-    match result {
-        Value::String(status) => Some(status),
-        Value::Array(items) => items
-            .iter()
-            .find_map(|item| item.get("text").and_then(Value::as_str)),
-        Value::Object(fields) => fields.get("text").and_then(Value::as_str),
-        Value::Null | Value::Bool(_) | Value::Number(_) => None,
-    }
-}
-
-fn tool_result_state(tool: &str, status: &str, result: &Value) -> ToolState {
-    if !matches!(status, "success" | "completed") {
-        return ToolState::Failed;
-    }
-    if !matches!(tool, "exec_command" | "write_stdin") {
-        return ToolState::Succeeded;
-    }
-    if result.get("error").is_some_and(|error| !error.is_null()) {
-        return ToolState::Failed;
-    }
-    if let Some(exit_code) = result.get("exit_code").and_then(Value::as_i64) {
-        return if exit_code == 0 {
-            ToolState::Succeeded
-        } else {
-            ToolState::Failed
-        };
-    }
-    if tool_session_id(result).is_some() && result.get("exit_code").is_none() {
-        return ToolState::Running;
-    }
-    ToolState::Failed
-}
-
-fn elapsed_nanoseconds(started_at_unix_ms: u64, finished_at_unix_ms: u64) -> u64 {
-    finished_at_unix_ms
-        .saturating_sub(started_at_unix_ms)
-        .saturating_mul(1_000_000)
-}
-
-fn normalize_result(result: Value) -> Value {
-    let Value::String(encoded) = result else {
-        return result;
+        value
     };
-    serde_json::from_str(&encoded).unwrap_or(Value::String(encoded))
-}
-
-fn merge_shell_result(current: Option<Value>, next: Value) -> Value {
-    let Some(Value::Object(mut current)) = current else {
-        return next;
+    if name != "exec_command" || value.get("status").and_then(|v| v.get("kind")).is_none() {
+        return (value, None);
+    }
+    let decode = |part: &Value| match part["encoding"].as_str() {
+        Some("utf8") => part["data"].as_str().unwrap_or_default().to_owned(),
+        Some("base64") => format!(
+            "[Binary output: {} bytes; original data is in the host receipt]",
+            part["bytes"]
+        ),
+        _ => String::new(),
     };
-    let mut next = match next {
-        Value::Object(next) => next,
-        other => return other,
-    };
-    let previous_output = current
-        .remove("output")
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_default();
-    if let Some(Value::String(output)) = next.get_mut("output") {
-        output.insert_str(0, &previous_output);
-    }
-    Value::Object(next)
-}
-
-#[derive(Deserialize)]
-struct UserSubmitted {
-    text: String,
-}
-
-#[derive(Deserialize)]
-struct UserSteered {
-    text: String,
-}
-
-#[derive(Deserialize)]
-struct ReflectionStarted {
-    #[serde(rename = "id")]
-    _id: u64,
-}
-
-#[derive(Deserialize)]
-struct ShellStarted {
-    id: ShellId,
-    command: String,
-    workspace: PathBuf,
-}
-
-#[derive(Deserialize)]
-struct ShellFinished {
-    id: ShellId,
-    output: String,
-    exit_code: Option<i32>,
-    duration_ns: u64,
-    truncated: bool,
-    error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct EffortChanged {
-    to: ReasoningEffort,
-}
-
-#[derive(Deserialize)]
-struct FastModeChanged {
-    to: bool,
-}
-
-#[derive(Deserialize)]
-struct WorkerTurnFinished {
-    error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct WorkerTurnsInterrupted {
-    count: usize,
-    error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct WorkerSteerFailed {
-    error: String,
-}
-
-#[derive(Deserialize)]
-struct WorkerStopped {
-    error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct SessionEnded {
-    outcome: String,
-    error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ToolCallPayload {
-    call_id: String,
-    tool: String,
-    arguments: Value,
-}
-
-#[derive(Deserialize)]
-struct ToolResultPayload {
-    call_id: String,
-    tool: String,
-    status: String,
-    duration_ns: u64,
-    result: Value,
-    structured_result: Value,
-    metadata: Option<Value>,
-}
-
-#[derive(Deserialize)]
-struct RunDurationPayload {
-    #[serde(default)]
-    duration_ns: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct ErrorPayload {
-    error: String,
-}
-
-#[derive(Deserialize)]
-struct RetryPayload {
-    delay_ns: u64,
-    error: String,
-}
-
-#[derive(Deserialize)]
-struct ConnectionPayload {
-    purpose: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        EntryKind, EventVisibility, MAX_RETAINED_MESSAGE_THREADS, ToolState, TranscriptModel,
-        merge_shell_result, visibility,
-    };
-    use crate::{
-        app::config::ReasoningEffort,
-        sessions::record::{
-            LocalEvent, SessionEnded, SessionOutcome, ShellId, TranscriptRecord, TurnId,
-        },
-    };
-    use nanocodex::agent::events::{AgentEvent, AgentEventKind};
-    use orvek_subagents::{AgentId, AgentMessageUpdate, MessageSender, ThreadId};
-    use serde::Serialize;
-    use serde_json::{json, value::to_raw_value};
-    use std::sync::Arc;
-
-    fn agent(kind: AgentEventKind, payload: impl Serialize) -> TranscriptRecord {
-        agent_at(1, kind, payload)
-    }
-
-    fn agent_at(
-        recorded_at_unix_ms: u64,
-        kind: AgentEventKind,
-        payload: impl Serialize,
-    ) -> TranscriptRecord {
-        agent_for_at("session", recorded_at_unix_ms, kind, payload)
-    }
-
-    fn agent_for_at(
-        request_id: &str,
-        recorded_at_unix_ms: u64,
-        kind: AgentEventKind,
-        payload: impl Serialize,
-    ) -> TranscriptRecord {
-        TranscriptRecord::from_agent(
-            1,
-            recorded_at_unix_ms,
-            AgentEvent {
-                protocol_version: 1,
-                request_id: Arc::from(request_id),
-                seq: 1,
-                kind,
-                payload: to_raw_value(&payload).unwrap().into(),
-            },
-        )
-    }
-
-    fn message_update(state: &str) -> AgentMessageUpdate {
-        message_update_with_id(1, state)
-    }
-
-    fn message_update_with_id(id: u64, state: &str) -> AgentMessageUpdate {
-        serde_json::from_value(json!({
-            "message_id": id,
-            "thread": {
-                "id": id,
-                "participants": [
-                    {"kind": "agent", "agent_id": 1},
-                    {"kind": "agent", "agent_id": 2}
-                ],
-                "messages": [{
-                    "id": id,
-                    "thread_id": id,
-                    "from": {"kind": "agent", "agent_id": 1},
-                    "to": 2,
-                    "priority": "deferred",
-                    "purpose": "coordinate",
-                    "body": "status update"
-                }]
-            },
-            "delivery": {
-                "state": state,
-                "disposition": "queued"
-            }
-        }))
-        .unwrap()
-    }
-
-    #[test]
-    fn message_delivery_updates_upsert_one_entry_per_thread() {
-        let mut model = TranscriptModel::default();
-        let perspective = MessageSender::Agent {
-            agent_id: AgentId::new(1),
-        };
-        let admitted = message_update("admitted");
-
-        assert!(model.apply_message(perspective, admitted.clone()).changed);
-        assert!(!model.apply_message(perspective, admitted).changed);
-        assert!(
-            model
-                .apply_message(perspective, message_update("delivered"))
-                .changed
-        );
-        assert!(
-            !model
-                .apply_message(perspective, message_update("admitted"))
-                .changed
-        );
-
-        assert_eq!(model.entries().len(), 1);
-        let EntryKind::DirectedMessage(thread) = &model.entries()[0].kind else {
-            panic!("message update should create a directed-message entry");
-        };
-        assert_eq!(thread.deliveries.len(), 1);
-        assert!(matches!(
-            thread.deliveries[0].state,
-            orvek_subagents::MessageDeliveryState::Delivered { .. }
-        ));
-
-        let mut snapshot = model.fork_snapshot();
-        assert!(
-            !snapshot
-                .apply_message(perspective, message_update("delivered"))
-                .changed
-        );
-        assert_eq!(snapshot.entries().len(), 1);
-    }
-
-    #[test]
-    fn completed_turn_records_the_full_run_duration() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent_at(1_000, AgentEventKind::RunStarted, json!({})));
-        model.apply(&agent_at(
-            66_432,
-            AgentEventKind::RunCompleted,
-            json!({"duration_ns": 70_123_000_000_u64}),
-        ));
-
-        assert!(matches!(
-            model.entries().last().map(|entry| &entry.kind),
-            Some(EntryKind::TurnCompleted {
-                duration_ns: 70_123_000_000
-            })
-        ));
-    }
-
-    #[test]
-    fn interrupting_without_active_turns_is_a_no_op() {
-        let mut model = TranscriptModel::default();
-        let record = TranscriptRecord::from_local(
-            1,
-            1,
-            LocalEvent::WorkerTurnsInterrupted {
-                count: 0,
-                error: None,
-            },
-        )
-        .unwrap();
-
-        let update = model.apply(&record);
-
-        assert!(!update.changed);
-        assert!(model.entries().is_empty());
-    }
-
-    #[test]
-    fn failed_turn_does_not_claim_completion() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent_at(1_000, AgentEventKind::RunStarted, json!({})));
-        model.apply(&agent_at(2_000, AgentEventKind::RunFailed, json!({})));
-
-        assert!(
-            !model
-                .entries()
-                .iter()
-                .any(|entry| matches!(entry.kind, EntryKind::TurnCompleted { .. }))
-        );
-    }
-
-    #[test]
-    fn malformed_completion_timing_does_not_leave_the_run_active() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent_at(1_000, AgentEventKind::RunStarted, json!({})));
-        model.apply(&agent_at(
-            2_000,
-            AgentEventKind::RunCompleted,
-            json!("invalid"),
-        ));
-
-        assert!(!model.is_active());
-
-        model.apply(&agent_at(3_000, AgentEventKind::RunStarted, json!({})));
-        model.apply(&agent_at(
-            4_000,
-            AgentEventKind::RunCompleted,
-            json!({"duration_ns": 1_000_000_000_u64}),
-        ));
-        assert!(!model.is_active());
-        assert!(matches!(
-            model.entries().last().map(|entry| &entry.kind),
-            Some(EntryKind::TurnCompleted {
-                duration_ns: 1_000_000_000
-            })
-        ));
-    }
-
-    #[test]
-    fn completed_directed_message_history_is_bounded() {
-        let mut model = TranscriptModel::default();
-        let perspective = MessageSender::Agent {
-            agent_id: AgentId::new(1),
-        };
-
-        for id in 1..=u64::try_from(MAX_RETAINED_MESSAGE_THREADS + 1).unwrap() {
-            assert!(
-                model
-                    .apply_message(perspective, message_update_with_id(id, "delivered"))
-                    .changed
-            );
-        }
-
-        assert_eq!(model.entries().len(), MAX_RETAINED_MESSAGE_THREADS);
-        assert_eq!(model.message_threads.len(), MAX_RETAINED_MESSAGE_THREADS);
-        assert!(model.entries().iter().all(|entry| {
-            matches!(
-                &entry.kind,
-                EntryKind::DirectedMessage(message) if message.thread.id != ThreadId::new(1)
-            )
-        }));
-    }
-
-    #[test]
-    fn successful_internal_events_are_deliberately_omitted() {
-        let state_only = [
-            "api.event",
-            "run.steered",
-            "run.completed",
-            "model.warmup.completed",
-            "model.call.completed",
-            "model.attempt.started",
-            "model.connection.completed",
-        ];
-        for kind in state_only {
-            assert_eq!(
-                visibility("agent", kind),
-                EventVisibility::StateOnly,
-                "{kind}"
-            );
-        }
-    }
-
-    #[test]
-    fn every_stable_agent_event_has_an_explicit_visibility() {
-        let cases = [
-            ("api.event", EventVisibility::StateOnly),
-            ("assistant.delta", EventVisibility::Persistent),
-            ("assistant.message", EventVisibility::Persistent),
-            ("reasoning.summary.delta", EventVisibility::Persistent),
-            ("run.started", EventVisibility::Transient),
-            ("run.steered", EventVisibility::StateOnly),
-            ("run.error", EventVisibility::ErrorFallback),
-            ("run.completed", EventVisibility::StateOnly),
-            ("run.failed", EventVisibility::ErrorFallback),
-            ("tool.call", EventVisibility::Persistent),
-            ("tool.result", EventVisibility::Persistent),
-            ("model.warmup.started", EventVisibility::Transient),
-            ("model.warmup.completed", EventVisibility::StateOnly),
-            ("model.warmup.failed", EventVisibility::ErrorFallback),
-            ("model.call.started", EventVisibility::Transient),
-            ("model.call.completed", EventVisibility::StateOnly),
-            ("model.call.failed", EventVisibility::ErrorFallback),
-            ("model.compaction.started", EventVisibility::Transient),
-            ("model.compaction.completed", EventVisibility::Persistent),
-            ("model.compaction.failed", EventVisibility::Persistent),
-            ("model.attempt.started", EventVisibility::StateOnly),
-            ("model.attempt.failed", EventVisibility::ErrorFallback),
-            ("model.attempt.retrying", EventVisibility::Transient),
-            ("model.connection.started", EventVisibility::Transient),
-            ("model.connection.completed", EventVisibility::StateOnly),
-            ("model.connection.failed", EventVisibility::ErrorFallback),
-        ];
-
-        assert_eq!(cases.len(), 26);
-        for (kind, expected) in cases {
-            assert_eq!(visibility("agent", kind), expected, "{kind}");
-        }
-    }
-
-    #[test]
-    fn canonical_message_replaces_streamed_deltas() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(
-            AgentEventKind::AssistantDelta,
-            json!({"model_call_index": 1, "item_id": "a", "phase": "final_answer", "text": "hel"}),
-        ));
-        model.apply(&agent(
-            AgentEventKind::AssistantMessage,
-            json!({"model_call_index": 1, "item_id": "a", "phase": "final_answer", "text": "hello"}),
-        ));
-
-        assert_eq!(model.entries().len(), 1);
-        assert!(matches!(
-            &model.entries()[0].kind,
-            EntryKind::Assistant { text, complete: true, .. } if text == "hello"
-        ));
-    }
-
-    #[test]
-    fn ordinary_reasoning_deltas_remain_one_streamed_step() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(
-            AgentEventKind::ReasoningSummaryDelta,
-            json!({"model_call_index": 1, "text": "Inspecting the request"}),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ReasoningSummaryDelta,
-            json!({"model_call_index": 1, "text": " and event ordering"}),
-        ));
-
-        assert!(matches!(
-            &model.entries()[0].kind,
-            EntryKind::Reasoning { text } if text == "Inspecting the request and event ordering"
-        ));
-    }
-
-    #[test]
-    fn concurrent_runs_do_not_share_reasoning_blocks() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent_for_at(
-            "run-a",
-            1,
-            AgentEventKind::ReasoningSummaryDelta,
-            json!({"model_call_index": 1, "text": "run a"}),
-        ));
-        model.apply(&agent_for_at(
-            "run-b",
-            2,
-            AgentEventKind::ReasoningSummaryDelta,
-            json!({"model_call_index": 1, "text": "run b"}),
-        ));
-
-        let reasoning = model
-            .entries()
-            .iter()
-            .filter_map(|entry| match &entry.kind {
-                EntryKind::Reasoning { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(reasoning, ["run a", "run b"]);
-    }
-
-    #[test]
-    fn reasoning_after_messages_and_tools_starts_new_blocks() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(AgentEventKind::RunStarted, json!({})));
-        model.apply(&agent(
-            AgentEventKind::ReasoningSummaryDelta,
-            json!({"model_call_index": 1, "text": "before message"}),
-        ));
-        model.apply(&agent(
-            AgentEventKind::AssistantMessage,
-            json!({
-                "model_call_index": 1,
-                "item_id": "message",
-                "phase": "commentary",
-                "text": "status update",
-            }),
-        ));
-        model.apply(&agent(AgentEventKind::RunCompleted, json!({})));
-
-        model.apply(&agent(AgentEventKind::RunStarted, json!({})));
-        model.apply(&agent(
-            AgentEventKind::ReasoningSummaryDelta,
-            json!({"model_call_index": 1, "text": "after message"}),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "tool",
-                "tool": "exec_command",
-                "arguments": {"cmd": "true"},
-            }),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ReasoningSummaryDelta,
-            json!({"model_call_index": 1, "text": "after tool"}),
-        ));
-
-        let reasoning = model
-            .entries()
-            .iter()
-            .filter_map(|entry| match &entry.kind {
-                EntryKind::Reasoning { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(reasoning, ["before message", "after message", "after tool"]);
-    }
-
-    #[test]
-    fn reasoning_after_in_place_shell_followup_starts_new_block() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent_at(
-            1_000,
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "shell",
-                "tool": "exec_command",
-                "arguments": {"cmd": "cargo test"},
-            }),
-        ));
-        model.apply(&agent_at(
-            2_000,
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "shell",
-                "tool": "exec_command",
-                "status": "completed",
-                "duration_ns": 1_u64,
-                "result": "Process running with session ID 7",
-                "structured_result": {
-                    "output": "running",
-                    "session_id": 7,
-                    "wall_time_seconds": 0.0,
-                },
-                "metadata": null,
-            }),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ReasoningSummaryDelta,
-            json!({"model_call_index": 1, "text": "before followup"}),
-        ));
-        model.apply(&agent_at(
-            3_000,
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "stdin",
-                "tool": "write_stdin",
-                "arguments": {"session_id": 7},
-            }),
-        ));
-        model.apply(&agent_at(
-            4_000,
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "stdin",
-                "tool": "write_stdin",
-                "status": "completed",
-                "duration_ns": 1_u64,
-                "result": "Process exited with code 0",
-                "structured_result": {
-                    "output": "done",
-                    "exit_code": 0,
-                    "wall_time_seconds": 0.0,
-                },
-                "metadata": null,
-            }),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ReasoningSummaryDelta,
-            json!({"model_call_index": 1, "text": "after followup"}),
-        ));
-
-        let reasoning = model
-            .entries()
-            .iter()
-            .filter_map(|entry| match &entry.kind {
-                EntryKind::Reasoning { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(reasoning, ["before followup", "after followup"]);
-    }
-
-    #[test]
-    fn ignored_message_update_does_not_split_reasoning() {
-        let mut model = TranscriptModel::default();
-        let perspective = MessageSender::Agent {
-            agent_id: AgentId::new(1),
-        };
-        let admitted = message_update("admitted");
-        assert!(model.apply_message(perspective, admitted.clone()).changed);
-        model.apply(&agent(
-            AgentEventKind::ReasoningSummaryDelta,
-            json!({"model_call_index": 1, "text": "before no-op"}),
-        ));
-
-        assert!(!model.apply_message(perspective, admitted).changed);
-        model.apply(&agent(
-            AgentEventKind::ReasoningSummaryDelta,
-            json!({"model_call_index": 1, "text": " after no-op"}),
-        ));
-
-        let reasoning = model
-            .entries()
-            .iter()
-            .filter_map(|entry| match &entry.kind {
-                EntryKind::Reasoning { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(reasoning, ["before no-op after no-op"]);
-    }
-
-    #[test]
-    fn canonical_compaction_events_use_typed_projection() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(AgentEventKind::RunStarted, json!({})));
-        model.apply(&agent(
-            AgentEventKind::ModelCompactionCompleted,
-            json!({
-                "after_model_call_index": 1,
-                "attempt": 1,
-                "connection_generation": 1,
-                "status": "completed",
-                "duration_ns": 42,
-                "time_to_first_event_ns": 10,
-                "time_to_first_output_ns": 20,
-                "usage": null
-            }),
-        ));
-
-        assert!(matches!(
-            model.entries().last().map(|entry| &entry.kind),
-            Some(EntryKind::ContextCompacted {
-                duration_ns: 42,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn recovered_retry_leaves_no_persistent_entry() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(AgentEventKind::RunStarted, json!({})));
-        model.apply(&agent(
-            AgentEventKind::ModelAttemptRetrying,
-            json!({"delay_ns": 500_000_000, "error": "temporary"}),
-        ));
-        assert!(model.transient().is_some());
-        model.apply(&agent(AgentEventKind::ModelConnectionCompleted, json!({})));
-
-        assert!(model.entries().is_empty());
-        assert!(model.transient().is_some());
-    }
-
-    #[test]
-    fn local_compaction_needs_no_provider_attempt_and_cancellation_clears_status() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(AgentEventKind::ModelCompactionStarted, json!({})));
-        assert!(model.transient().is_some());
-        model.apply(&agent(
-            AgentEventKind::ModelCompactionFailed,
-            json!({
-                "after_model_call_index": 0, "duration_ns": 5, "cancelled": true,
-                "error": "Context compaction was cancelled"
-            }),
-        ));
-        assert!(model.transient().is_none());
-        model.apply(&agent(
-            AgentEventKind::ModelCompactionCompleted,
-            json!({
-                "after_model_call_index": 0, "status": "completed", "duration_ns": 12,
-                "strategy": "snapcompact", "pages": 3, "before_tokens": 80000, "after_tokens": 60000
-            }),
-        ));
-        assert!(matches!(
-            model.entries().last().map(|entry| &entry.kind),
-            Some(EntryKind::ContextCompacted {
-                pages: Some(3),
-                estimated_tokens: Some((80000, 60000)),
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn run_failure_adds_one_best_error() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(
-            AgentEventKind::RunError,
-            json!({"message": "service unavailable"}),
-        ));
-        model.apply(&agent(AgentEventKind::RunFailed, json!({})));
-        model.apply(&agent(AgentEventKind::RunFailed, json!({})));
-
-        assert_eq!(
-            model
-                .entries()
-                .iter()
-                .filter(|entry| matches!(entry.kind, EntryKind::Error { .. }))
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn closing_a_session_fails_tools_without_terminal_results() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(AgentEventKind::RunStarted, json!({})));
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({"call_id": "shell-1", "tool": "exec_command", "arguments": {"cmd": "sleep 5"}}),
-        ));
-        model.apply(
-            &TranscriptRecord::from_local(
-                2,
-                2,
-                LocalEvent::SessionEnded(SessionEnded {
-                    outcome: SessionOutcome::Closed,
-                    error: None,
-                }),
-            )
-            .unwrap(),
-        );
-
-        assert!(!model.has_running_tools());
-        assert!(matches!(
-            &model.entries()[0].kind,
-            EntryKind::Tool(tool) if tool.state == ToolState::Failed
-        ));
-    }
-
-    #[test]
-    fn local_user_event_is_persistent() {
-        let mut model = TranscriptModel::default();
-        let record = TranscriptRecord::from_local(
-            1,
-            1,
-            LocalEvent::UserSubmitted {
-                id: TurnId::new(3),
-                text: "hello".to_owned(),
-            },
-        )
-        .unwrap();
-        model.apply(&record);
-
-        assert!(
-            matches!(&model.entries()[0].kind, EntryKind::User { text, .. } if text == "hello")
-        );
-    }
-
-    #[test]
-    fn reflection_start_is_a_persistent_typed_entry() {
-        let mut model = TranscriptModel::default();
-        let record = TranscriptRecord::from_local(
-            1,
-            1,
-            LocalEvent::ReflectionStarted { id: TurnId::new(3) },
-        )
-        .unwrap();
-
-        model.apply(&record);
-
-        assert!(matches!(
-            model.entries().first().map(|entry| &entry.kind),
-            Some(EntryKind::ReflectionStarted)
-        ));
-    }
-
-    #[test]
-    fn applied_session_settings_are_visible_transcript_entries() {
-        let mut model = TranscriptModel::default();
-        model.apply(
-            &TranscriptRecord::from_local(
-                1,
-                1,
-                LocalEvent::EffortChanged {
-                    from: ReasoningEffort::Medium,
-                    to: ReasoningEffort::High,
-                },
-            )
-            .unwrap(),
-        );
-        model.apply(
-            &TranscriptRecord::from_local(
-                2,
-                2,
-                LocalEvent::FastModeChanged {
-                    from: false,
-                    to: true,
-                },
-            )
-            .unwrap(),
-        );
-
-        assert!(matches!(
-            model.entries()[0].kind,
-            EntryKind::EffortChanged {
-                to: ReasoningEffort::High
-            }
-        ));
-        assert!(matches!(
-            model.entries()[1].kind,
-            EntryKind::FastModeChanged { enabled: true }
-        ));
-    }
-
-    #[test]
-    fn fork_snapshot_keeps_stable_history_and_drops_the_active_turn() {
-        let mut model = TranscriptModel::default();
-        for (sequence, text) in [(1, "completed"), (2, "still running")] {
-            model.apply(
-                &TranscriptRecord::from_local(
-                    sequence,
-                    sequence,
-                    LocalEvent::UserSubmitted {
-                        id: TurnId::new(sequence),
-                        text: text.to_owned(),
-                    },
-                )
-                .unwrap(),
-            );
-        }
-        model.apply(&agent(AgentEventKind::RunStarted, json!({})));
-
-        let snapshot = model.fork_snapshot();
-
-        assert_eq!(snapshot.entries().len(), 1);
-        assert!(matches!(
-            &snapshot.entries()[0].kind,
-            EntryKind::User { text } if text == "completed"
-        ));
-        assert!(!snapshot.is_active());
-        assert!(!snapshot.has_running_tools());
-        assert!(snapshot.transient().is_none());
-    }
-
-    #[test]
-    fn local_shell_lifecycle_projects_to_one_tool_entry() {
-        let mut model = TranscriptModel::default();
-        let started = TranscriptRecord::from_local(
-            1,
-            1,
-            LocalEvent::ShellStarted {
-                id: ShellId::new(7),
-                command: "printf hello".to_owned(),
-                workspace: "/work".into(),
-            },
-        )
-        .unwrap();
-        let finished = TranscriptRecord::from_local(
-            2,
-            2,
-            LocalEvent::ShellFinished {
-                id: ShellId::new(7),
-                output: "hello".to_owned(),
-                exit_code: Some(0),
-                duration_ns: 10,
-                truncated: false,
-                error: None,
-            },
-        )
-        .unwrap();
-
-        model.apply(&started);
-        assert!(model.has_running_tools());
-        model.apply(&finished);
-
-        assert!(!model.has_running_tools());
-        assert!(matches!(
-            &model.entries()[0].kind,
-            EntryKind::Tool(tool)
-                if tool.state == ToolState::Succeeded
-                    && tool.result.as_ref().and_then(|value| value["output"].as_str())
-                        == Some("hello")
-        ));
-    }
-
-    #[test]
-    fn local_shell_without_an_exit_code_is_failed() {
-        let mut model = TranscriptModel::default();
-        for record in [
-            TranscriptRecord::from_local(
-                1,
-                1,
-                LocalEvent::ShellStarted {
-                    id: ShellId::new(7),
-                    command: "sleep 100".to_owned(),
-                    workspace: "/work".into(),
-                },
-            )
-            .unwrap(),
-            TranscriptRecord::from_local(
-                2,
-                2,
-                LocalEvent::ShellFinished {
-                    id: ShellId::new(7),
-                    output: String::new(),
-                    exit_code: None,
-                    duration_ns: 10,
-                    truncated: false,
-                    error: None,
-                },
-            )
-            .unwrap(),
-        ] {
-            model.apply(&record);
-        }
-
-        assert!(!model.has_running_tools());
-        assert!(matches!(
-            &model.entries()[0].kind,
-            EntryKind::Tool(tool) if tool.state == ToolState::Failed
-        ));
-    }
-
-    #[test]
-    fn applied_steer_becomes_a_user_entry_only_when_persisted() {
-        let mut model = TranscriptModel::default();
-        let record = TranscriptRecord::from_local(
-            1,
-            1,
-            LocalEvent::UserSteered {
-                text: "narrow the scope".to_owned(),
-            },
-        )
-        .unwrap();
-
-        model.apply(&record);
-
-        assert!(matches!(
-            &model.entries()[0].kind,
-            EntryKind::User { text, .. } if text == "narrow the scope"
-        ));
-    }
-
-    #[test]
-    fn activity_tracks_all_concurrent_runs() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(AgentEventKind::RunStarted, json!({})));
-        model.apply(&agent(AgentEventKind::RunStarted, json!({})));
-
-        model.apply(&agent(AgentEventKind::RunCompleted, json!({})));
-        assert!(model.is_active());
-
-        model.apply(&agent(AgentEventKind::RunCompleted, json!({})));
-        assert!(!model.is_active());
-    }
-
-    #[test]
-    fn assistant_delta_uses_a_streaming_status() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(AgentEventKind::RunStarted, json!({})));
-
-        model.apply(&agent(
-            AgentEventKind::AssistantDelta,
-            json!({"model_call_index": 1, "text": "hello"}),
-        ));
-
-        assert_eq!(model.transient(), Some(&super::TransientStatus::Responding));
-    }
-
-    #[test]
-    fn shell_followups_preserve_output_and_replace_process_state() {
-        let merged = merge_shell_result(
-            Some(json!({
-                "output": "first ",
-                "session_id": 7,
-                "wall_time_seconds": 1.0,
-            })),
-            json!({
-                "output": "second",
-                "exit_code": 0,
-                "wall_time_seconds": 2.0,
-            }),
-        );
-
-        assert_eq!(merged["output"], "first second");
-        assert_eq!(merged["exit_code"], 0);
-        assert_eq!(merged["wall_time_seconds"], 2.0);
-        assert!(merged.get("session_id").is_none());
-    }
-
-    #[test]
-    fn yielded_shell_sessions_remain_running_until_they_exit() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent_at(
-            1_000,
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "shell",
-                "tool": "exec_command",
-                "arguments": {"cmd": "cargo test"},
-            }),
-        ));
-        model.apply(&agent_at(
-            2_000,
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "shell",
-                "tool": "exec_command",
-                "status": "completed",
-                "duration_ns": 1_u64,
-                "result": "Wall time: 0.0000 seconds\nProcess running with session ID 7\nOutput:\nrunning",
-                "structured_result": {
-                    "output": "running",
-                    "session_id": 7,
-                    "wall_time_seconds": 0.0,
-                },
-                "metadata": null,
-            }),
-        ));
-
-        assert!(matches!(
-            &model.entries()[0].kind,
-            EntryKind::Tool(tool) if tool.state == ToolState::Running
-        ));
-
-        model.apply(&agent_at(
-            3_000,
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "stdin",
-                "tool": "write_stdin",
-                "arguments": {"session_id": 7},
-            }),
-        ));
-        model.apply(&agent_at(
-            4_500,
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "stdin",
-                "tool": "write_stdin",
-                "status": "completed",
-                "duration_ns": 2_u64,
-                "result": "Wall time: 0.0000 seconds\nProcess exited with code 0\nOutput:\n done",
-                "structured_result": {
-                    "output": " done",
-                    "exit_code": 0,
-                    "wall_time_seconds": 0.0,
-                },
-                "metadata": null,
-            }),
-        ));
-
-        assert!(matches!(
-            &model.entries()[0].kind,
-            EntryKind::Tool(tool)
-                if tool.state == ToolState::Succeeded
-                    && tool.duration_ns == Some(3_500_000_000)
-                    && tool.result.as_ref().and_then(|result| result.get("output"))
-                        == Some(&json!("running done"))
-        ));
-    }
-
-    #[test]
-    fn code_mode_shell_followups_remain_visible_workflow_children() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent_at(
-            1_000,
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "workflow",
-                "tool": "exec",
-                "arguments": "await tools.exec_command({cmd: 'cargo test'})",
-            }),
-        ));
-        model.apply(&agent_at(
-            2_000,
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "workflow/code-1",
-                "tool": "exec_command",
-                "arguments": {"cmd": "cargo test"},
-            }),
-        ));
-        model.apply(&agent_at(
-            3_000,
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "workflow/code-1",
-                "tool": "exec_command",
-                "status": "completed",
-                "duration_ns": 1_u64,
-                "result": "Wall time: 0.0000 seconds\nProcess running with session ID 7\nOutput:\nrunning",
-                "structured_result": {
-                    "output": "running",
-                    "session_id": 7,
-                    "wall_time_seconds": 0.0,
-                },
-                "metadata": null,
-            }),
-        ));
-
-        model.apply(&agent_at(
-            4_000,
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "workflow/code-2",
-                "tool": "write_stdin",
-                "arguments": {"session_id": 7},
-            }),
-        ));
-
-        assert_eq!(model.entries().len(), 3);
-        assert_eq!(model.entries()[2].parent, Some(model.entries()[0].id));
-        assert!(matches!(
-            &model.entries()[2].kind,
-            EntryKind::Tool(tool)
-                if tool.name == "write_stdin" && tool.state == ToolState::Running
-        ));
-
-        model.apply(&agent_at(
-            5_000,
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "workflow/code-2",
-                "tool": "write_stdin",
-                "status": "completed",
-                "duration_ns": 2_u64,
-                "result": "Wall time: 0.0000 seconds\nProcess running with session ID 7\nOutput:\n still",
-                "structured_result": {
-                    "output": " still",
-                    "session_id": 7,
-                    "wall_time_seconds": 0.0,
-                },
-                "metadata": null,
-            }),
-        ));
-
-        assert!(matches!(
-            &model.entries()[1].kind,
-            EntryKind::Tool(tool) if tool.state == ToolState::Running
-        ));
-        assert!(matches!(
-            &model.entries()[2].kind,
-            EntryKind::Tool(tool) if tool.state == ToolState::Succeeded
-        ));
-
-        model.apply(&agent_at(
-            6_000,
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "workflow/code-3",
-                "tool": "write_stdin",
-                "arguments": {"session_id": 7},
-            }),
-        ));
-        model.apply(&agent_at(
-            7_000,
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "workflow/code-3",
-                "tool": "write_stdin",
-                "status": "completed",
-                "duration_ns": 2_u64,
-                "result": "Wall time: 0.0000 seconds\nProcess exited with code 0\nOutput:\n done",
-                "structured_result": {
-                    "output": " done",
-                    "exit_code": 0,
-                    "wall_time_seconds": 0.0,
-                },
-                "metadata": null,
-            }),
-        ));
-
-        for entry in &model.entries()[1..] {
-            assert!(matches!(
-                &entry.kind,
-                EntryKind::Tool(tool) if tool.state == ToolState::Succeeded
-            ));
-        }
-        assert!(model.shell_sessions.is_empty());
-        let EntryKind::Tool(shell) = &model.entries()[1].kind else {
-            panic!("original shell should remain a tool entry");
-        };
-        assert_eq!(
-            shell.result.as_ref().unwrap()["output"],
-            "running still done"
-        );
-    }
-
-    #[test]
-    fn terminating_a_code_cell_after_a_failed_wait_fails_its_unfinished_shell() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "workflow",
-                "tool": "exec",
-                "arguments": "await tools.exec_command({cmd: 'sleep 100'})",
-            }),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "workflow/code-1",
-                "tool": "exec_command",
-                "arguments": {"cmd": "sleep 100"},
-            }),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "workflow/code-1",
-                "tool": "exec_command",
-                "status": "completed",
-                "duration_ns": 1_u64,
-                "result": "Process running with session ID 7",
-                "structured_result": {
-                    "output": "",
-                    "session_id": 7,
-                    "wall_time_seconds": 0.0,
-                },
-                "metadata": null,
-            }),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "workflow",
-                "tool": "exec",
-                "status": "completed",
-                "duration_ns": 2_u64,
-                "result": [{"text": "Script running with cell ID 1"}],
-                "structured_result": [{"text": "Script running with cell ID 1"}],
-                "metadata": null,
-            }),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "busy-wait",
-                "tool": "wait",
-                "arguments": {"cell_id": "1"},
-            }),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "busy-wait",
-                "tool": "wait",
-                "status": "failed",
-                "duration_ns": 3_u64,
-                "result": [{
-                    "text": "Script failed\nWall time: 0.001 seconds\nOutput:\nexec cell 1 already has an active observer"
-                }],
-                "structured_result": [{
-                    "text": "Script failed\nWall time: 0.001 seconds\nOutput:\nexec cell 1 already has an active observer"
-                }],
-                "metadata": null,
-            }),
-        ));
-        assert!(model.has_running_tools());
-
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "terminate",
-                "tool": "wait",
-                "arguments": {"cell_id": "1", "terminate": true},
-            }),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "terminate",
-                "tool": "wait",
-                "status": "completed",
-                "duration_ns": 4_u64,
-                "result": [{"text": "Script terminated"}],
-                "structured_result": [{"text": "Script terminated"}],
-                "metadata": null,
-            }),
-        ));
-
-        assert!(!model.has_running_tools());
-        assert!(matches!(
-            &model.entries()[1].kind,
-            EntryKind::Tool(tool)
-                if tool.state == ToolState::Failed
-                    && tool.result.as_ref().and_then(|result| result["error"].as_str())
-                        == Some("tool call ended without a terminal result")
-        ));
-    }
-
-    #[test]
-    fn killed_shell_result_resolves_as_failed() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "shell",
-                "tool": "exec_command",
-                "arguments": {"cmd": "sleep 100"},
-            }),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "shell",
-                "tool": "exec_command",
-                "status": "completed",
-                "duration_ns": 1_u64,
-                "result": "Wall time: 0.0000 seconds\nOutput:\n",
-                "structured_result": {"output": "", "wall_time_seconds": 0.0},
-                "metadata": null,
-            }),
-        ));
-
-        assert!(!model.has_running_tools());
-        assert!(matches!(
-            &model.entries()[0].kind,
-            EntryKind::Tool(tool) if tool.state == ToolState::Failed
-        ));
-    }
-
-    #[test]
-    fn ending_a_run_fails_tools_missing_their_terminal_result() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(AgentEventKind::RunStarted, json!({})));
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "shell",
-                "tool": "exec_command",
-                "arguments": {"cmd": "sleep 100"},
-            }),
-        ));
-
-        model.apply(&agent(AgentEventKind::RunCompleted, json!({})));
-
-        assert!(!model.has_running_tools());
-        assert!(matches!(
-            &model.entries()[0].kind,
-            EntryKind::Tool(tool)
-                if tool.state == ToolState::Failed
-                    && tool.result.as_ref().and_then(|result| result["error"].as_str())
-                        == Some("tool call ended without a terminal result")
-        ));
-    }
-
-    #[test]
-    fn code_mode_tools_promote_into_nested_chronological_entries() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "workflow",
-                "tool": "exec",
-                "arguments": "await tools.exec_command({cmd: 'cargo test'})",
-            }),
-        ));
-        let parent_revision = model.entries()[0].revision;
-
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "workflow/code-1",
-                "tool": "exec_command",
-                "arguments": {"cmd": "cargo test"},
-            }),
-        ));
-
-        assert_eq!(model.entries().len(), 2);
-        assert!(model.entries()[0].hidden);
-        let EntryKind::Tool(workflow) = &model.entries()[0].kind else {
-            panic!("code workflow should remain a tool entry");
-        };
-        assert_eq!(workflow.child_count, 1);
-        assert!(model.entries()[0].revision > parent_revision);
-        assert!(model.entries()[0].trailing_spacer);
-        assert_eq!(model.entries()[1].parent, None);
-        assert!(model.entries()[1].trailing_spacer);
-        assert!(matches!(
-            &model.entries()[1].kind,
-            EntryKind::Tool(tool)
-                if tool.name == "exec_command" && tool.state == ToolState::Running
-        ));
-
-        model.apply(&agent(
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "workflow/code-1",
-                "tool": "exec_command",
-                "status": "completed",
-                "duration_ns": 10,
-                "result": "Wall time: 0.0000 seconds\nProcess exited with code 0\nOutput:\nok",
-                "structured_result": {
-                    "output": "ok",
-                    "exit_code": 0,
-                    "wall_time_seconds": 0.0,
-                },
-                "metadata": null,
-            }),
-        ));
-
-        assert!(matches!(
-            &model.entries()[1].kind,
-            EntryKind::Tool(tool)
-                if tool.state == ToolState::Succeeded
-                    && tool.result.as_ref().unwrap()["output"] == "ok"
-        ));
-
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "workflow/code-2",
-                "tool": "memory",
-                "arguments": {"operation": "scan", "query": "test"},
-            }),
-        ));
-
-        let EntryKind::Tool(workflow) = &model.entries()[0].kind else {
-            panic!("code workflow should remain a tool entry");
-        };
-        assert_eq!(workflow.child_count, 2);
-        assert!(!model.entries()[0].hidden);
-        assert!(!model.entries()[0].trailing_spacer);
-        assert_eq!(model.entries()[1].parent, Some(model.entries()[0].id));
-        assert_eq!(model.entries()[2].parent, Some(model.entries()[0].id));
-        assert!(!model.entries()[1].trailing_spacer);
-        assert!(model.entries()[2].trailing_spacer);
-    }
-
-    #[test]
-    fn late_code_children_remain_with_the_original_batch() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({"call_id": "workflow", "tool": "exec", "arguments": "text('start')"}),
-        ));
-        for child in 1..=2 {
-            model.apply(&agent(
-                AgentEventKind::ToolCall,
-                json!({
-                    "call_id": format!("workflow/code-{child}"),
-                    "tool": "wait",
-                    "arguments": {"cell_id": "cell"},
-                }),
-            ));
-        }
-        model.apply(&agent(
-            AgentEventKind::AssistantMessage,
-            json!({
-                "model_call_index": 1,
-                "item_id": "message",
-                "phase": "final_answer",
-                "text": "still waiting",
-            }),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "workflow/code-3",
-                "tool": "wait",
-                "arguments": {"cell_id": "cell"},
-            }),
-        ));
-
-        let parent = model.entries()[0].id;
-        assert!(
-            model.entries()[1..=3]
-                .iter()
-                .all(|entry| entry.parent == Some(parent))
-        );
-        assert!(matches!(
-            &model.entries()[4].kind,
-            EntryKind::Assistant { text, .. } if text == "still waiting"
-        ));
-    }
-
-    #[test]
-    fn resumed_single_code_child_keeps_its_workflow_association_and_timeline_position() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({"call_id": "workflow", "tool": "exec", "arguments": "text('start')"}),
-        ));
-        let parent = model.entries()[0].id;
-        model.apply(&agent(
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "workflow",
-                "tool": "exec",
-                "status": "completed",
-                "duration_ns": 10,
-                "result": [{"text": "Script running"}],
-                "structured_result": [{"text": "Script running"}],
-                "metadata": null,
-            }),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({"call_id": "wait-1", "tool": "wait", "arguments": {"cell_id": "1"}}),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "workflow/code-2",
-                "tool": "apply_patch",
-                "arguments": "*** Begin Patch\n*** End Patch",
-            }),
-        ));
-
-        assert_eq!(model.entries().len(), 3);
-        assert!(model.entries()[1].hidden);
-        assert_eq!(model.entries()[2].parent, None);
-        assert_eq!(model.code_children[&parent], vec![model.entries()[2].id]);
-        assert!(matches!(
-            &model.entries()[2].kind,
-            EntryKind::Tool(tool) if tool.name == "apply_patch"
-        ));
-    }
-
-    #[test]
-    fn only_canonical_code_child_ids_are_nested() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({"call_id": "workflow", "tool": "exec", "arguments": "text('start')"}),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "workflow/not-code-1",
-                "tool": "memory",
-                "arguments": {"operation": "scan", "query": "test"},
-            }),
-        ));
-
-        assert_eq!(model.entries()[1].parent, None);
-        let EntryKind::Tool(workflow) = &model.entries()[0].kind else {
-            panic!("workflow should remain a tool entry");
-        };
-        assert_eq!(workflow.child_count, 0);
-    }
-
-    #[test]
-    fn code_mode_waits_remain_visible_workflow_children() {
-        let mut model = TranscriptModel::default();
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({"call_id": "workflow", "tool": "exec", "arguments": "await tools.wait({})"}),
-        ));
-        model.apply(&agent(
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "workflow/code-1",
-                "tool": "wait",
-                "arguments": {"cell_id": "cell-1"},
-            }),
-        ));
-
-        assert!(!model.entries()[1].hidden);
-        assert_eq!(model.entries()[1].parent, None);
-        assert_eq!(
-            model.code_children[&model.entries()[0].id],
-            vec![model.entries()[1].id]
-        );
-    }
+    let output = [decode(&value["stdout"]), decode(&value["stderr"])]
+        .into_iter()
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let elapsed = value["elapsed_ms"].as_u64();
+    let code = (value["status"]["kind"] == "exited")
+        .then(|| value["status"]["code"].as_i64())
+        .flatten();
+    let rendered = serde_json::json!({"output":output,"exit_code":code,"truncated":value["output_truncated"],"status":value["status"],"detail":value["detail"],"wall_time_seconds":elapsed.map(|value|value as f64/1000.0)});
+    (
+        rendered,
+        elapsed.map(|value| value.saturating_mul(1_000_000)),
+    )
 }

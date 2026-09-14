@@ -1,5 +1,7 @@
-use crate::app::config::ReasoningEffort;
-use orvek_subagents::{AgentThread, MessageDeliveryState, MessageId, MessageSender};
+use crate::{
+    app::config::ReasoningEffort,
+    tui::children::{MessageDeliveryState, MessageId, MessageOrigin, MessageThread},
+};
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -15,16 +17,21 @@ impl EntryId {
     }
 }
 
+// Warming/Compacting/Retrying/Connecting were states the old local worker
+// loop produced. The host now reports context trimming as one atomic
+// `ViewChange::ContextProjected` fact (see `tui/context.rs`) rather than a
+// live in-progress phase, never surfaces provider retry delay over the wire
+// (see the `absent_host_retry_timing_remains_unknown` test below), and has no
+// "warming"/"connecting" concept at all (`crates/harness` protocol has
+// neither) — the TUI's own IPC connection lifecycle is handled below this
+// layer, in `client.rs`. `Reconnecting` is the one connection state the
+// current protocol actually surfaces (a disconnected live stream).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum TransientStatus {
     Thinking,
     Responding,
-    Warming,
     WaitingForBackgroundWork,
     Tool(String),
-    Compacting,
-    Retrying(u64),
-    Connecting,
     Reconnecting,
     Error(String),
 }
@@ -39,53 +46,33 @@ pub(crate) struct TranscriptEntry {
     pub(crate) trailing_spacer: bool,
 }
 
+// `Interrupted`/`ContextCompacted`/`ContextCompactionFailed` markers from the
+// old worker loop were dropped: `SessionCommand::TurnSettled`'s `outcome`
+// (which would carry `Outcome::Cancelled`) is discarded by
+// `host_projection.rs` before it ever reaches a `ViewChange`, so an
+// interrupted turn is indistinguishable from any other settled turn today;
+// and context trimming lands as one already-done `ContextProjected` fact
+// (rendered via `HostStatus`), never as a live start/duration/failure phase.
 #[derive(Clone, Debug)]
 pub(crate) enum EntryKind {
-    User {
-        text: String,
-    },
-    Assistant {
-        text: String,
-        complete: bool,
-    },
-    Reasoning {
-        text: String,
-    },
+    User { text: String },
+    Assistant { text: String, complete: bool },
+    Reasoning { text: String },
     Tool(ToolEntry),
     DirectedMessage(DirectedMessageEntry),
-    ForkedFrom {
-        session_id: String,
-    },
-    EffortChanged {
-        to: ReasoningEffort,
-    },
-    FastModeChanged {
-        enabled: bool,
-    },
+    ForkedFrom { session_id: String },
+    EffortChanged { to: ReasoningEffort },
+    FastModeChanged { enabled: bool },
     ReflectionStarted,
-    Interrupted {
-        count: usize,
-    },
-    ContextCompacted {
-        duration_ns: u64,
-        pages: Option<u32>,
-        estimated_tokens: Option<(u64, u64)>,
-    },
-    TurnCompleted {
-        duration_ns: u64,
-    },
-    ContextCompactionFailed {
-        message: String,
-    },
-    Error {
-        message: String,
-    },
+    TurnCompleted { duration_ns: u64 },
+    Error { message: String },
+    HostStatus { text: String, verified: bool },
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct DirectedMessageEntry {
-    pub(crate) perspective: MessageSender,
-    pub(crate) thread: AgentThread,
+    pub(crate) perspective: MessageOrigin,
+    pub(crate) thread: MessageThread,
     pub(crate) deliveries: Vec<MessageDelivery>,
 }
 
@@ -104,21 +91,6 @@ pub(crate) struct MessageDelivery {
     pub(crate) state: MessageDeliveryState,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum MessagePhase {
-    Commentary,
-    Final,
-}
-
-impl From<Option<&str>> for MessagePhase {
-    fn from(phase: Option<&str>) -> Self {
-        if phase == Some("commentary") {
-            return Self::Commentary;
-        }
-        Self::Final
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct ToolEntry {
     pub(crate) name: String,
@@ -134,6 +106,11 @@ pub(crate) struct ToolEntry {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ToolState {
+    Proposed,
+    Received,
+    Unknown,
+    Cancelled,
+    Fenced,
     Running,
     Succeeded,
     Failed,

@@ -1,10 +1,10 @@
-use serde_json::json;
 use orvek_harness::{
     Store, StoreError,
     inference::ModelSettings,
     session::{SessionCommand, SessionConfig, SessionId},
     state::{Outcome, RequestKind},
 };
+use serde_json::json;
 use uuid::Uuid;
 
 #[test]
@@ -18,6 +18,7 @@ fn reused_tool_ids_and_orphan_results_are_rejected_before_execution() {
                 workspace: root.path().into(),
                 model: ModelSettings::default(),
                 instructions: String::new(),
+                context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
             },
             None,
         )
@@ -108,6 +109,7 @@ fn startup_settles_interrupted_conversations_and_rejects_their_late_results() {
                 workspace: root.path().into(),
                 model: ModelSettings::default(),
                 instructions: String::new(),
+                context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
             },
             None,
         )
@@ -157,6 +159,7 @@ fn session_commands_replay_once_and_fork_only_persisted_prefix() {
         workspace: root.path().to_owned(),
         model: ModelSettings::default(),
         instructions: "explicit task protocol".into(),
+        context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
     };
     let mut session = store
         .create_session(SessionId::new(), config.clone(), None)
@@ -246,6 +249,7 @@ fn installed_projection_keeps_exact_archives_and_fork_cutoffs() {
         workspace: root.path().into(),
         model: ModelSettings::default(),
         instructions: String::new(),
+        context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
     };
     let mut session = store
         .create_session(SessionId::new(), config.clone(), None)
@@ -340,6 +344,32 @@ fn installed_projection_keeps_exact_archives_and_fork_cutoffs() {
 }
 
 #[test]
+fn journal_pages_are_bounded_before_ipc_serialization() {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&root.path().join("state")).unwrap();
+    for _ in 0..12 {
+        store
+            .create_session(
+                SessionId::new(),
+                SessionConfig {
+                    workspace: root.path().into(),
+                    model: ModelSettings::default(),
+                    instructions: "x".repeat(450 * 1024),
+                    context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+                },
+                None,
+            )
+            .unwrap();
+    }
+
+    let page = store.journal_page(0, 256).unwrap();
+    assert!(!page.is_empty());
+    assert!(page.len() < 12, "the encoded-byte bound must stop the page");
+    let response = orvek_harness::ipc::Response::Journal(page);
+    assert!(serde_json::to_vec(&response).unwrap().len() < orvek_harness::ipc::MAX_FRAME_BYTES);
+}
+
+#[test]
 fn session_cannot_invent_completion_or_accept_late_response() {
     let root = tempfile::tempdir().unwrap();
     let mut store = Store::open(&root.path().join("state")).unwrap();
@@ -347,6 +377,7 @@ fn session_cannot_invent_completion_or_accept_late_response() {
         workspace: root.path().to_owned(),
         model: ModelSettings::default(),
         instructions: String::new(),
+        context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
     };
     let mut session = store
         .create_session(SessionId::new(), config, None)

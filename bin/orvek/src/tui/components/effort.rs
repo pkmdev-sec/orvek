@@ -5,9 +5,7 @@ use super::{
     node::{Component, ComponentUpdate, RenderRequest},
 };
 use crate::{app::config::ReasoningEffort, tui::theme::Theme};
-use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -21,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const ANIMATION_DURATION: Duration = Duration::from_millis(220);
+const ANIMATION_DURATION: Duration = Duration::from_millis(420);
 const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 // Terminal cells are roughly twice as tall as they are wide, so a 2:1 cell
 // ratio produces a visually circular dial.
@@ -50,11 +48,6 @@ pub(super) enum EffortEffect {
 
 pub(super) struct EffortSelector {
     selected: usize,
-    current: ReasoningEffort,
-    motion_enabled: bool,
-    compact: bool,
-    targets: [Rect; 5],
-    pro_target: Rect,
     pro: bool,
     displayed_phase: f64,
     displayed_fill: f64,
@@ -78,55 +71,12 @@ impl EffortSelector {
         let phase = selected as f64;
         Self {
             selected,
-            current: initial,
-            motion_enabled: true,
-            compact: false,
-            targets: [Rect::default(); 5],
-            pro_target: Rect::default(),
             pro,
             displayed_phase: phase,
             displayed_fill: phase,
             target_phase: phase,
             animation: None,
         }
-    }
-
-    pub(super) fn set_motion_enabled(&mut self, enabled: bool) {
-        self.motion_enabled = enabled;
-        if !enabled {
-            self.snap_selection();
-        }
-    }
-
-    fn snap_selection(&mut self) {
-        let phase = self.selected as f64;
-        self.displayed_phase = phase;
-        self.displayed_fill = phase;
-        self.target_phase = phase;
-        self.animation = None;
-    }
-
-    fn update_mouse(&mut self, mouse: MouseEvent, now: Instant) -> ComponentUpdate<EffortEffect> {
-        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
-            return ComponentUpdate::none();
-        }
-        let point = Position::new(mouse.column, mouse.row);
-        if self.pro_target.contains(point) {
-            self.pro = !self.pro;
-        } else if let Some(index) = self
-            .targets
-            .iter()
-            .position(|target| target.contains(point))
-        {
-            let mut direction = (index as isize - self.selected as isize).rem_euclid(5);
-            if direction > 2 {
-                direction -= 5;
-            }
-            self.select_relative(direction, now);
-        } else {
-            return ComponentUpdate::none();
-        }
-        ComponentUpdate::render(RenderRequest::Immediate)
     }
 
     pub(super) fn animation_deadline(&self) -> Option<Instant> {
@@ -168,14 +118,14 @@ impl EffortSelector {
     fn select_relative(&mut self, direction: isize, now: Instant) {
         self.advance_animation(now);
         let previous = self.selected;
-        if direction == 0 {
-            return;
-        }
-        self.selected = (self.selected as isize + direction)
-            .rem_euclid(ReasoningEffort::ALL.len() as isize) as usize;
-        if !self.motion_enabled || self.compact {
-            self.snap_selection();
-            return;
+        if direction < 0 {
+            self.selected = if self.selected == 0 {
+                ReasoningEffort::ALL.len() - 1
+            } else {
+                self.selected - 1
+            };
+        } else {
+            self.selected = (self.selected + 1) % ReasoningEffort::ALL.len();
         }
         self.target_phase += direction as f64;
         let wrapping_fill = (previous == ReasoningEffort::ALL.len() - 1 && self.selected == 0)
@@ -300,60 +250,29 @@ impl EffortSelector {
         );
     }
 
-    fn render_value(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme, selected: bool) {
-        let effort = if selected {
-            self.selected_effort()
-        } else {
-            self.current
-        };
-        let label = if selected { "Selected: " } else { "Current: " };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(label, Style::default().fg(theme.muted())),
+    fn render_labels(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+        let effort = self.selected_effort();
+        let lines = vec![
+            Line::from(vec![
+                Span::styled("Selected Effort:", Style::default().fg(theme.border())),
                 Span::styled(
-                    effort.as_str(),
-                    if selected {
-                        Style::default()
-                            .fg(theme.effort(effort))
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(theme.muted())
-                    },
+                    format!(" {}", effort.as_str()),
+                    Style::default()
+                        .fg(theme.effort(effort))
+                        .add_modifier(Modifier::BOLD),
                 ),
-            ]))
-            .alignment(Alignment::Center),
-            area,
-        );
-    }
-
-    fn render_stop_label(
-        &mut self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-        index: usize,
-        theme: &Theme,
-    ) {
-        if area.is_empty() {
-            return;
-        }
-        self.targets[index] = area;
-        let selected = self.selected == index;
-        let effort = ReasoningEffort::ALL[index];
-        let label = if self.compact {
-            format!("{}{}", if selected { "› " } else { "  " }, effort.as_str())
-        } else {
-            effort.as_str().to_owned()
-        };
-        frame.render_widget(
-            Paragraph::new(label).style(if selected {
-                Style::default()
-                    .fg(theme.effort(effort))
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.muted())
-            }),
-            area,
-        );
+            ]),
+            Line::from(vec![
+                Span::styled("Pro: ", Style::default().fg(Color::Green)),
+                Span::styled(
+                    if self.pro { "on" } else { "off" },
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+        ];
+        frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
     }
 }
 
@@ -377,10 +296,6 @@ impl Component for EffortSelector {
                 event: Event::Key(key),
                 now,
             } => self.update_key(key, now),
-            EffortEvent::Terminal {
-                event: Event::Mouse(mouse),
-                now,
-            } => self.update_mouse(mouse, now),
             EffortEvent::Terminal { .. } => ComponentUpdate::none(),
             EffortEvent::AnimationFrame(now) => {
                 if self.advance_animation(now) {
@@ -393,90 +308,32 @@ impl Component for EffortSelector {
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        self.targets = [Rect::default(); 5];
-        self.pro_target = Rect::default();
-        self.compact = area.width < 44 || area.height < 17;
-        if self.compact {
-            self.snap_selection();
-        }
-        let height = if self.compact { 13 } else { 17 };
-        let body = Floating::new("Effort", 48, height, &KEY_BINDINGS)
-            .render(frame, area, theme)
-            .body;
-        if body.is_empty() {
+        if area.is_empty() {
             return;
         }
-        let row = |offset| {
-            Rect::new(body.x, body.y.saturating_add(offset), body.width, 1).intersection(body)
-        };
-        self.render_value(frame, row(0), theme, true);
-        if self.compact {
-            if body.height > 1 {
-                self.render_value(frame, row(1), theme, false);
-            }
-            let available = body.height.saturating_sub(4).min(5);
-            let offset = self
-                .selected
-                .saturating_sub(usize::from(available).saturating_sub(1));
-            for visible in 0..available {
-                let index = offset + usize::from(visible);
-                if index >= ReasoningEffort::ALL.len() {
-                    break;
-                }
-                let list_row = row(3 + visible);
-                let label = Rect::new(
-                    body.x + body.width.saturating_sub(10) / 2,
-                    list_row.y,
-                    10.min(body.width),
-                    list_row.height,
-                )
-                .intersection(body);
-                self.render_stop_label(frame, label, index, theme);
-            }
-        } else {
-            let dial = Rect::new(
-                body.x + body.width.saturating_sub(DIAL_WIDTH) / 2,
-                body.y + 2,
-                DIAL_WIDTH,
-                DIAL_HEIGHT,
-            );
-            self.render_dial(frame, dial, theme);
-            let cx = dial.x + DIAL_WIDTH / 2;
-            let labels = [
-                (cx - 1, body.y + 1),
-                (cx + 11, body.y + 5),
-                (cx + 8, body.y + 10),
-                (cx - 13, body.y + 10),
-                (cx - 14, body.y + 5),
-            ];
-            for (index, (x, y)) in labels.into_iter().enumerate() {
-                self.render_stop_label(
-                    frame,
-                    Rect::new(x, y, ReasoningEffort::ALL[index].as_str().len() as u16, 1)
-                        .intersection(body),
-                    index,
-                    theme,
-                );
-            }
-            self.render_value(frame, row(11), theme, false);
+
+        let layout = Floating::new("Effort", 48, 17, &KEY_BINDINGS).render(frame, area, theme);
+        if layout.body.is_empty() {
+            return;
         }
-        if body.height >= 3 {
-            let label = format!(
-                "Pro for new sessions: {}",
-                if self.pro { "on" } else { "off" }
-            );
-            let width = (label.len() as u16).min(body.width);
-            self.pro_target = Rect::new(
-                body.x + body.width.saturating_sub(width) / 2,
-                body.y + (if self.compact { 8 } else { 12 }).min(body.height - 1),
-                width,
-                1,
-            );
-            frame.render_widget(
-                Paragraph::new(label).style(Style::default().fg(Color::Green)),
-                self.pro_target,
-            );
+
+        let dial_width = DIAL_WIDTH.min(layout.body.width);
+        let dial_height = DIAL_HEIGHT.min(layout.body.height.saturating_sub(4));
+        let dial = Rect {
+            x: layout.body.x + layout.body.width.saturating_sub(dial_width) / 2,
+            y: layout.body.y.saturating_add(1),
+            width: dial_width,
+            height: dial_height,
         }
+        .intersection(layout.body);
+        self.render_dial(frame, dial, theme);
+        let labels = Rect {
+            y: dial.bottom().min(layout.body.bottom().saturating_sub(3)) + 1,
+            height: 2,
+            ..layout.body
+        }
+        .intersection(layout.body);
+        self.render_labels(frame, labels, theme);
     }
 }
 
@@ -525,7 +382,7 @@ mod tests {
 
     fn colored_dial_dots(terminal: &Terminal<TestBackend>, color: Color) -> usize {
         let buffer = terminal.backend().buffer();
-        (3..=11)
+        (2..=10)
             .flat_map(|y| (21..=37).map(move |x| (x, y)))
             .filter(|position| {
                 matches!(buffer[*position].symbol(), "•" | "●") && buffer[*position].fg == color
@@ -549,14 +406,15 @@ mod tests {
             .filter(|cell| cell.symbol() == "●")
             .count();
         assert_eq!(thick_dots, 5);
-
-        assert_eq!(buffer[(29, 3)].symbol(), "●");
-        assert_eq!(buffer[(29, 3)].fg, Color::Gray);
-
+        assert_eq!(buffer[(29, 1)].symbol(), " ");
+        assert_eq!(buffer[(29, 2)].symbol(), "●");
+        assert_eq!(buffer[(29, 2)].fg, Color::Gray);
+        assert_eq!(buffer[(20, 12)].fg, Color::DarkGray);
         let footer = (6..54)
             .map(|x| buffer[(x, 15)].symbol())
             .collect::<String>();
         assert_eq!(footer, "│ ←/→ effort · p pro · enter apply · esc cancel│");
+        assert!((7..53).all(|x| buffer[(x, 14)].symbol() == " "));
     }
 
     #[test]
@@ -580,13 +438,13 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
 
-        for y in 3..=11 {
+        for y in 2..=10 {
             for x in 21..=37 {
                 if !matches!(buffer[(x, y)].symbol(), "•" | "●") {
                     continue;
                 }
                 assert!(matches!(buffer[(58 - x, y)].symbol(), "•" | "●"));
-                assert!(matches!(buffer[(x, 14 - y)].symbol(), "•" | "●"));
+                assert!(matches!(buffer[(x, 12 - y)].symbol(), "•" | "●"));
             }
         }
     }
@@ -600,22 +458,22 @@ mod tests {
         terminal
             .draw(|frame| selector.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        assert_eq!(terminal.backend().buffer()[(29, 3)].fg, Color::Cyan);
-        assert_eq!(terminal.backend().buffer()[(37, 8)].symbol(), "•");
-        assert_eq!(terminal.backend().buffer()[(37, 8)].fg, Color::DarkGray);
+        assert_eq!(terminal.backend().buffer()[(29, 2)].fg, Color::Cyan);
+        assert_eq!(terminal.backend().buffer()[(37, 7)].symbol(), "•");
+        assert_eq!(terminal.backend().buffer()[(37, 7)].fg, Color::DarkGray);
 
         selector.update(key(KeyCode::Right, start));
         terminal
             .draw(|frame| selector.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        assert_eq!(terminal.backend().buffer()[(29, 3)].fg, Color::Yellow);
-        assert_eq!(terminal.backend().buffer()[(37, 8)].fg, Color::DarkGray);
+        assert_eq!(terminal.backend().buffer()[(29, 2)].fg, Color::Yellow);
+        assert_eq!(terminal.backend().buffer()[(37, 7)].fg, Color::DarkGray);
 
         selector.update(EffortEvent::AnimationFrame(start + ANIMATION_DURATION / 2));
         terminal
             .draw(|frame| selector.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        assert_eq!(terminal.backend().buffer()[(37, 8)].fg, Color::Yellow);
+        assert_eq!(terminal.backend().buffer()[(37, 7)].fg, Color::Yellow);
     }
 
     #[test]
@@ -691,7 +549,7 @@ mod tests {
         assert!(colored[0] > colored[1]);
         assert!(colored[1] > colored[2]);
         assert_eq!(colored[2], 1);
-        assert_eq!(terminal.backend().buffer()[(29, 3)].fg, Color::Gray);
+        assert_eq!(terminal.backend().buffer()[(29, 2)].fg, Color::Gray);
     }
 
     #[test]
@@ -706,8 +564,8 @@ mod tests {
             .unwrap();
 
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(37, 6)].fg, Color::DarkGray);
-        assert_eq!(buffer[(21, 6)].fg, Color::Gray);
+        assert_eq!(buffer[(37, 5)].fg, Color::DarkGray);
+        assert_eq!(buffer[(21, 5)].fg, Color::Gray);
     }
 
     #[test]
@@ -807,7 +665,7 @@ mod tests {
         let label = (6..54)
             .map(|x| buffer[(x, 13)].symbol())
             .collect::<String>();
-        assert!(label.contains("Pro for new sessions: off"));
+        assert!(label.contains("Pro: off"));
         let row = &buffer.content[13 * 60..14 * 60];
         let pro_start = row
             .windows(3)
@@ -825,7 +683,7 @@ mod tests {
         let label = (6..54)
             .map(|x| buffer[(x, 13)].symbol())
             .collect::<String>();
-        assert!(label.contains("Pro for new sessions: on"));
+        assert!(label.contains("Pro: on"));
     }
 
     #[test]
@@ -838,75 +696,5 @@ mod tests {
             .unwrap();
 
         assert_eq!(terminal.backend().buffer().area.width, 3);
-    }
-    #[test]
-    fn compact_labels_and_mouse_keep_effort_and_pro_pending_until_enter() {
-        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-        let now = Instant::now();
-        let mut selector = EffortSelector::new(ReasoningEffort::Low, false);
-        let mut terminal = Terminal::new(TestBackend::new(32, 13)).unwrap();
-        terminal
-            .draw(|frame| selector.render(frame, frame.area(), &Theme::default()))
-            .unwrap();
-        let text = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-        for label in [
-            "Selected: low",
-            "Current: low",
-            "medium",
-            "high",
-            "xhigh",
-            "max",
-            "Pro for new sessions",
-        ] {
-            assert!(text.contains(label), "{label}");
-        }
-        let click = |target: ratatui::layout::Rect| MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: target.x,
-            row: target.y,
-            modifiers: KeyModifiers::NONE,
-        };
-        assert!(
-            selector
-                .update_mouse(click(selector.targets[4]), now)
-                .effects
-                .is_empty()
-        );
-        assert!(
-            selector
-                .update_mouse(click(selector.pro_target), now)
-                .effects
-                .is_empty()
-        );
-        assert_eq!(selector.animation_deadline(), None);
-        assert_eq!(selector.current, ReasoningEffort::Low);
-        assert_eq!(
-            selector.update(key(KeyCode::Enter, now)).effects,
-            [EffortEffect::Apply(ReasoningEffort::Max, true)]
-        );
-    }
-
-    #[test]
-    fn reduced_motion_snaps_and_all_tiny_rectangles_remain_bounded() {
-        let now = Instant::now();
-        let mut selector = EffortSelector::new(ReasoningEffort::Low, false);
-        selector.set_motion_enabled(false);
-        selector.update(key(KeyCode::Left, now));
-        assert_eq!(selector.animation_deadline(), None);
-        assert_eq!(selector.displayed_phase, 4.0);
-        for width in 0..48 {
-            for height in 0..17 {
-                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-                terminal
-                    .draw(|frame| selector.render(frame, frame.area(), &Theme::default()))
-                    .unwrap();
-            }
-        }
     }
 }

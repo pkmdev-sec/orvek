@@ -83,12 +83,18 @@ _terminal-bench-platform:
     echo 'Enable Rosetta for amd64 emulation in Docker Desktop, then restart Docker.' >&2
     exit 1
 
-# Export a static Linux Orvek binary with benchmark instrumentation enabled.
+# Export static Linux Orvek and architecture-matched executor binaries.
 build-harbor-agent platform='':
     #!/usr/bin/env bash
     set -euo pipefail
     docker_context=$(just --quiet _local-docker-context)
-    for source_tree in bin/orvek/src crates/memory/src crates/subagents/src examples/orvek-memory-cloudflare/src; do
+    for source_tree in \
+        bin/orvek/src \
+        crates/executor/src \
+        crates/harness/src \
+        crates/memory/src \
+        crates/subagents/src \
+        examples/orvek-memory-cloudflare/src; do
         test -z "$(find "$source_tree" -type l -print -quit)" || {
             echo "refusing to build Harbor agent with symlinks below $source_tree/" >&2
             exit 1
@@ -97,7 +103,9 @@ build-harbor-agent platform='':
             ! -path 'bin/orvek/src/core/compaction/fonts/8x13-ascii.bin' \
             ! -path 'bin/orvek/src/core/compaction/fonts/LICENSE' \
             ! -path 'bin/orvek/src/core/compaction/fonts/README.md' \
-            ! -path 'bin/orvek/src/core/compaction/fonts/generate.py' -print -quit)" || {
+            ! -path 'bin/orvek/src/core/compaction/fonts/generate.py' \
+            ! -path 'crates/harness/src/runtime/IMPLEMENTATION.md' \
+            ! -path 'crates/harness/src/review/README.md' -print -quit)" || {
             echo "refusing to send unrecognized source assets below $source_tree/ to the Harbor build" >&2
             exit 1
         }
@@ -108,6 +116,12 @@ build-harbor-agent platform='':
     mkdir -p "$build_context/bin/orvek"
     cp bin/orvek/Cargo.toml bin/orvek/build.rs "$build_context/bin/orvek/"
     cp -R bin/orvek/src "$build_context/bin/orvek/src"
+    mkdir -p "$build_context/crates/executor"
+    cp crates/executor/Cargo.toml crates/executor/README.md "$build_context/crates/executor/"
+    cp -R crates/executor/src "$build_context/crates/executor/src"
+    mkdir -p "$build_context/crates/harness"
+    cp crates/harness/Cargo.toml "$build_context/crates/harness/"
+    cp -R crates/harness/src "$build_context/crates/harness/src"
     mkdir -p "$build_context/crates/memory"
     cp crates/memory/Cargo.toml crates/memory/README.md "$build_context/crates/memory/"
     cp -R crates/memory/src "$build_context/crates/memory/src"
@@ -130,22 +144,26 @@ build-harbor-agent platform='':
     mkdir -p "$build_context/vendor/nanocodex-oai-api/prompts"
     cp vendor/nanocodex-oai-api/prompts/system.md "$build_context/vendor/nanocodex-oai-api/prompts/"
     cp vendor/LICENSE-APACHE vendor/LICENSE-MIT "$build_context/vendor/"
-    platform_args=()
     if [[ -n "{{platform}}" ]]; then
-        platform_args=(--platform "{{platform}}")
+        docker --context "$docker_context" buildx build \
+            --platform "{{platform}}" \
+            --file evals/harbor_adapter/orvek.Dockerfile \
+            --target artifact \
+            --output type=local,dest=.orvek/installed \
+            "$build_context"
+    else
+        docker --context "$docker_context" buildx build \
+            --file evals/harbor_adapter/orvek.Dockerfile \
+            --target artifact \
+            --output type=local,dest=.orvek/installed \
+            "$build_context"
     fi
-    docker --context "$docker_context" buildx build \
-        "${platform_args[@]}" \
-        --file evals/harbor_adapter/orvek.Dockerfile \
-        --target artifact \
-        --output type=local,dest=.orvek/installed \
-        "$build_context"
 
 # Validate the adapter and resolved Harbor configuration without running a task.
 check-harbor:
     uv sync --project evals --frozen
     PYTHONDONTWRITEBYTECODE=1 uv run --project evals python -m unittest harbor_adapter.test_agent -v
-    cargo test --locked --features harbor-evals core::orchestration
+    cargo test --locked --features harbor-evals --bin orvek app::cli::tests
     uv run --project evals harbor run \
         --config evals/terminal-bench.yaml \
         --dataset terminal-bench/terminal-bench-2-1@6 \
@@ -160,6 +178,11 @@ harbor-eval *args='':
     just --quiet _terminal-bench-platform
     test -x .orvek/installed/orvek || {
         echo 'missing .orvek/installed/orvek; run `just build-harbor-agent`' >&2
+        exit 1
+    }
+    test -x .orvek/installed/orvek-executor-linux-x86_64 \
+        || test -x .orvek/installed/orvek-executor-linux-aarch64 || {
+        echo 'missing architecture-matched Harbor executor; run `just build-harbor-agent`' >&2
         exit 1
     }
     if [[ -n "${ORVEK_CODEX_AUTH_FILE:-}" ]]; then

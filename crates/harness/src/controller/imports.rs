@@ -2,7 +2,7 @@ use super::{Host, HostError};
 use crate::{
     Digest,
     import::{ImportLimits, LegacyArchive, PublicationLimits, prepare_import},
-    session::{SessionConfig, SessionState},
+    session::{SessionAdmissionRequest, SessionState},
 };
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -15,13 +15,14 @@ impl Host {
         operation: Uuid,
         database: PathBuf,
         source_session: String,
-        mut config: SessionConfig,
+        request: SessionAdmissionRequest,
     ) -> Result<SessionState, HostError> {
+        let request = self.canonicalize_admission_request(request)?;
         let fingerprint = Digest::of_value(&(
-            "tact.import.request.v1",
+            "orvek.import.request.v2",
             &database,
             &source_session,
-            &config,
+            &request,
         ))?;
         if let Some(existing) = self
             .store
@@ -32,16 +33,7 @@ impl Host {
             return Ok(existing);
         }
         let database = database.canonicalize()?;
-        config.workspace = config.workspace.canonicalize()?;
-        if self.root.starts_with(&config.workspace) || config.workspace.starts_with(&self.root) {
-            return Err(HostError::Invalid(
-                "protected state and source workspace must not overlap",
-            ));
-        }
-        if source_session.is_empty()
-            || source_session.len() > 256
-            || config.instructions.len() > 256 * 1024
-        {
+        if source_session.is_empty() || source_session.len() > 256 {
             return Err(HostError::Invalid("legacy import input exceeds its bounds"));
         }
         let artifacts = self.store.lock().await.artifacts().clone();
@@ -52,10 +44,16 @@ impl Host {
             &source_session,
             PublicationLimits::default(),
         )?;
-        self.store
-            .lock()
-            .await
-            .commit_legacy_import(operation, fingerprint, config, prepared)
+        let mut store = self.store.lock().await;
+        let profile = super::resolve_baseline_admission(
+            &store,
+            self.executor.as_ref(),
+            self.config_identity,
+            request,
+            crate::evolution::BaselineReason::LegacyImport,
+        )?;
+        store
+            .commit_bound_legacy_import(operation, fingerprint, profile, prepared)
             .map_err(HostError::from)
     }
 }

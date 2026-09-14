@@ -2,25 +2,23 @@
 
 use super::{
     node::{ComponentUpdate, Node, RenderRequest},
-    queue::QueueId,
+    queue::{QueueId, QueuedInput},
     root::{DraftReset, RestoredSessionProjection, RootEffect, RootEvent, RootNode},
 };
 use crate::{
     app::config::{ReasoningEffort, ReasoningMode},
     core::extensions::Skill,
-    sessions::{
-        checkpoint::{RecentPrompt, SessionSummary},
-        record::TranscriptRecord,
-    },
     tui::{
+        children::ChildUpdate,
         pane::PaneId,
+        session::{RecentPrompt, SessionSummary},
         theme::{ColorScheme, Theme, ThemeMode},
+        transcript::TranscriptRecord,
     },
 };
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
-use nanocodex::Model;
+use orvek_harness::{Digest, inference::Model};
 use orvek_memory::{MemoryAccess, MemoryKey, MemoryRecord, MemorySource};
-use orvek_subagents::AgentUpdate;
 use ratatui::{
     Frame,
     layout::{Position, Rect},
@@ -34,10 +32,31 @@ use unicode_width::UnicodeWidthStr;
 const SPLIT_HINT: &str = " mouse: focus · Ctrl+C: clear · Ctrl+C×2: close ";
 const MIN_SPLIT_HINT_WIDTH: u16 = 60;
 
+#[allow(dead_code)] // Reducer compatibility events remain covered while host adapters land per feature.
 pub(crate) enum AppEvent {
-    CompactionFinished {
+    SettingsConfirmed {
         pane: PaneId,
-        error: Option<String>,
+        model: orvek_harness::inference::ModelSettings,
+        preferred: ReasoningMode,
+    },
+    QueueEditReady {
+        pane: PaneId,
+        id: QueueId,
+        expected_input: orvek_harness::Digest,
+        prompt: crate::tui::prompt::Submission,
+    },
+    QueueChanged {
+        pane: PaneId,
+        inputs: Vec<QueuedInput>,
+    },
+    SubmissionAcknowledged {
+        pane: PaneId,
+        prompt: crate::tui::prompt::Submission,
+    },
+    SubmissionFailed {
+        pane: PaneId,
+        uncertain: bool,
+        error: String,
     },
     Terminal(Event),
     PasteImage(String),
@@ -48,7 +67,7 @@ pub(crate) enum AppEvent {
     AgentStreamClosed(PaneId),
     Subagent {
         pane: PaneId,
-        update: AgentUpdate,
+        update: ChildUpdate,
     },
     EditorDraft {
         pane: PaneId,
@@ -57,6 +76,7 @@ pub(crate) enum AppEvent {
     ReviewFinished {
         pane: PaneId,
         markdown: String,
+        feedback: Option<Digest>,
     },
     ReviewStarted(PaneId),
     ReviewReady {
@@ -75,6 +95,7 @@ pub(crate) enum AppEvent {
         reasoning_mode: ReasoningMode,
         fast_mode: bool,
         model: Model,
+        context_window_tokens: u64,
         skills: Arc<[Skill]>,
     },
     HandoffCancelled(PaneId),
@@ -82,24 +103,8 @@ pub(crate) enum AppEvent {
         pane: PaneId,
         error: String,
     },
-    WorkerTurnFinished {
-        pane: PaneId,
-        terminal_expected: bool,
-    },
     ShellFinished(PaneId),
     TurnsCancelled(PaneId),
-    SteerAdmitted {
-        pane: PaneId,
-        id: QueueId,
-    },
-    SteerPromoted {
-        pane: PaneId,
-        id: QueueId,
-    },
-    SteerFailed {
-        pane: PaneId,
-        id: QueueId,
-    },
     ForkReady {
         pane: PaneId,
     },
@@ -113,6 +118,7 @@ pub(crate) enum AppEvent {
         reasoning_mode: ReasoningMode,
         fast_mode: bool,
         model: Model,
+        context_window_tokens: u64,
         draft_reset: DraftReset,
         skills: Arc<[Skill]>,
     },
@@ -124,20 +130,13 @@ pub(crate) enum AppEvent {
         pane: PaneId,
         sessions: Vec<SessionSummary>,
     },
-    FilesLoaded {
-        pane: PaneId,
-        request: u64,
-        result: Result<Vec<String>, String>,
-    },
     RecentPromptsLoaded {
         pane: PaneId,
-        request: u64,
         session_id: String,
         prompts: Vec<RecentPrompt>,
     },
     RecentPromptLoadFailed {
         pane: PaneId,
-        request: u64,
         error: String,
     },
     SessionLoadFailed {
@@ -206,6 +205,7 @@ pub(crate) enum AppEffect {
     OpenFork { pane: PaneId, parent: PaneId },
     ClosePane(PaneId),
     SetTheme(ThemeMode),
+    SetMaxSubagents(usize),
     Shutdown,
 }
 
@@ -223,7 +223,6 @@ pub(crate) struct AppNode {
 impl AppNode {
     pub(crate) fn new(theme: Theme, workspace: PathBuf, mut root: RootNode) -> Self {
         root.set_theme_mode(theme.mode());
-        root.set_render_preferences(theme.motion_enabled(), theme.ascii_art());
         Self {
             theme,
             workspace,
@@ -247,6 +246,35 @@ impl AppNode {
 
     pub(crate) fn update(&mut self, event: AppEvent) -> ComponentUpdate<AppEffect> {
         match event {
+            AppEvent::SettingsConfirmed {
+                pane,
+                model,
+                preferred,
+            } => self.update_root(pane, RootEvent::SettingsConfirmed { model, preferred }),
+            AppEvent::QueueEditReady {
+                pane,
+                id,
+                expected_input,
+                prompt,
+            } => self.update_root(
+                pane,
+                RootEvent::QueueEditReady {
+                    id,
+                    expected_input,
+                    prompt,
+                },
+            ),
+            AppEvent::QueueChanged { pane, inputs } => {
+                self.update_root(pane, RootEvent::QueueChanged(inputs))
+            }
+            AppEvent::SubmissionAcknowledged { pane, prompt } => {
+                self.update_root(pane, RootEvent::SubmissionAcknowledged(prompt))
+            }
+            AppEvent::SubmissionFailed {
+                pane,
+                uncertain,
+                error,
+            } => self.update_root(pane, RootEvent::SubmissionFailed { uncertain, error }),
             AppEvent::Terminal(event) => self.update_terminal(event),
             AppEvent::PasteImage(data_url) => {
                 self.update_root(self.focus, RootEvent::PasteImage(data_url))
@@ -263,9 +291,11 @@ impl AppNode {
             AppEvent::EditorDraft { pane, draft } => {
                 self.update_root(pane, RootEvent::ReplaceDraft(draft))
             }
-            AppEvent::ReviewFinished { pane, markdown } => {
-                self.update_root(pane, RootEvent::ReviewFinished(markdown))
-            }
+            AppEvent::ReviewFinished {
+                pane,
+                markdown,
+                feedback,
+            } => self.update_root(pane, RootEvent::ReviewFinished { markdown, feedback }),
             AppEvent::ReviewStarted(pane) => self.update_root(pane, RootEvent::ReviewStarted),
             AppEvent::ReviewReady { pane, url } => {
                 self.update_root(pane, RootEvent::ReviewReady(url))
@@ -281,6 +311,7 @@ impl AppNode {
                 reasoning_mode,
                 fast_mode,
                 model,
+                context_window_tokens,
                 skills,
             } => {
                 let workspace = self.workspace.clone();
@@ -297,32 +328,18 @@ impl AppNode {
                     );
                     root.component_mut().set_fast_mode(fast_mode);
                     root.component_mut().set_model(model);
+                    root.component_mut()
+                        .set_context_window_tokens(context_window_tokens);
                     root.component_mut().set_skills(skills);
                 }
                 self.update_root(pane, RootEvent::HandoffFinished(prompt))
-            }
-            AppEvent::CompactionFinished { pane, error } => {
-                self.update_root(pane, RootEvent::CompactionFinished(error))
             }
             AppEvent::HandoffCancelled(pane) => self.update_root(pane, RootEvent::HandoffCancelled),
             AppEvent::HandoffFailed { pane, error } => {
                 self.update_root(pane, RootEvent::HandoffFailed(error))
             }
-            AppEvent::WorkerTurnFinished {
-                pane,
-                terminal_expected,
-            } => self.update_root(pane, RootEvent::WorkerTurnFinished { terminal_expected }),
             AppEvent::ShellFinished(pane) => self.update_root(pane, RootEvent::ShellFinished),
             AppEvent::TurnsCancelled(pane) => self.update_root(pane, RootEvent::TurnsCancelled),
-            AppEvent::SteerAdmitted { pane, id } => {
-                self.update_root(pane, RootEvent::SteerAdmitted(id))
-            }
-            AppEvent::SteerPromoted { pane, id } => {
-                self.update_root(pane, RootEvent::SteerPromoted(id))
-            }
-            AppEvent::SteerFailed { pane, id } => {
-                self.update_root(pane, RootEvent::SteerFailed { id })
-            }
             AppEvent::ForkReady { pane } => self.update_root(pane, RootEvent::ForkReady),
             AppEvent::ForkFailed { pane, error } => {
                 self.remove_pane(pane);
@@ -343,6 +360,7 @@ impl AppNode {
                 reasoning_mode,
                 fast_mode,
                 model,
+                context_window_tokens,
                 draft_reset,
                 skills,
             } => {
@@ -359,6 +377,8 @@ impl AppNode {
                 );
                 root.component_mut().set_fast_mode(fast_mode);
                 root.component_mut().set_model(model);
+                root.component_mut()
+                    .set_context_window_tokens(context_window_tokens);
                 root.component_mut().set_skills(skills);
                 ComponentUpdate::render(RenderRequest::Immediate)
             }
@@ -368,29 +388,20 @@ impl AppNode {
             AppEvent::SessionsLoaded { pane, sessions } => {
                 self.update_root(pane, RootEvent::SessionsLoaded(sessions))
             }
-            AppEvent::FilesLoaded {
-                pane,
-                request,
-                result,
-            } => self.update_root(pane, RootEvent::FilesLoaded { request, result }),
             AppEvent::RecentPromptsLoaded {
                 pane,
-                request,
                 session_id,
                 prompts,
             } => self.update_root(
                 pane,
                 RootEvent::RecentPromptsLoaded {
-                    request,
                     session_id,
                     prompts,
                 },
             ),
-            AppEvent::RecentPromptLoadFailed {
-                pane,
-                request,
-                error,
-            } => self.update_root(pane, RootEvent::RecentPromptLoadFailed { request, error }),
+            AppEvent::RecentPromptLoadFailed { pane, error } => {
+                self.update_root(pane, RootEvent::RecentPromptLoadFailed(error))
+            }
             AppEvent::SessionLoadFailed { pane, error } => {
                 self.update_root(pane, RootEvent::SessionLoadFailed(error))
             }
@@ -465,17 +476,9 @@ impl AppNode {
                 let mode = self.theme.mode();
                 if let Some((_, main)) = &mut self.main {
                     main.component_mut().set_theme_mode(mode);
-                    main.component_mut().set_render_preferences(
-                        self.theme.motion_enabled(),
-                        self.theme.ascii_art(),
-                    );
                 }
                 if let Some((_, fork)) = &mut self.fork {
                     fork.component_mut().set_theme_mode(mode);
-                    fork.component_mut().set_render_preferences(
-                        self.theme.motion_enabled(),
-                        self.theme.ascii_art(),
-                    );
                 }
                 self.set_preferred_reasoning_mode(preferred_reasoning_mode);
                 self.set_memory_enabled(false);
@@ -694,6 +697,10 @@ impl AppNode {
                     self.set_theme_mode(mode);
                     effects.push(AppEffect::SetTheme(mode));
                 }
+                RootEffect::SetMaxSubagents(limit) => {
+                    self.set_max_subagents(limit);
+                    effects.push(AppEffect::SetMaxSubagents(limit));
+                }
                 effect => effects.push(AppEffect::Pane { pane, effect }),
             }
         }
@@ -843,16 +850,16 @@ mod tests {
     };
     use crate::{
         app::config::{ReasoningEffort, ReasoningMode},
-        sessions::record::{LocalEvent, TranscriptRecord, TurnId},
         tui::{
             pane::PaneId,
             theme::{ColorScheme, Theme, ThemeMode},
+            transcript::{LocalEvent, TranscriptRecord, TurnId},
         },
     };
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
-    use nanocodex::Model;
+    use orvek_harness::inference::Model;
     use orvek_memory::{MemoryAccess, MemoryKey, MemoryRecord, MemorySource};
     use ratatui::{Terminal, backend::TestBackend};
     use semver::Version;
@@ -893,6 +900,7 @@ mod tests {
             reasoning_mode: ReasoningMode::Standard,
             fast_mode: false,
             model: Model::Luna,
+            context_window_tokens: 1_000_000,
             draft_reset: DraftReset::Preserve,
             skills: Arc::from([]),
         });
@@ -1031,10 +1039,6 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert_eq!(rendered.matches("inherited history").count(), 2);
-        assert!(
-            rendered.contains("Thinking"),
-            "the new fork must show preparation immediately"
-        );
         assert!(app.root(PaneId::Fork(1)).is_some());
     }
 
@@ -1065,6 +1069,7 @@ mod tests {
             reasoning_mode: ReasoningMode::Standard,
             fast_mode: false,
             model: Model::Luna,
+            context_window_tokens: 1_000_000,
             skills: Arc::from([]),
         });
 

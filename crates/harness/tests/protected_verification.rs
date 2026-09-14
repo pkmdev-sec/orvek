@@ -1,4 +1,3 @@
-use std::{collections::BTreeMap, fs};
 use orvek_harness::{
     Store, StoreError,
     contract::*,
@@ -7,6 +6,7 @@ use orvek_harness::{
     verification::{self, CheckProgram, ControlFailure, Expectation, Probe},
     workspace::{Snapshot, SnapshotPolicy},
 };
+use std::{collections::BTreeMap, fs};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
@@ -35,15 +35,19 @@ async fn real_bug_requires_baseline_failure_and_candidate_success_before_deliver
         }
     }
     let mut store = Store::open(&root.path().join("protected-state")).unwrap();
-    let baseline =
-        Snapshot::capture(&baseline_path, SnapshotPolicy::default(), store.artifacts()).unwrap();
+    let baseline = Snapshot::capture(
+        &baseline_path,
+        SnapshotPolicy::default(),
+        store.public_artifacts(),
+    )
+    .unwrap();
     let candidate = Snapshot::capture(
         &candidate_path,
         SnapshotPolicy::default(),
-        store.artifacts(),
+        store.public_artifacts(),
     )
     .unwrap();
-    let source = candidate.publish(store.artifacts()).unwrap();
+    let source = candidate.publish(store.public_artifacts()).unwrap();
     let program = CheckProgram {
         version: 1,
         probes: vec![
@@ -69,9 +73,10 @@ async fn real_bug_requires_baseline_failure_and_candidate_success_before_deliver
         }),
     };
     let verifier = store
-        .artifacts()
-        .put(&serde_json::to_vec(&program).unwrap())
-        .unwrap();
+        .public_artifacts()
+        .write(&serde_json::to_vec(&program).unwrap())
+        .unwrap()
+        .digest();
     let contract = Contract {
         request: "Fix addition returning a constant".into(),
         outcome: "Return the sum of both arguments".into(),
@@ -109,10 +114,11 @@ async fn real_bug_requires_baseline_failure_and_candidate_success_before_deliver
         .await
         .unwrap();
     let environment = store
-        .artifacts()
-        .put(&serde_json::to_vec(&executor.environment()).unwrap())
-        .unwrap();
-    let baseline_source = baseline.publish(store.artifacts()).unwrap();
+        .public_artifacts()
+        .write(&serde_json::to_vec(&executor.environment()).unwrap())
+        .unwrap()
+        .digest();
+    let baseline_source = baseline.publish(store.public_artifacts()).unwrap();
     task = store
         .establish_baseline(
             task.id,
@@ -163,13 +169,14 @@ async fn real_bug_requires_baseline_failure_and_candidate_success_before_deliver
     ));
     let delivered_path = root.path().join("delivered-source");
     candidate
-        .materialize(&delivered_path, store.artifacts(), false)
+        .materialize(&delivered_path, store.public_artifacts(), false)
         .unwrap();
     assert!(candidate.matches(&delivered_path).unwrap());
     let receipt = store
-        .artifacts()
-        .put(b"delivery source identity checked after materialization")
-        .unwrap();
+        .public_artifacts()
+        .write(b"delivery source identity checked after materialization")
+        .unwrap()
+        .digest();
     task = store
         .record_delivery(
             task.id,

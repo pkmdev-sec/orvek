@@ -26,7 +26,6 @@ pub(super) struct EmptyLogo {
     frame: usize,
     ascii: bool,
 }
-
 impl EmptyLogo {
     pub(super) fn new(now: Instant) -> Self {
         Self {
@@ -37,6 +36,7 @@ impl EmptyLogo {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn set_preferences(&mut self, motion: bool, ascii: bool) {
         self.ascii = ascii;
         if !motion || ascii {

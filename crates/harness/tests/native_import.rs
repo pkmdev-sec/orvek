@@ -1,14 +1,15 @@
-use rusqlite::{Connection, params};
-use serde_json::json;
 use orvek_harness::{
+    Channel,
     controller::Host,
     inference::{
         Limits, ModelSettings, ResponsesClient, Route, Transport,
         auth::{Auth, SecretString},
     },
     runtime::DockerExecutor,
-    session::SessionConfig,
+    session::SessionAdmissionRequest,
 };
+use rusqlite::{Connection, params};
+use serde_json::json;
 
 #[tokio::test]
 #[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
@@ -62,18 +63,19 @@ async fn legacy_import_creates_one_native_session_without_old_completion_or_exec
             .unwrap(),
     )
     .unwrap();
-    let config = SessionConfig {
-        workspace: source,
-        model: ModelSettings::default(),
-        instructions: String::new(),
-    };
+    let request = SessionAdmissionRequest::new(
+        source,
+        ModelSettings::default(),
+        orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+        Channel::Stable,
+    );
     let operation = uuid::Uuid::new_v4();
     let first = host
-        .import_legacy_request(operation, database.clone(), "old".into(), config.clone())
+        .import_legacy_request(operation, database.clone(), "old".into(), request.clone())
         .await
         .unwrap();
     let repeated = host
-        .import_legacy_request(operation, database.clone(), "old".into(), config.clone())
+        .import_legacy_request(operation, database.clone(), "old".into(), request.clone())
         .await
         .unwrap();
     assert_eq!(first, repeated);
@@ -96,14 +98,14 @@ async fn legacy_import_creates_one_native_session_without_old_completion_or_exec
     );
     assert_eq!(std::fs::read(&database).unwrap(), before);
     std::fs::remove_file(&database).unwrap();
-    std::fs::remove_dir(&config.workspace).unwrap();
+    std::fs::remove_dir(request.workspace()).unwrap();
     let recovered = host
-        .import_legacy_request(operation, database.clone(), "old".into(), config.clone())
+        .import_legacy_request(operation, database.clone(), "old".into(), request.clone())
         .await
         .unwrap();
     assert_eq!(recovered.id, first.id);
     assert!(
-        host.import_legacy_request(uuid::Uuid::new_v4(), database, "old".into(), config)
+        host.import_legacy_request(uuid::Uuid::new_v4(), database, "old".into(), request)
             .await
             .is_err()
     );

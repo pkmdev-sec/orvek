@@ -6,11 +6,7 @@ impl Host {
         session: &SessionState,
         artifacts: &crate::artifacts::ArtifactStore,
     ) -> Result<(crate::Digest, Snapshot), HostError> {
-        let current = Snapshot::capture(
-            &session.config.workspace,
-            SnapshotPolicy::default(),
-            artifacts,
-        )?;
+        let current = Snapshot::capture(session.workspace(), SnapshotPolicy::default(), artifacts)?;
         let origin = current.publish(artifacts)?;
         let snapshot = if let Some(seed) = &session.branch.workspace {
             Snapshot::reconcile(

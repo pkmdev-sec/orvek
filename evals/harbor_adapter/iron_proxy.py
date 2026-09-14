@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import subprocess
 import tempfile
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
 
 import yaml
 from harbor.environments.base import BaseEnvironment
@@ -30,16 +30,10 @@ IRON_PROXY_IMAGE = (
     "ironsh/iron-proxy:0.49.0@"
     "sha256:c4628019c24f4cc8d77564a26b7c9cedb00accee6f93d06270e85fb8f9c6a7da"
 )
-REMOTE_AUTH_DIRECTORY = "/tmp/orvek-harbor-auth"
-REMOTE_AUTH_FILE = f"{REMOTE_AUTH_DIRECTORY}/auth.json"
-REMOTE_CA_FILE = f"{REMOTE_AUTH_DIRECTORY}/ca.crt"
 PROXY_URL = "http://127.0.0.1:8080"
 CLEANUP_TIMEOUT_SECONDS = 30
 CODEX_METHODS = ["GET", "POST"]
 CODEX_PATHS = ["/backend-api/codex", "/backend-api/codex/*"]
-
-EnvironmentCommand = Callable[..., Awaitable[Any]]
-
 
 class LocalCodexAuthProxy:
     """Give iron the real access token while the task sees only mock auth."""
@@ -58,6 +52,10 @@ class LocalCodexAuthProxy:
 
     @property
     def agent_environment(self) -> dict[str, str]:
+        raise RuntimeError("the trusted host auth paths must be supplied explicitly")
+
+    @staticmethod
+    def host_environment(auth_file: Path, ca_file: Path) -> dict[str, str]:
         return {
             "HTTP_PROXY": PROXY_URL,
             "HTTPS_PROXY": PROXY_URL,
@@ -65,11 +63,13 @@ class LocalCodexAuthProxy:
             "https_proxy": PROXY_URL,
             "NO_PROXY": "",
             "no_proxy": "",
-            "SSL_CERT_FILE": REMOTE_CA_FILE,
-            "REQUESTS_CA_BUNDLE": REMOTE_CA_FILE,
-            "CURL_CA_BUNDLE": REMOTE_CA_FILE,
-            "GIT_SSL_CAINFO": REMOTE_CA_FILE,
-            "NODE_EXTRA_CA_CERTS": REMOTE_CA_FILE,
+            "SSL_CERT_FILE": str(ca_file),
+            "REQUESTS_CA_BUNDLE": str(ca_file),
+            "CURL_CA_BUNDLE": str(ca_file),
+            "GIT_SSL_CAINFO": str(ca_file),
+            "NODE_EXTRA_CA_CERTS": str(ca_file),
+            "ORVEK_AUTH": "chatgpt",
+            "ORVEK_AUTH_FILE": str(auth_file),
         }
 
     @staticmethod
@@ -88,15 +88,20 @@ class LocalCodexAuthProxy:
             f"ChatGPT authentication requires a local Docker socket, got {endpoint!r}"
         )
 
+    async def validate_task(self, environment: BaseEnvironment) -> str:
+        docker_environment = self.require_local_docker(environment)
+        task_container = await self._main_container_id(docker_environment)
+        task_containers = await self._task_container_ids(docker_environment)
+        if task_container not in task_containers:
+            raise RuntimeError("Harbor's main task container is not running")
+        for container_id in task_containers:
+            await self._require_isolated_task(container_id)
+        return task_container
+
     @asynccontextmanager
     async def running(
-        self,
-        environment: BaseEnvironment,
-        *,
-        exec_as_agent: EnvironmentCommand,
-        exec_as_root: EnvironmentCommand,
-    ) -> AsyncIterator[None]:
-        docker_environment = self.require_local_docker(environment)
+        self, *, host_container: str, public_directory: Path
+    ) -> AsyncIterator[dict[str, str]]:
         container_name = f"orvek-iron-{uuid.uuid4().hex}"
 
         with tempfile.TemporaryDirectory(prefix="orvek-iron-proxy-") as directory:
@@ -105,40 +110,34 @@ class LocalCodexAuthProxy:
             self._write_public_files(proxy_directory)
             active_error: BaseException | None = None
             try:
-                await self._stage_public_files(
-                    environment,
-                    proxy_directory,
-                    exec_as_root=exec_as_root,
-                )
-                task_container = await self._main_container_id(docker_environment)
-                task_containers = await self._task_container_ids(docker_environment)
-                if task_container not in task_containers:
-                    raise RuntimeError("Harbor's main task container is not running")
-                for container_id in task_containers:
-                    await self._require_isolated_task(container_id)
+                public_directory.mkdir(mode=0o700)
+                auth_file = public_directory / "auth.json"
+                ca_file = public_directory / "ca.crt"
+                auth_file.write_bytes((proxy_directory / "fake-auth.json").read_bytes())
+                ca_file.write_bytes((proxy_directory / "ca.crt").read_bytes())
+                auth_file.chmod(0o444)
+                ca_file.chmod(0o444)
                 self._write_proxy_credentials(proxy_directory)
                 await self._start_proxy(
                     proxy_directory,
-                    task_container=task_container,
+                    host_container=host_container,
                     container_name=container_name,
                 )
-                await exec_as_agent(
-                    environment,
-                    "for attempt in $(seq 1 100); do "
-                    "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080' 2>/dev/null && exit 0; "
-                    "sleep 0.1; done; exit 1",
-                    timeout_sec=15,
+                await _run_docker(
+                    [
+                        "exec", host_container, "/bin/sh", "-c",
+                        "i=0; while [ $i -lt 100 ]; do "
+                        "while read -r line; do case \"$line\" in *':1F90 '*) exit 0;; esac; "
+                        "done < /proc/net/tcp; i=$((i+1)); sleep .1; done; exit 1",
+                    ],
+                    timeout_seconds=15,
                 )
-                yield
+                yield self.host_environment(auth_file, ca_file)
             except BaseException as error:
                 active_error = error
                 raise
             finally:
-                cleanup_error = await self._finish_cleanup(
-                    environment,
-                    container_name=container_name,
-                    exec_as_root=exec_as_root,
-                )
+                cleanup_error = await self._finish_cleanup(container_name)
                 if cleanup_error is not None:
                     if active_error is not None:
                         raise cleanup_error from active_error
@@ -226,25 +225,6 @@ class LocalCodexAuthProxy:
         )
         (directory / "fake-auth.json").write_bytes(fake_auth_document())
 
-    async def _stage_public_files(
-        self,
-        environment: BaseEnvironment,
-        directory: Path,
-        *,
-        exec_as_root: EnvironmentCommand,
-    ) -> None:
-        await exec_as_root(
-            environment,
-            f"rm -rf -- {REMOTE_AUTH_DIRECTORY} && "
-            f"mkdir {REMOTE_AUTH_DIRECTORY} && chmod 0755 {REMOTE_AUTH_DIRECTORY}",
-        )
-        await environment.upload_file(directory / "fake-auth.json", REMOTE_AUTH_FILE)
-        await environment.upload_file(directory / "ca.crt", REMOTE_CA_FILE)
-        await exec_as_root(
-            environment,
-            f"chmod 0444 {REMOTE_AUTH_FILE} {REMOTE_CA_FILE}",
-        )
-
     @staticmethod
     async def _main_container_id(environment: DockerEnvironment) -> str:
         result = await environment._run_docker_compose_command(["ps", "-q", "main"])
@@ -311,7 +291,7 @@ class LocalCodexAuthProxy:
         self,
         directory: Path,
         *,
-        task_container: str,
+        host_container: str,
         container_name: str,
     ) -> None:
         await _run_docker(
@@ -321,7 +301,7 @@ class LocalCodexAuthProxy:
                 "--name",
                 container_name,
                 "--network",
-                f"container:{task_container}",
+                f"container:{host_container}",
                 "--user",
                 _host_user(),
                 "--read-only",
@@ -339,18 +319,10 @@ class LocalCodexAuthProxy:
         )
 
     async def _finish_cleanup(
-        self,
-        environment: BaseEnvironment,
-        *,
-        container_name: str,
-        exec_as_root: EnvironmentCommand,
+        self, container_name: str
     ) -> Exception | None:
         cleanup = asyncio.create_task(
-            self._cleanup(
-                environment,
-                container_name=container_name,
-                exec_as_root=exec_as_root,
-            )
+            self._cleanup(container_name)
         )
         try:
             await asyncio.shield(cleanup)
@@ -366,29 +338,12 @@ class LocalCodexAuthProxy:
         return None
 
     async def _cleanup(
-        self,
-        environment: BaseEnvironment,
-        *,
-        container_name: str,
-        exec_as_root: EnvironmentCommand,
+        self, container_name: str
     ) -> None:
-        results = await asyncio.gather(
-            _run_docker(
-                ["rm", "--force", container_name],
-                timeout_seconds=CLEANUP_TIMEOUT_SECONDS,
-            ),
-            exec_as_root(
-                environment,
-                f"rm -rf -- {REMOTE_AUTH_DIRECTORY}",
-                timeout_sec=CLEANUP_TIMEOUT_SECONDS,
-            ),
-            return_exceptions=True,
+        await _run_docker(
+            ["rm", "--force", container_name],
+            timeout_seconds=CLEANUP_TIMEOUT_SECONDS,
         )
-        errors = [result for result in results if isinstance(result, BaseException)]
-        if len(errors) == 1:
-            raise errors[0]
-        if errors:
-            raise BaseExceptionGroup("iron-proxy cleanup failed", errors)
 
 
 def _secret_swap(*, source: str, proxy_value: str, header: str) -> dict[str, object]:
@@ -432,6 +387,7 @@ async def _run_docker(
     *,
     check: bool = True,
     timeout_seconds: int,
+    interrupt_on_cancel: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     try:
         process = await asyncio.create_subprocess_exec(
@@ -449,6 +405,8 @@ async def _run_docker(
             asyncio.shield(communicate), timeout=timeout_seconds
         )
     except asyncio.CancelledError as cancellation:
+        if interrupt_on_cancel and process.returncode is None:
+            process.send_signal(signal.SIGINT)
         while not communicate.done():
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:

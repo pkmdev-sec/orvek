@@ -1,7 +1,5 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{Value, json};
-use std::{collections::BTreeMap, fs, time::Duration};
 use orvek_harness::inference::{
     ArgumentValidity, AttemptStatus, Delta, FailureKind, InferenceRequest, Limits, Model,
     ModelSettings, OutputItem, ReasoningMode, ResponseStatus, ResponsesClient, Route, Thinking,
@@ -10,6 +8,8 @@ use orvek_harness::inference::{
         Auth, AuthError, AuthMode, ChatGptLogin, SecretString, chatgpt_auth_status, logout_chatgpt,
     },
 };
+use serde_json::{Value, json};
+use std::{collections::BTreeMap, fs, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},

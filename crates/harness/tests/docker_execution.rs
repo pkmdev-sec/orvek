@@ -1,11 +1,11 @@
-use std::{fs, time::Duration};
 use orvek_harness::runtime::{DockerExecutor, ExecutionRequest, ExecutionStatus};
+use std::{fs, time::Duration};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 fn workspace_tempdir() -> tempfile::TempDir {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/docker-test-workspaces");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.orvek/docker-test-workspaces");
     fs::create_dir_all(&root).unwrap();
     tempfile::tempdir_in(root).unwrap()
 }

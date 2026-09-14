@@ -22,15 +22,12 @@ from harbor_adapter.credentials import (
 )
 from harbor_adapter.evidence import (
     EvidencePolicy,
-    _child_metrics,
-    _root_metrics,
-    _validate_orchestration,
+    populate_context,
 )
-from harbor_adapter.installation import cli_tools_install_command
+from harbor_adapter.host_sidecar import HostSidecar, _has_terminal_fence
+from harbor_adapter.installation import cli_tools_install_command, executor_helper_path
 from harbor_adapter.iron_proxy import (
     IRON_PROXY_IMAGE,
-    REMOTE_AUTH_FILE,
-    REMOTE_CA_FILE,
     LocalCodexAuthProxy,
     _run_docker,
 )
@@ -74,7 +71,7 @@ def auth_document(suffix: str, expires_at: float | None = None) -> bytes:
 
 
 class ArgumentContractTests(unittest.TestCase):
-    def test_run_uses_orvek_headless_mode_and_retains_orchestration(self) -> None:
+    def test_run_uses_durable_headless_mode(self) -> None:
         agent = object.__new__(OrvekAgent)
         agent._effort = "low"
         agent._reasoning_mode = "standard"
@@ -82,15 +79,13 @@ class ArgumentContractTests(unittest.TestCase):
         agent._web_search = False
         agent._image_generation = False
         agent._append_instructions = None
+        agent._model = MODEL
         agent._auth_proxy = LocalCodexAuthProxy("unused")
 
         arguments = agent._run_arguments("- inspect the workspace")
 
-        self.assertEqual(arguments[0], "/installed-agent/orvek")
-        self.assertIn("chatgpt", arguments)
-        self.assertIn(REMOTE_AUTH_FILE, arguments)
-        self.assertIn("/app", arguments)
-        self.assertIn("/logs/agent/orchestration.jsonl", arguments)
+        self.assertEqual(arguments[0:2], ["--model", MODEL])
+        self.assertNotIn("--orchestration-log", arguments)
         self.assertEqual(arguments[-2:], ["--", "- inspect the workspace"])
 
     def test_model_name_must_match_the_orvek_build(self) -> None:
@@ -143,6 +138,14 @@ class InstallContractTests(unittest.TestCase):
             "chmod 0755 /installed-agent/orvek",
         )
 
+    def test_executor_helper_matches_committed_image_architecture(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "orvek"
+            helper = Path(directory) / "orvek-executor-linux-aarch64"
+            helper.write_bytes(b"helper")
+
+            self.assertEqual(executor_helper_path(binary, "arm64"), helper.resolve())
+
 
 class CredentialContractTests(unittest.TestCase):
     def test_remote_environments_are_rejected_before_reading_credentials(self) -> None:
@@ -163,24 +166,11 @@ class CredentialContractTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "local Docker socket"):
                 proxy.require_local_docker(environment)
 
-    def test_task_receives_only_fake_auth_and_the_public_ca(self) -> None:
+    def test_trusted_host_receives_only_fake_auth_and_the_public_ca(self) -> None:
         async def exercise(
             auth_file: Path,
-        ) -> tuple[list[tuple[str, bytes]], list[list[str]]]:
+        ) -> tuple[bytes, bytes, list[list[str]]]:
             proxy = LocalCodexAuthProxy(auth_file, safe_bind_root="/safe-trial")
-            environment = object.__new__(DockerEnvironment)
-            environment._is_windows_container = False
-            environment._run_docker_compose_command = AsyncMock(
-                return_value=SimpleNamespace(stdout="task-container\n")
-            )
-            uploaded: list[tuple[str, bytes]] = []
-
-            async def upload(source: Path, target: str) -> None:
-                uploaded.append((target, source.read_bytes()))
-
-            environment.upload_file = AsyncMock(side_effect=upload)
-            exec_as_agent = AsyncMock()
-            exec_as_root = AsyncMock()
             docker_commands: list[list[str]] = []
 
             async def docker(arguments: list[str], **_: object) -> SimpleNamespace:
@@ -215,41 +205,34 @@ class CredentialContractTests(unittest.TestCase):
                         returncode=0,
                         stdout=json.dumps(inspection),
                     )
-                return SimpleNamespace(returncode=0, stdout="")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-            with (
-                patch(
-                    "harbor_adapter.iron_proxy._docker_endpoint",
-                    return_value="unix:///var/run/docker.sock",
-                ),
-                patch("harbor_adapter.iron_proxy._run_docker", side_effect=docker),
-            ):
+            with patch("harbor_adapter.iron_proxy._run_docker", side_effect=docker):
+                public = Path(tempfile.mkdtemp(dir=auth_file.parent))
+                public.rmdir()
                 async with proxy.running(
-                    environment,
-                    exec_as_agent=exec_as_agent,
-                    exec_as_root=exec_as_root,
-                ):
-                    pass
-            return uploaded, docker_commands
+                    host_container="trusted-host", public_directory=public
+                ) as environment:
+                    self.assertEqual(environment["ORVEK_AUTH_FILE"], str(public / "auth.json"))
+                    auth_bytes = (public / "auth.json").read_bytes()
+                    ca_bytes = (public / "ca.crt").read_bytes()
+            return auth_bytes, ca_bytes, docker_commands
 
         with tempfile.TemporaryDirectory() as directory:
             auth_file = Path(directory) / "auth.json"
             source = auth_document("real")
             auth_file.write_bytes(source)
             auth_file.chmod(0o600)
-            uploaded, docker_commands = asyncio.run(exercise(auth_file))
+            fake_auth, public_ca, docker_commands = asyncio.run(exercise(auth_file))
 
-        self.assertEqual(
-            [target for target, _ in uploaded], [REMOTE_AUTH_FILE, REMOTE_CA_FILE]
-        )
-        task_bytes = b"".join(content for _, content in uploaded)
         source_tokens = json.loads(source)["tokens"]
-        self.assertNotIn(source_tokens["access_token"].encode(), task_bytes)
-        self.assertNotIn(source_tokens["refresh_token"].encode(), task_bytes)
-        self.assertEqual(json.loads(uploaded[0][1]), json.loads(fake_auth_document()))
+        public_bytes = fake_auth + public_ca
+        self.assertNotIn(source_tokens["access_token"].encode(), public_bytes)
+        self.assertNotIn(source_tokens["refresh_token"].encode(), public_bytes)
+        self.assertEqual(json.loads(fake_auth), json.loads(fake_auth_document()))
 
         start = next(command for command in docker_commands if "--detach" in command)
-        self.assertIn("container:task-container", start)
+        self.assertIn("container:trusted-host", start)
         self.assertIn(f"{IRON_PROXY_IMAGE}", start)
         self.assertIn(":/run/orvek-auth:ro", " ".join(start))
         self.assertNotIn(source_tokens["access_token"], " ".join(start))
@@ -285,20 +268,126 @@ class CredentialContractTests(unittest.TestCase):
     def test_proxy_removal_failure_is_reported(self) -> None:
         async def exercise() -> None:
             proxy = LocalCodexAuthProxy("unused")
-            exec_as_root = AsyncMock()
             with patch(
                 "harbor_adapter.iron_proxy._run_docker",
                 AsyncMock(side_effect=RuntimeError("removal failed")),
             ):
                 with self.assertRaisesRegex(RuntimeError, "removal failed"):
-                    await proxy._cleanup(
-                        SimpleNamespace(),
-                        container_name="proxy-container",
-                        exec_as_root=exec_as_root,
-                    )
-            exec_as_root.assert_awaited_once()
+                    await proxy._cleanup("proxy-container")
 
         asyncio.run(exercise())
+
+    def test_cancelled_headless_exec_is_interrupted_then_fenced(self) -> None:
+        async def exercise() -> None:
+            started = asyncio.Event()
+            finish = asyncio.Event()
+
+            class Process:
+                returncode = None
+                signals: list[int] = []
+
+                def send_signal(self, value: int) -> None:
+                    self.signals.append(value)
+
+                async def communicate(self) -> tuple[bytes, bytes]:
+                    started.set()
+                    await finish.wait()
+                    self.returncode = 130
+                    return b'{}\n', b""
+
+            process = Process()
+            with patch(
+                "harbor_adapter.iron_proxy.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=process),
+            ):
+                command = asyncio.create_task(
+                    _run_docker(
+                        ["exec", "host", "orvek", "run"],
+                        timeout_seconds=30,
+                        interrupt_on_cancel=True,
+                    )
+                )
+                await started.wait()
+                command.cancel()
+                await asyncio.sleep(0)
+                self.assertTrue(process.signals)
+                self.assertFalse(command.done())
+                finish.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await command
+
+        asyncio.run(exercise())
+
+
+class SidecarContractTests(unittest.TestCase):
+    def test_task_validation_is_an_awaitable_preflight(self) -> None:
+        async def exercise() -> str:
+            environment = SimpleNamespace()
+            proxy = LocalCodexAuthProxy("unused")
+            proxy.require_local_docker = lambda candidate: candidate
+            proxy._main_container_id = AsyncMock(return_value="main")
+            proxy._task_container_ids = AsyncMock(return_value=["main", "helper"])
+            proxy._require_isolated_task = AsyncMock()
+
+            result = await proxy.validate_task(environment)
+
+            self.assertEqual(proxy._require_isolated_task.await_count, 2)
+            return result
+
+        self.assertEqual(asyncio.run(exercise()), "main")
+
+    def test_terminal_fence_requires_typed_single_submission_result(self) -> None:
+        envelope = {"protocol": "orvek.host", "version": 1, "type": "session", "data": {}}
+        terminal = {
+            **envelope,
+            "type": "submission_result",
+            "data": {"status": {"state": "finished"}},
+        }
+
+        self.assertTrue(_has_terminal_fence(json.dumps(envelope) + "\n" + json.dumps(terminal)))
+        self.assertFalse(_has_terminal_fence(json.dumps(terminal) + "\n" + json.dumps(terminal)))
+        self.assertFalse(_has_terminal_fence(json.dumps(terminal) + "\n" + json.dumps(envelope)))
+        interrupted = {
+            **terminal,
+            "data": {"status": {"state": "interrupted"}},
+        }
+        self.assertFalse(_has_terminal_fence(json.dumps(interrupted)))
+
+    def test_host_has_socket_and_path_identical_trial_mount_only(self) -> None:
+        async def exercise(root: Path) -> list[str]:
+            binary = root / "orvek"
+            helper = root / "orvek-executor"
+            binary.write_bytes(b"binary")
+            helper.write_bytes(b"helper")
+            sidecar = HostSidecar(
+                logs_dir=root / "agent",
+                binary_path=binary,
+                auth_proxy=LocalCodexAuthProxy("unused"),
+            )
+            with patch(
+                "harbor_adapter.host_sidecar._run_docker", AsyncMock()
+            ) as docker:
+                await sidecar._start_host_container(
+                    container_name="trusted-host",
+                    architecture="arm64",
+                    root=root,
+                    socket=Path("/var/run/docker.sock"),
+                    helper_path=helper,
+                    environment={"ORVEK_EXECUTOR_IMAGE": "executor:image"},
+                )
+            return docker.await_args.args[0]
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            arguments = asyncio.run(exercise(root))
+
+        joined = " ".join(arguments)
+        self.assertIn(f"src={root},dst={root}", joined)
+        self.assertIn("src=/var/run/docker.sock,dst=/var/run/docker.sock", joined)
+        self.assertIn("--cap-drop ALL", joined)
+        self.assertIn("--platform linux/arm64", joined)
+        self.assertNotIn("executor:image -c", joined)
+        self.assertIn("debian:bookworm-slim@sha256:", joined)
 
     def test_unsafe_task_container_is_rejected_before_credentials_are_read(
         self,
@@ -392,181 +481,297 @@ class CredentialContractTests(unittest.TestCase):
         self.assertTrue(all(secret["rules"] == [codex_rule] for secret in secrets))
 
 
-class MetricsContractTests(unittest.TestCase):
-    def test_root_and_child_metrics_combine_cache_usage(self) -> None:
-        root = _root_metrics(
-            [{"type": "tool.call"}, {"type": "run.completed"}],
-            {
-                "model_calls": 2,
-                "cost_usd": 0.5,
-                "usage": {
-                    "input_tokens": 100,
-                    "cached_input_tokens": 60,
-                    "output_tokens": 20,
-                    "total_tokens": 120,
+def host_envelope(kind: str, data: object) -> dict[str, object]:
+    return {"protocol": "orvek.host", "version": 1, "type": kind, "data": data}
+
+
+def journal_command(
+    sequence: int,
+    kind: str,
+    data: dict[str, object],
+    *,
+    operation: str = "request-1",
+) -> dict[str, object]:
+    return host_envelope(
+        "event",
+        {
+            "type": "journal",
+            "data": {
+                "sequence": sequence,
+                "aggregate": "session-1",
+                "kind": "session",
+                "revision": sequence,
+                "event": {
+                    "type": "command",
+                    "data": {
+                        "operation": operation,
+                        "command": {"type": kind, "data": data},
+                        "at_ms": sequence,
+                    },
                 },
             },
-        )
-        child = _child_metrics(
+        },
+    )
+
+
+def durable_host_events(
+    *,
+    items: list[dict[str, object]] | None = None,
+    tool_results: list[tuple[str, object]] | None = None,
+    usage: dict[str, object] | None = None,
+) -> list[dict[str, object]]:
+    events = [
+        host_envelope(
+            "session",
             {
-                "child_metrics": {
-                    "model_calls": 3,
-                    "tool_calls": 4,
-                    "cost_usd": 0.75,
-                    "usage": {
-                        "input_tokens": 200,
-                        "cached_input_tokens": 150,
-                        "output_tokens": 30,
-                        "total_tokens": 230,
-                    },
-                    "warmup_usage": {},
-                }
-            }
+                "id": "session-1",
+                "journal_sequence": 0,
+                "model": {"model": MODEL, "thinking": "low"},
+            },
+        ),
+        host_envelope(
+            "submission_pending",
+            {"session": "session-1", "request": "request-1"},
+        ),
+        host_envelope(
+            "submission",
+            {"id": "request-1", "status": {"state": "queued"}},
+        ),
+        journal_command(
+            2,
+            "input",
+            {"kind": "task", "content": [{"type": "input_text", "text": "inspect"}]},
+        ),
+    ]
+    sequence = 4
+    if items is not None:
+        events.append(
+            journal_command(
+                sequence,
+                "response",
+                {"request": "request-1", "items": items},
+            )
         )
-
-        total = root.plus(child)
-
-        self.assertEqual(total.model_calls, 5)
-        self.assertEqual(total.tool_calls, 5)
-        self.assertEqual(total.cost_usd, 1.25)
-        self.assertEqual(total.usage["input_tokens"], 300)
-        self.assertEqual(total.usage["cached_input_tokens"], 210)
-        self.assertEqual(total.usage["total_tokens"], 350)
-
-    def test_malformed_metrics_are_rejected(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "root metrics.model_calls"):
-            _root_metrics(
-                [],
+        sequence += 2
+    if usage is not None:
+        events.append(
+            journal_command(
+                sequence,
+                "provider_usage",
+                {"request": "request-1", "usage": usage},
+            )
+        )
+        sequence += 2
+    for call_id, output in tool_results or []:
+        events.append(
+            journal_command(
+                sequence,
+                "tool_result",
                 {
-                    "model_calls": "one",
-                    "cost_usd": None,
-                    "usage": {
-                        "input_tokens": 1,
-                        "cached_input_tokens": 0,
-                        "output_tokens": 1,
-                        "total_tokens": 2,
-                    },
+                    "request": "request-1",
+                    "call_id": call_id,
+                    "output": json.dumps(output, separators=(",", ":")),
                 },
             )
-
-    def test_orchestration_requires_a_final_clean_summary(self) -> None:
-        records = [
-            {
-                "protocol_version": 1,
-                "sequence": 1,
-                "root_session_id": "root",
-                "type": "orchestration.completed",
-                "agents_started": 1,
-                "active_agent_ids": [],
-                "failed_agent_ids": [],
-                "child_metrics": {},
-            }
-        ]
-
-        policy = EvidencePolicy(
-            minimum_subagents=1,
-            fail_on_subagent_error=False,
-            require_wait=False,
         )
-        summary = _validate_orchestration(records, "root", policy)
+        sequence += 2
+    events.extend(
+        [
+            journal_command(
+                sequence,
+                "turn_settled",
+                {"request": "request-1", "outcome": "complete", "error": None},
+            ),
+            host_envelope(
+                "submission_result",
+                {
+                    "id": "request-1",
+                    "status": {
+                        "state": "finished",
+                        "task": "task-1",
+                        "outcome": "complete",
+                        "error": None,
+                    },
+                },
+            ),
+        ]
+    )
+    return events
 
-        self.assertEqual(summary["agents_started"], 1)
-        records[0]["active_agent_ids"] = [1]
-        with self.assertRaisesRegex(RuntimeError, "left active subagents"):
-            _validate_orchestration(records, "root", policy)
 
-    def test_complete_failed_run_writes_atif_and_aggregate_context(self) -> None:
+class EvidenceContractTests(unittest.TestCase):
+    def populate(
+        self,
+        events: list[dict[str, object]],
+        policy: EvidencePolicy | None = None,
+    ) -> tuple[AgentContext, dict[str, object]]:
         with tempfile.TemporaryDirectory() as directory:
             logs = Path(directory)
             (logs / "input.jsonl").write_text(
                 '{"instruction":"inspect"}\n', encoding="utf-8"
             )
-            events = [
-                {
-                    "protocol_version": 1,
-                    "request_id": "root",
-                    "seq": 1,
-                    "type": "run.started",
-                    "payload": {},
-                },
-                {
-                    "protocol_version": 1,
-                    "request_id": "root",
-                    "seq": 2,
-                    "type": "assistant.message",
-                    "payload": {"text": "done"},
-                },
-                {
-                    "protocol_version": 1,
-                    "request_id": "root",
-                    "seq": 3,
-                    "type": "run.failed",
-                    "payload": {
-                        "model": MODEL,
-                        "effort": "low",
-                        "model_calls": 1,
-                        "cost_usd": 0.5,
-                        "usage": {
-                            "input_tokens": 100,
-                            "cached_input_tokens": 50,
-                            "output_tokens": 20,
-                            "total_tokens": 120,
-                        },
-                    },
-                },
-            ]
-            orchestration = [
-                {
-                    "protocol_version": 1,
-                    "sequence": 1,
-                    "root_session_id": "root",
-                    "type": "orchestration.completed",
-                    "outcome": "completed",
-                    "agents_started": 0,
-                    "active_agent_ids": [],
-                    "failed_agent_ids": [],
-                    "agents": [],
-                    "child_metrics": {
-                        "model_calls": 2,
-                        "tool_calls": 3,
-                        "cost_usd": 0.75,
-                        "usage": {
-                            "input_tokens": 200,
-                            "cached_input_tokens": 100,
-                            "output_tokens": 30,
-                            "total_tokens": 230,
-                        },
-                        "warmup_usage": {},
-                    },
-                }
-            ]
-            for name, values in (
-                ("events.jsonl", events),
-                ("orchestration.jsonl", orchestration),
-            ):
-                (logs / name).write_text(
-                    "".join(json.dumps(value) + "\n" for value in values),
-                    encoding="utf-8",
-                )
+            (logs / "events.jsonl").write_text(
+                "".join(json.dumps(event) + "\n" for event in events),
+                encoding="utf-8",
+            )
+            # A legacy sidecar artifact must be neither required nor trusted.
+            (logs / "orchestration.jsonl").write_text("not-json\n", encoding="utf-8")
             context = AgentContext()
-            agent = object.__new__(OrvekAgent)
-            agent.logs_dir = logs
-            agent._minimum_subagents = 0
-            agent._fail_on_subagent_error = False
-            agent._require_wait = False
-            agent._run_interrupted = False
-            agent._run_failed = True
-            agent._post_run_validation_failed = False
-            agent.version = lambda: "test"
-
-            agent.populate_context_post_run(context)
-
+            populate_context(
+                logs_dir=logs,
+                context=context,
+                agent_name="orvek",
+                agent_version="test",
+                policy=policy
+                or EvidencePolicy(
+                    minimum_subagents=0,
+                    fail_on_subagent_error=False,
+                    require_wait=False,
+                ),
+            )
             trajectory = json.loads((logs / "trajectory.json").read_text())
-            self.assertEqual(context.n_input_tokens, 300)
-            self.assertEqual(context.n_cache_tokens, 150)
-            self.assertEqual(context.n_output_tokens, 50)
-            self.assertEqual(context.cost_usd, 1.25)
-            self.assertEqual(trajectory["final_metrics"]["extra"]["model_calls"], 3)
+            return context, trajectory
+
+    def test_journal_evidence_writes_exact_available_atif(self) -> None:
+        items = [
+            {"type": "reasoning", "summary": [{"text": "checked"}]},
+            {
+                "type": "function_call",
+                "call_id": "call-1",
+                "name": "read_file",
+                "arguments": '{"path":"README.md"}',
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "done"}],
+            },
+        ]
+        context, trajectory = self.populate(
+            durable_host_events(
+                items=items,
+                tool_results=[("call-1", {"content": "hello"})],
+                usage={
+                    "input_tokens": 10,
+                    "output_tokens": 4,
+                    "total_tokens": 14,
+                    "cached_input_tokens": None,
+                    "reasoning_tokens": 2,
+                },
+            )
+        )
+
+        self.assertEqual(context.n_input_tokens, 10)
+        self.assertIsNone(context.n_cache_tokens)
+        self.assertIsNone(context.cost_usd)
+        self.assertEqual(trajectory["session_id"], "session-1")
+        self.assertEqual(trajectory["steps"][1]["message"], "done")
+        self.assertEqual(trajectory["steps"][1]["reasoning_content"], "checked")
+        self.assertEqual(
+            trajectory["steps"][1]["observation"]["results"][0]["content"],
+            '{"content":"hello"}',
+        )
+        self.assertEqual(
+            trajectory["final_metrics"]["extra"]["available_usage"]["reasoning_tokens"],
+            2,
+        )
+
+    def test_malformed_protocol_is_rejected(self) -> None:
+        events = durable_host_events()
+        events[0]["protocol"] = "orvek.deleted"
+        with self.assertRaisesRegex(RuntimeError, "orvek.host v1"):
+            self.populate(events)
+
+    def test_view_gap_and_nonmonotonic_journal_are_rejected(self) -> None:
+        gap = durable_host_events()
+        gap.insert(-1, host_envelope("view_gap", {"after": 2, "through": 5}))
+        with self.assertRaisesRegex(RuntimeError, "view_gap"):
+            self.populate(gap)
+
+        preview_gap = durable_host_events()
+        preview_gap.insert(
+            -1,
+            host_envelope("event", {"type": "preview_gap", "dropped": 1}),
+        )
+        with self.assertRaisesRegex(RuntimeError, "view_gap"):
+            self.populate(preview_gap)
+
+        nonmonotonic = durable_host_events(items=[])
+        journal_events = [event for event in nonmonotonic if event["type"] == "event"]
+        journal_events[1]["data"]["data"]["sequence"] = 1
+        with self.assertRaisesRegex(RuntimeError, "strictly monotonic"):
+            self.populate(nonmonotonic)
+
+    def test_interrupted_submission_result_is_rejected(self) -> None:
+        events = durable_host_events()
+        events[-1]["data"]["status"] = {"state": "interrupted"}
+        with self.assertRaisesRegex(RuntimeError, "interrupted"):
+            self.populate(events)
+
+    def test_tool_calls_and_results_must_pair_exactly_once(self) -> None:
+        call = {
+            "type": "function_call",
+            "call_id": "missing",
+            "name": "read_file",
+            "arguments": "{}",
+        }
+        with self.assertRaisesRegex(RuntimeError, "no durable tool_result"):
+            self.populate(durable_host_events(items=[call]))
+
+        with self.assertRaisesRegex(RuntimeError, "no matching function_call"):
+            self.populate(durable_host_events(tool_results=[("orphan", {})]))
+
+    def test_subagent_policy_uses_only_durable_paired_results(self) -> None:
+        calls = [
+            {
+                "type": "function_call",
+                "call_id": "spawn",
+                "name": "spawn_agent",
+                "arguments": "{}",
+            },
+            {
+                "type": "function_call",
+                "call_id": "wait",
+                "name": "wait_agent",
+                "arguments": '{"agent_ids":[7]}',
+            },
+        ]
+        policy = EvidencePolicy(
+            minimum_subagents=1,
+            fail_on_subagent_error=True,
+            require_wait=True,
+        )
+        events = durable_host_events(
+            items=calls,
+            tool_results=[
+                (
+                    "spawn",
+                    {
+                        "agent_id": 7,
+                        "model": "selected",
+                        "role": "reviewer",
+                        "status": {"state": "running"},
+                    },
+                ),
+                (
+                    "wait",
+                    {
+                        "agents": [
+                            {"agent_id": 7, "status": {"state": "completed"}}
+                        ],
+                        "timed_out": False,
+                    },
+                ),
+            ],
+        )
+        context, _ = self.populate(events, policy)
+        self.assertEqual(context.metadata["orchestration"]["latest_states"], {"7": "completed"})
+
+        malformed = durable_host_events(
+            items=calls[:1], tool_results=[("spawn", {"error": "unavailable"})]
+        )
+        with self.assertRaisesRegex(RuntimeError, "durably proven subagents"):
+            self.populate(malformed, policy)
 
 
 class ConfigurationContractTests(unittest.TestCase):

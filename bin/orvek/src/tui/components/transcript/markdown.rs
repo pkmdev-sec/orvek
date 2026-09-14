@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use ratatui_image::sliced::SlicedProtocol;
-use std::{borrow::Cow, ops::Range, path::Path, sync::Arc};
+use std::{ops::Range, path::Path, sync::Arc};
 use syntect::easy::HighlightLines;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -552,7 +552,7 @@ impl<'a> Renderer<'a> {
             |language| super::highlight::syntax_for_token(&assets.syntaxes, language),
         );
         let syntax_theme = super::highlight::theme();
-        let mut highlighter = HighlightLines::new(syntax, syntax_theme);
+        let mut highlighter = HighlightLines::new(syntax, &syntax_theme);
         let header = self.lines.len();
         self.lines.push(code_block_header(
             language.as_deref(),
@@ -614,7 +614,7 @@ impl<'a> Renderer<'a> {
             |language| super::highlight::syntax_for_token(&assets.syntaxes, language),
         );
         let syntax_theme = super::highlight::theme();
-        let mut highlighter = HighlightLines::new(syntax, syntax_theme);
+        let mut highlighter = HighlightLines::new(syntax, &syntax_theme);
         let content_width = self.width.saturating_sub(2).max(1);
         for source_line in code.trim_end_matches('\n').split('\n') {
             let highlighted =
@@ -811,8 +811,8 @@ impl<'a> Renderer<'a> {
 }
 
 #[derive(Clone)]
-struct SourceGrapheme<'a> {
-    text: Cow<'a, str>,
+struct SourceGrapheme {
+    text: String,
     source: Range<usize>,
 }
 
@@ -823,7 +823,7 @@ fn markdown_selection_spans(
     exclusions: &[Vec<Range<u16>>],
     image_selection_modes: &[ImageSelectionMode],
 ) -> (Vec<Vec<SourceSpan>>, Vec<SourceEnvelope>) {
-    let mut graphemes = Vec::<SourceGrapheme<'_>>::new();
+    let mut graphemes = Vec::<SourceGrapheme>::new();
     let mut envelopes = Vec::<(TagEnd, Range<usize>, usize, bool, Option<String>, bool)>::new();
     let mut source_envelopes = Vec::new();
     let mut image_modes = image_selection_modes.iter().copied();
@@ -876,7 +876,7 @@ fn markdown_selection_spans(
                 if let Some(destination) = destination {
                     let label = graphemes[first..]
                         .iter()
-                        .map(|grapheme| grapheme.text.as_ref())
+                        .map(|grapheme| grapheme.text.as_str())
                         .collect::<String>();
                     if label.trim() != destination {
                         let destination_source = markdown
@@ -927,11 +927,11 @@ fn markdown_selection_spans(
                 ));
             }
             Event::SoftBreak if hidden_image_depth == 0 => graphemes.push(SourceGrapheme {
-                text: Cow::Borrowed(" "),
+                text: " ".to_owned(),
                 source: range,
             }),
             Event::HardBreak if hidden_image_depth == 0 => graphemes.push(SourceGrapheme {
-                text: Cow::Borrowed("\n"),
+                text: "\n".to_owned(),
                 source: range,
             }),
             Event::TaskListMarker(checked) if hidden_image_depth == 0 => {
@@ -950,17 +950,13 @@ fn markdown_selection_spans(
     )
 }
 
-fn source_graphemes<'a>(
-    raw: &'a str,
-    rendered: &str,
-    source: Range<usize>,
-) -> Vec<SourceGrapheme<'a>> {
+fn source_graphemes(raw: &str, rendered: &str, source: Range<usize>) -> Vec<SourceGrapheme> {
     let raw_fragment = raw.get(source.clone()).unwrap_or_default();
     if raw_fragment == rendered {
-        return raw_fragment
+        return rendered
             .grapheme_indices(true)
             .map(|(offset, text)| SourceGrapheme {
-                text: Cow::Borrowed(text),
+                text: text.to_owned(),
                 source: source.start + offset..source.start + offset + text.len(),
             })
             .collect();
@@ -968,21 +964,21 @@ fn source_graphemes<'a>(
     rendered
         .graphemes(true)
         .map(|text| SourceGrapheme {
-            text: Cow::Owned(text.to_owned()),
+            text: text.to_owned(),
             source: source.clone(),
         })
         .collect()
 }
 
-struct RenderedGrapheme<'a> {
+struct RenderedGrapheme {
     line: usize,
     column: u16,
-    text: &'a str,
+    text: String,
     width: u16,
 }
 
 fn align_source_graphemes(
-    source: &[SourceGrapheme<'_>],
+    source: &[SourceGrapheme],
     lines: &[Line<'static>],
     exclusions: &[Vec<Range<u16>>],
 ) -> Vec<Vec<SourceSpan>> {
@@ -995,7 +991,7 @@ fn align_source_graphemes(
         }
         let Some(offset) = rendered[next_rendered..]
             .iter()
-            .position(|candidate| candidate.text == grapheme.text.as_ref())
+            .position(|candidate| candidate.text == grapheme.text)
         else {
             continue;
         };
@@ -1075,10 +1071,10 @@ fn align_source_graphemes(
     selections
 }
 
-fn rendered_graphemes<'a>(
-    lines: &'a [Line<'static>],
+fn rendered_graphemes(
+    lines: &[Line<'static>],
     exclusions: &[Vec<Range<u16>>],
-) -> Vec<RenderedGrapheme<'a>> {
+) -> Vec<RenderedGrapheme> {
     let mut rendered = Vec::new();
     for (line_index, line) in lines.iter().enumerate() {
         let mut column = 0_u16;
@@ -1092,7 +1088,7 @@ fn rendered_graphemes<'a>(
                     rendered.push(RenderedGrapheme {
                         line: line_index,
                         column,
-                        text,
+                        text: text.to_owned(),
                         width,
                     });
                 }
@@ -1142,13 +1138,14 @@ fn wrap_spans_with_whitespace(
         .flat_map(|span| {
             span.content
                 .graphemes(true)
-                .map(move |text| StyledGrapheme {
-                    text,
+                .map(|text| StyledGrapheme {
+                    text: text.to_owned(),
                     style: span.style,
                     link: None,
                     width: u16::try_from(UnicodeWidthStr::width(text)).unwrap_or(u16::MAX),
                     whitespace: text.chars().all(char::is_whitespace),
                 })
+                .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
     wrap_graphemes(&graphemes, width, prefer_words, preserve_whitespace)
@@ -1172,20 +1169,21 @@ fn wrap_tagged_spans(
                 .span
                 .content
                 .graphemes(true)
-                .map(move |text| StyledGrapheme {
-                    text,
+                .map(|text| StyledGrapheme {
+                    text: text.to_owned(),
                     style: tagged.span.style,
-                    link: tagged.link.as_ref(),
+                    link: tagged.link.as_ref().map(Arc::clone),
                     width: u16::try_from(UnicodeWidthStr::width(text)).unwrap_or(u16::MAX),
                     whitespace: text.chars().all(char::is_whitespace),
                 })
+                .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
     wrap_graphemes(&graphemes, width, prefer_words, false)
 }
 
 fn wrap_graphemes(
-    graphemes: &[StyledGrapheme<'_>],
+    graphemes: &[StyledGrapheme],
     width: u16,
     prefer_words: bool,
     preserve_whitespace: bool,
@@ -1222,7 +1220,7 @@ fn wrap_graphemes(
 }
 
 fn wrap_visual_line(
-    graphemes: &[StyledGrapheme<'_>],
+    graphemes: &[StyledGrapheme],
     width: u16,
     prefer_words: bool,
     preserve_whitespace: bool,
@@ -1280,16 +1278,16 @@ fn wrap_visual_line(
     lines
 }
 
-struct StyledGrapheme<'a> {
-    text: &'a str,
+struct StyledGrapheme {
+    text: String,
     style: Style,
-    link: Option<&'a Arc<str>>,
+    link: Option<Arc<str>>,
     width: u16,
     whitespace: bool,
 }
 
 fn graphemes_to_line(
-    graphemes: &[StyledGrapheme<'_>],
+    graphemes: &[StyledGrapheme],
     preserve_whitespace: bool,
 ) -> (Line<'static>, Vec<LinkSpan>) {
     let mut spans = Vec::<Span<'static>>::new();
@@ -1307,11 +1305,11 @@ fn graphemes_to_line(
         if let Some(last) = spans.last_mut()
             && last.style == grapheme.style
         {
-            last.content.to_mut().push_str(grapheme.text);
+            last.content.to_mut().push_str(&grapheme.text);
         } else {
-            spans.push(Span::styled(grapheme.text.to_owned(), grapheme.style));
+            spans.push(Span::styled(grapheme.text.clone(), grapheme.style));
         }
-        if let Some(destination) = grapheme.link
+        if let Some(destination) = &grapheme.link
             && grapheme.width > 0
         {
             let end = column.saturating_add(grapheme.width);

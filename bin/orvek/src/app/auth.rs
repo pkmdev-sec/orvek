@@ -5,8 +5,8 @@ use crate::app::{
     error::{AuthError, AuthResult, SecretError},
     secret::SecretString,
 };
-use nanocodex::oai::auth::{
-    ChatGptAuthStatus, ChatGptLogin, OpenAiAuth, chatgpt_auth_status, load_chatgpt_auth,
+use orvek_harness::inference::auth::{
+    Auth, ChatGptAuthStatus, ChatGptLogin, SecretString as ProviderSecret, chatgpt_auth_status,
     logout_chatgpt,
 };
 use std::{path::Path, result::Result as StdResult};
@@ -37,10 +37,10 @@ impl AuthConfig {
         Ok(())
     }
 
-    pub(crate) fn load(&self) -> AuthResult<OpenAiAuth> {
+    pub(crate) fn load(&self) -> AuthResult<Auth> {
         let selected = self.select_auth(|| SecretString::from_environment(OPENAI_API_KEY))?;
 
-        selected.into_openai_auth(self.file())
+        selected.into_provider_auth(self.file())
     }
 
     pub(crate) fn status(&self) -> AuthResult<()> {
@@ -130,13 +130,12 @@ impl AuthConfig {
 }
 
 impl SelectedAuth {
-    fn into_openai_auth(self, auth_file: &Path) -> AuthResult<OpenAiAuth> {
+    fn into_provider_auth(self, auth_file: &Path) -> AuthResult<Auth> {
         match self {
-            Self::ChatGpt => load_chatgpt_auth(auth_file).map_err(Into::into),
+            Self::ChatGpt => Auth::chatgpt(auth_file.to_owned()).map_err(Into::into),
             Self::ApiKey(api_key) => {
-                // Nanocodex owns the retained key after this boundary. The application-owned
-                // buffer is still zeroized when `api_key` is dropped.
-                Ok(OpenAiAuth::api_key(api_key.expose_secret()))
+                Auth::api_key(ProviderSecret::new(api_key.expose_secret().to_owned()))
+                    .map_err(Into::into)
             }
         }
     }
@@ -150,7 +149,7 @@ mod tests {
         error::AuthError,
         secret::SecretString,
     };
-    use nanocodex::oai::auth::OpenAiAuthMode;
+    use orvek_harness::inference::auth::AuthMode as ProviderAuthMode;
     use std::{cell::Cell, fs};
     use tempfile::tempdir;
 
@@ -208,11 +207,12 @@ mod tests {
     }
 
     #[test]
-    fn selected_api_key_constructs_nanocodex_authorization() {
+    fn selected_api_key_constructs_redacted_native_authorization() {
         let selected = SelectedAuth::ApiKey(SecretString::new("api-key".into()));
-        let auth = selected.into_openai_auth("unused.json".as_ref()).unwrap();
+        let auth = selected.into_provider_auth("unused.json".as_ref()).unwrap();
 
-        assert_eq!(auth.mode(), OpenAiAuthMode::ApiKey);
+        assert_eq!(auth.mode(), ProviderAuthMode::ApiKey);
+        assert!(!format!("{auth:?}").contains("api-key"));
     }
 
     #[test]
