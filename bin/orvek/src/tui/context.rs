@@ -99,6 +99,17 @@ impl ContextDiagnostics {
         diagnostics
     }
 
+    /// Adopt the operator's configured input budget as the window.
+    ///
+    /// The default seeds from the vendored `CONTEXT_WINDOW_TOKENS`, which is
+    /// only correct until a run reports its real policy. Seeding from config at
+    /// startup keeps the indicator honest before the first `run.started`.
+    /// The derived limit matches `observe` exactly so the two paths cannot drift.
+    pub(crate) const fn set_window(&mut self, tokens: u64) {
+        self.model_window_tokens = tokens;
+        self.auto_compact_token_limit = tokens * 9 / 10;
+    }
+
     pub(crate) fn observe(&mut self, record: &TranscriptRecord) -> ContextObservation {
         match (record.source(), record.kind()) {
             ("agent", "run.started") => {
