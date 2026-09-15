@@ -62,6 +62,7 @@ pub(crate) enum ComposerEvent {
     Terminal(Event),
     PasteImage(String),
     ContextTokens(u64),
+    ContextWindowTokens(u64),
     ReplaceRange {
         range: Range<usize>,
         text: String,
@@ -105,6 +106,7 @@ pub(crate) struct Composer {
     scroll: usize,
     last_width: usize,
     context_tokens: u64,
+    context_window_tokens: Option<u64>,
     workspace: String,
     thinking: ReasoningEffort,
     model: Model,
@@ -206,6 +208,7 @@ impl Composer {
             scroll: 0,
             last_width: 78,
             context_tokens: 0,
+            context_window_tokens: None,
             workspace: shorten_home(workspace),
             thinking,
             model: Model::Sol,
@@ -250,6 +253,13 @@ impl Composer {
                     return ComposerUpdate::unchanged();
                 }
                 self.context_tokens = tokens;
+                ComposerUpdate::changed()
+            }
+            ComposerEvent::ContextWindowTokens(tokens) => {
+                if self.context_window_tokens == Some(tokens) {
+                    return ComposerUpdate::unchanged();
+                }
+                self.context_window_tokens = Some(tokens);
                 ComposerUpdate::changed()
             }
             ComposerEvent::ReplaceRange { range, text } => {
@@ -1195,11 +1205,10 @@ impl Composer {
         let content_start = area.x + 2;
         let content_width = usize::from(area.width - 4);
         let content_end = content_start + u16::try_from(content_width).unwrap_or(u16::MAX);
-        let usage_prefix = if self.context_tokens == 0 {
-            " context unknown ".to_owned()
-        } else {
-            format!(" {} context tokens ", self.context_tokens)
-        };
+        let usage_prefix = format!(
+            " {} ",
+            context_usage(self.context_tokens, self.context_window_tokens)
+        );
         let input_mode_segment = self
             .input_mode
             .as_ref()
@@ -1513,6 +1522,19 @@ impl ComposerUpdate {
     }
 }
 
+fn context_usage(tokens: u64, window_tokens: Option<u64>) -> String {
+    let Some(window_tokens) = window_tokens.filter(|tokens| *tokens > 0) else {
+        return "context unknown".to_owned();
+    };
+    let percent = tokens.saturating_mul(100).saturating_add(window_tokens / 2) / window_tokens;
+    let window = if window_tokens.is_multiple_of(1_000) {
+        format!("{}k", window_tokens / 1_000)
+    } else {
+        window_tokens.to_string()
+    };
+    format!("{percent}% / {window}")
+}
+
 fn draw_symbol(buffer: &mut Buffer, x: u16, y: u16, symbol: &str, style: Style) {
     buffer[(x, y)].set_symbol(symbol).set_style(style);
 }
@@ -1594,7 +1616,7 @@ fn render_selection(
 mod tests {
     use super::{
         super::selection::{Selection, Surface, TextRange},
-        Composer, ComposerEffect, ComposerEvent,
+        Composer, ComposerEffect, ComposerEvent, context_usage,
     };
     use crate::{
         app::config::{ReasoningEffort, ReasoningMode},
@@ -2485,6 +2507,14 @@ mod tests {
                 .as_deref(),
             Some(visible.as_str())
         );
+    }
+
+    #[test]
+    fn context_usage_uses_the_configured_window() {
+        assert_eq!(context_usage(0, None), "context unknown");
+        assert_eq!(context_usage(0, Some(1_000_000)), "0% / 1000k");
+        assert_eq!(context_usage(500_000, Some(1_000_000)), "50% / 1000k");
+        assert_eq!(context_usage(1_400, Some(272_000)), "1% / 272k");
     }
 
     #[test]

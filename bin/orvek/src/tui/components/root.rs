@@ -444,6 +444,9 @@ impl RootNode {
         root.memory_enabled = self.memory_enabled;
         root.theme_mode = self.theme_mode;
         root.context_diagnostics = self.context_diagnostics.clone();
+        if let Some(window_tokens) = root.context_diagnostics.model_window_tokens {
+            root.set_context_window_tokens(window_tokens);
+        }
         root.interactive = false;
         root.composer
             .component_mut()
@@ -607,6 +610,7 @@ impl RootNode {
         fast_mode: bool,
         mut projection: RestoredSessionProjection,
     ) {
+        let context_window_tokens = self.context_diagnostics.model_window_tokens;
         self.reset_session(
             workspace,
             thinking,
@@ -619,6 +623,9 @@ impl RootNode {
         self.transcript = Node::new(projection.transcript);
         self.context_diagnostics = projection.context_diagnostics;
         self.recent_prompts = projection.recent_prompts;
+        if let Some(window_tokens) = context_window_tokens {
+            self.set_context_window_tokens(window_tokens);
+        }
         if let Some(tokens) = projection.context_tokens {
             let _ = self
                 .composer
@@ -633,6 +640,9 @@ impl RootNode {
         self.context_diagnostics.auto_compact_token_limit = Some(
             orvek_harness::context::automatic_projection_token_limit(window_tokens),
         );
+        self.composer
+            .component_mut()
+            .update(ComposerEvent::ContextWindowTokens(window_tokens));
     }
 
     pub(crate) const fn composer(&self) -> &Composer {
@@ -3232,6 +3242,42 @@ mod tests {
         payload: serde_json::Value,
     ) -> Arc<TranscriptRecord> {
         Arc::new(fixtures::record(sequence, sequence, kind, payload))
+    }
+
+    #[test]
+    fn configured_context_window_reaches_the_composer() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+
+        root.set_context_window_tokens(1_000_000);
+
+        assert!(render_root_text(&mut root, 100, 20).contains("0% / 1000k"));
+    }
+
+    #[test]
+    fn fork_keeps_the_configured_context_window() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.set_context_window_tokens(1_000_000);
+
+        let mut fork = root.fork(Path::new("/work"), ReasoningEffort::Medium);
+
+        assert!(render_root_text(&mut fork, 100, 20).contains("0% / 1000k"));
+    }
+
+    #[test]
+    fn restored_session_keeps_the_configured_context_window() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.set_context_window_tokens(1_000_000);
+
+        root.restore_session(
+            Path::new("/work"),
+            ReasoningEffort::Medium,
+            ReasoningMode::Standard,
+            ReasoningMode::Standard,
+            false,
+            Vec::new(),
+        );
+
+        assert!(render_root_text(&mut root, 100, 20).contains("0% / 1000k"));
     }
 
     #[test]
