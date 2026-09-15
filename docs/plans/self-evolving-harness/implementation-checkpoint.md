@@ -126,3 +126,51 @@ coordinator and reconcile or fence durable runtime attempts. Synthetic scoring f
 mechanism but do not enable production rollout without an owned calibrated suite and power policy.
 Next, implement Phase 13's typed final-audit, activation, monitoring, and rollback boundary without
 enabling registry writes before the open rollout prerequisites are satisfied.
+
+
+## Status update, 2026-09-15 (d009644)
+
+Landed since the checkpoint above: GLM via the local Responses bridge (HTTP
+default transport, per-model `[models.<name>]` routing, ZAI/OPENAI key envs),
+Spark (`gpt-5.3-codex-spark`), bridge-shaped terminal decoding, reasoning-live
+streaming, the ActivityMark header, managed default workspace, conversation
+framing, and reasoning-sized auxiliary limits.
+
+### Verified cutover gap inventory
+
+| Gap | Evidence (current tree) |
+| --- | --- |
+| Shell commands | `RootEffect::RunShell` falls into the client catch-all: "waiting for its host capability adapter"; `ShellStarted`/`ShellPublished` map to `Vec::new()` in the projection |
+| Memory browser | `LoadMemories`/`DeleteMemory` hit the same catch-all |
+| MCP runtime | Only config/render references remain; no host-side MCP execution |
+| Subagents | `orvek-subagents` crate exists and passes tests, but no `spawn_agent` capability is exposed to harness tasks |
+| Review rendering | Review submit path is wired; `ReviewRecorded` journal events are dropped from the projection |
+| TUI parity | Local prompt echo is host-side only; `Compact`/`CancelCompaction`, `ContinueSubagent`, `PersistSteer`, `Interrupted`/`ContextCompacted` entries, and 18 removed benchmarks/~293 tests remain un-restored |
+| Evolution loop | Phases 13-15: dispatch APIs have no callers, no activation consumption, no IPC command, no CLI surface |
+
+### Sequenced completion plan
+
+Each unit ends in a verifiable state and lands independently.
+
+1. `feat(tui): serve shell commands through the host` — wire `RunShell` to a
+   `WorkIntent::Shell` submission and render `ShellStarted`/`ShellPublished`
+   in the projection; regression test for the rendered output.
+2. `feat(tui): restore the memory browser` — host memory query/delete command
+   or documented local-store adapter; same pending-effect removal.
+3. `feat(tui): render review records` — map `ReviewRecorded`/`Feedback` out of
+   the `Vec::new()` arms.
+4. `feat(harness): subagent capability for tasks` — expose bounded spawn/wait
+   tools backed by the `orvek-subagents` runtime inside task sandboxes.
+5. `feat(harness): phase 13 activation boundary` — typed final audit,
+   activation, monitoring, and rollback Store transactions with tests.
+6. `feat(harness): phase 14 coordinator` — durable campaign loop
+   (mine -> propose -> trial -> score -> compose -> activate) with crash
+   reconciliation and fencing; invoked by:
+7. `feat(host): evolution IPC and `orvek evolve` CLI` — manual trigger first,
+   operator policy later (phase 15).
+8. `feat(tui): parity tail` — local echo with host dedupe on resume, manual
+   compaction controls, `ContinueSubagent`, motion settings, benchmarks/tests.
+
+Do not enable registry writes (unit 5) before the open-rollout prerequisites
+in the section above are satisfied; until then the coordinator runs dry-run
+campaigns only.
