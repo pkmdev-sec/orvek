@@ -191,6 +191,55 @@ mod tests {
     use super::{automatic_projection_token_limit, projection_byte_limit, request_byte_limit};
 
     #[test]
+    fn reasoning_history_survives_projection_and_request_validation() {
+        use serde_json::json;
+
+        let root = tempfile::tempdir().unwrap();
+        let mut session = crate::Store::open(&root.path().join("state"))
+            .unwrap()
+            .create_session(
+                crate::session::SessionId::new(),
+                crate::session::SessionConfig {
+                    workspace: root.path().into(),
+                    model: crate::inference::ModelSettings::default(),
+                    instructions: String::new(),
+                    context_window_tokens: crate::context::DEFAULT_WINDOW_TOKENS,
+                },
+                None,
+            )
+            .unwrap();
+        session.history = vec![
+            json!({"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}),
+            json!({
+                "type":"reasoning",
+                "id":"rs-bridge",
+                "summary":[{"type":"summary_text","text":"bridge thinking"}],
+                "content":[]
+            }),
+            json!({
+                "type":"reasoning",
+                "id":"rs-openai",
+                "encrypted_content":"ciphertext",
+                "summary":[{"type":"summary_text","text":"kept"}],
+                "content":[]
+            }),
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}),
+        ];
+
+        let projection = super::project(&session, 65536).unwrap();
+        assert_eq!(projection.input, session.history);
+        crate::inference::InferenceRequest::new(
+            crate::inference::ModelSettings::default(),
+            projection.input,
+            vec![],
+            String::new(),
+            session.id.to_string(),
+            8192,
+        )
+        .expect("summary-only reasoning must not block the next model turn");
+    }
+
+    #[test]
     fn million_token_window_projects_at_eighty_five_percent() {
         assert_eq!(automatic_projection_token_limit(1_000_000), 850_000);
         assert_eq!(projection_byte_limit(1_000_000).unwrap(), 3_400_000);

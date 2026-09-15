@@ -240,8 +240,8 @@ fn validate_input(item: &Value) -> Result<(), FailureKind> {
                 && item.get("output").is_some_and(Value::is_string)
         }
         "reasoning" => {
-            item.get("encrypted_content").is_some_and(Value::is_string)
-                && item.get("summary").is_some_and(Value::is_array)
+            item.get("summary").is_some_and(Value::is_array)
+                && item.get("encrypted_content").is_none_or(Value::is_string)
         }
         _ => false,
     };
@@ -607,6 +607,31 @@ mod tests {
         let parsed: Result<Model, _> = "glm-5.3".parse();
         assert_eq!(parsed.unwrap().as_str(), "glm-5.3");
         assert!("glm-4".parse::<Model>().is_err());
+    }
+
+    #[test]
+    fn bridge_shaped_reasoning_items_are_valid_input() {
+        use serde_json::json;
+
+        let bridge = json!({
+            "type": "reasoning",
+            "id": "rs-1",
+            "summary": [{"type": "summary_text", "text": "thinking"}],
+            "content": []
+        });
+        assert!(super::validate_input(&bridge).is_ok());
+
+        let encrypted = json!({
+            "type": "reasoning",
+            "id": "rs-2",
+            "encrypted_content": "ciphertext",
+            "summary": [],
+            "content": []
+        });
+        assert!(super::validate_input(&encrypted).is_ok());
+
+        let malformed = json!({"type": "reasoning", "id": "rs-3"});
+        assert!(super::validate_input(&malformed).is_err());
     }
 
     #[test]
