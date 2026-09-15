@@ -27,6 +27,7 @@ use crate::{
 use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
 use futures_util::StreamExt;
 use orvek_harness::ipc::{Command, Request, Response, SessionView, WatchFrame};
+use orvek_memory::MemoryStore;
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
@@ -58,6 +59,30 @@ enum Update {
         pane: PaneId,
         generation: u64,
         change: ViewChange,
+    },
+    MemoryLoaded {
+        pane: PaneId,
+        generation: u64,
+        access: orvek_memory::MemoryAccess,
+        records: Vec<orvek_memory::MemoryRecord>,
+    },
+    MemoryListFailed {
+        pane: PaneId,
+        generation: u64,
+        source: orvek_memory::MemorySource,
+        access: Option<orvek_memory::MemoryAccess>,
+        error: String,
+    },
+    MemoryRemoved {
+        pane: PaneId,
+        generation: u64,
+        key: orvek_memory::MemoryKey,
+    },
+    MemoryRemoveFailed {
+        pane: PaneId,
+        generation: u64,
+        error: String,
+        conflict: bool,
     },
     Handoff {
         pane: PaneId,
@@ -332,6 +357,104 @@ pub(super) async fn run(
                                     existing: Some(request),
                                 },
                             );
+                        }
+                        RootEffect::LoadMemories => {
+                            let workspace = current.view.workspace.clone();
+                            let config = config.clone();
+                            let out = sender.clone();
+                            jobs.spawn(async move {
+                                let event = match crate::core::configured_memory_store(
+                                    &config,
+                                    &workspace,
+                                ) {
+                                    Ok(Some(store)) => match store.access().await {
+                                        Ok(access) => match MemoryStore::list(&store).await {
+                                            Ok(records) => Update::MemoryLoaded {
+                                                pane,
+                                                generation,
+                                                access,
+                                                records,
+                                            },
+                                            Err(error) => Update::MemoryListFailed {
+                                                pane,
+                                                generation,
+                                                source: store.source(),
+                                                access: None,
+                                                error: error.to_string(),
+                                            },
+                                        },
+                                        Err(error) => Update::MemoryListFailed {
+                                            pane,
+                                            generation,
+                                            source: store.source(),
+                                            access: None,
+                                            error: error.to_string(),
+                                        },
+                                    },
+                                    Ok(None) => Update::MemoryListFailed {
+                                        pane,
+                                        generation,
+                                        source: orvek_memory::MemorySource::Local,
+                                        access: None,
+                                        error: "Memory is disabled. Enable it with memory.enabled = true."
+                                            .to_owned(),
+                                    },
+                                    Err(error) => Update::MemoryListFailed {
+                                        pane,
+                                        generation,
+                                        source: orvek_memory::MemorySource::Local,
+                                        access: None,
+                                        error: error.to_string(),
+                                    },
+                                };
+                                let _ = out.send(event).await;
+                            });
+                        }
+                        RootEffect::DeleteMemory(key) => {
+                            let workspace = current.view.workspace.clone();
+                            let config = config.clone();
+                            let out = sender.clone();
+                            jobs.spawn(async move {
+                                let event =
+                                    match crate::core::configured_memory_store(&config, &workspace)
+                                    {
+                                        Ok(Some(store)) => {
+                                            let result =
+                                                MemoryStore::delete(&store, key.clone()).await;
+                                            match result {
+                                                Ok(()) => Update::MemoryRemoved {
+                                                    pane,
+                                                    generation,
+                                                    key,
+                                                },
+                                                Err(error) => Update::MemoryRemoveFailed {
+                                                    pane,
+                                                    generation,
+                                                    conflict: matches!(
+                                                        error,
+                                                        orvek_memory::MemoryError::Conflict
+                                                    ),
+                                                    error: error.to_string(),
+                                                },
+                                            }
+                                        }
+                                        Ok(None) => Update::MemoryRemoveFailed {
+                                            pane,
+                                            generation,
+                                            conflict: false,
+                                            error:
+                                                "Memory was disabled before the deletion completed."
+                                                    .to_owned(),
+                                        },
+                                        Err(error) => Update::MemoryRemoveFailed {
+                                            pane,
+                                            generation,
+                                            conflict: false,
+                                            error: error.to_string(),
+                                        },
+                                    };
+                                let _ = out.send(event).await;
+                            });
                         }
                         RootEffect::Handoff => {
                             let cancellation = CancellationToken::new();
@@ -1044,6 +1167,26 @@ pub(super) async fn run(
                     if let Some(current)=panes.get(&pane).filter(|value|value.generation==generation) {
                         let record=Arc::new(TranscriptRecord::from_host(current.projection.sequence(),current.projection.recorded_ms(),current.projection.cursor(),change));
                         schedule(app.update(AppEvent::Transcript {pane,record}),&mut scheduler,&mut effects);
+                    }
+                }
+                Update::MemoryLoaded {pane,generation,access,records}=>{
+                    if panes.get(&pane).is_some_and(|value|value.generation==generation) {
+                        schedule(app.update(AppEvent::MemoriesLoaded {pane,access,records}),&mut scheduler,&mut effects);
+                    }
+                }
+                Update::MemoryListFailed {pane,generation,source,access,error}=>{
+                    if panes.get(&pane).is_some_and(|value|value.generation==generation) {
+                        schedule(app.update(AppEvent::MemoryLoadFailed {pane,source,access,error}),&mut scheduler,&mut effects);
+                    }
+                }
+                Update::MemoryRemoved {pane,generation,key}=>{
+                    if panes.get(&pane).is_some_and(|value|value.generation==generation) {
+                        schedule(app.update(AppEvent::MemoryDeleted {pane,key}),&mut scheduler,&mut effects);
+                    }
+                }
+                Update::MemoryRemoveFailed {pane,generation,error,conflict}=>{
+                    if panes.get(&pane).is_some_and(|value|value.generation==generation) {
+                        schedule(app.update(AppEvent::MemoryDeleteFailed {pane,error,conflict}),&mut scheduler,&mut effects);
                     }
                 }
                 Update::Disconnected {pane,generation,error}=>{
