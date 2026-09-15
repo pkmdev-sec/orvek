@@ -146,7 +146,7 @@ framing, and reasoning-sized auxiliary limits.
 | Subagents | Done in `791898c`: the orvek-subagents tool contract runs on the harness provider (GLM/Spark capable; nanocodex cannot host them), with journaled read-only child jobs, schema-validated digest-referenced results, live TUI child-tree updates, lifecycle tools, and config policy |
 | Review rendering | Review submit path is wired; `ReviewRecorded` journal events are dropped from the projection |
 | TUI parity | Local prompt echo is host-side only; `Compact`/`CancelCompaction`, `ContinueSubagent`, `PersistSteer`, `Interrupted`/`ContextCompacted` entries, and 18 removed benchmarks/~293 tests remain un-restored |
-| Evolution loop | Phases 13-15: dispatch APIs have no callers, no activation consumption, no IPC command, no CLI surface |
+| Evolution loop | Phase 13 done in `6d70b5c` (promotion boundary); phases 14-15 remain: the campaign coordinator, IPC commands, and the `orvek evolve` CLI still have no callers |
 
 ### Sequenced completion plan
 
@@ -160,8 +160,9 @@ Each unit ends in a verifiable state and lands independently.
 3. `feat(tui): render review records` — map `ReviewRecorded`/`Feedback` out of
    the `Vec::new()` arms.
 4. Done (`791898c`) — see the gap table note above.
-5. `feat(harness): phase 13 activation boundary` — typed final audit,
-   activation, monitoring, and rollback Store transactions with tests.
+5. Done (`6d70b5c`) — certificates, bounded approval, CAS activation with
+   supersession, rollback naming, and the audit-epoch burn; registry writes
+   stay gated behind the open-rollout prerequisites.
 6. `feat(harness): phase 14 coordinator` — durable campaign loop
    (mine -> propose -> trial -> score -> compose -> activate) with crash
    reconciliation and fencing; invoked by:
