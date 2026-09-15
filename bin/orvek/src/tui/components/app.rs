@@ -607,6 +607,28 @@ impl AppNode {
             };
         }
         if let Event::Mouse(mouse) = &event
+            && matches!(
+                mouse.kind,
+                MouseEventKind::ScrollUp
+                    | MouseEventKind::ScrollDown
+                    | MouseEventKind::ScrollLeft
+                    | MouseEventKind::ScrollRight
+            )
+        {
+            let position = Position::new(mouse.column, mouse.row);
+            let pane = if self.main_area.contains(position) {
+                self.main_pane()
+            } else if self.fork_area.contains(position) {
+                self.fork.as_ref().map(|(pane, _)| *pane)
+            } else {
+                None
+            };
+            return match pane {
+                Some(pane) => self.update_root(pane, RootEvent::Terminal(event)),
+                None => ComponentUpdate::none(),
+            };
+        }
+        if let Event::Mouse(mouse) = &event
             && matches!(mouse.kind, MouseEventKind::Down(_))
         {
             let position = Position::new(mouse.column, mouse.row);
@@ -884,6 +906,122 @@ mod tests {
             KeyCode::Char(character),
             KeyModifiers::CONTROL,
         )))
+    }
+
+    fn scrollable_split_app() -> AppNode {
+        let mut app = app();
+        let record = TranscriptRecord::from_local(
+            1,
+            1,
+            LocalEvent::UserSubmitted {
+                id: TurnId::new(1),
+                text: (0..80)
+                    .map(|row| format!("history row {row:02}\n"))
+                    .collect(),
+            },
+        )
+        .unwrap();
+        app.update(AppEvent::Transcript {
+            pane: PaneId::Main,
+            record: Arc::new(record),
+        });
+        app.update(control('t'));
+        app.update(AppEvent::ForkReady {
+            pane: PaneId::Fork(1),
+        });
+        app
+    }
+
+    fn rendered_panes(app: &mut AppNode) -> [String; 2] {
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        [app.main_area, app.fork_area].map(|area| {
+            (area.top() + 1..area.bottom())
+                .flat_map(|y| (area.left()..area.right()).map(move |x| (x, y)))
+                .map(|position| terminal.backend().buffer()[position].symbol())
+                .collect()
+        })
+    }
+
+    fn wheel(app: &mut AppNode, kind: MouseEventKind, column: u16, row: u16) {
+        app.update(AppEvent::Terminal(Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })));
+    }
+
+    #[test]
+    fn wheel_scrolls_the_hovered_pane_without_changing_keyboard_focus() {
+        for (focus, column, hovered) in [(PaneId::Fork(1), 10, 0), (PaneId::Main, 60, 1)] {
+            let mut app = scrollable_split_app();
+            app.focus = focus;
+            let before = rendered_panes(&mut app);
+
+            wheel(&mut app, MouseEventKind::ScrollUp, column, 6);
+
+            let after = rendered_panes(&mut app);
+            assert_ne!(before[hovered], after[hovered], "hovered pane must scroll");
+            assert_eq!(before[1 - hovered], after[1 - hovered]);
+            assert_eq!(app.focus, focus);
+            app.update(AppEvent::Terminal(Event::Key(KeyEvent::new(
+                KeyCode::Char('x'),
+                KeyModifiers::NONE,
+            ))));
+            assert_eq!(app.root(focus).unwrap().composer().draft(), "x");
+        }
+    }
+
+    #[test]
+    fn wheel_scrolls_a_visible_overlay_in_an_unfocused_pane() {
+        let mut app = scrollable_split_app();
+        app.focus = PaneId::Main;
+        app.update(AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Char('/'),
+            KeyModifiers::NONE,
+        ))));
+        app.focus = PaneId::Fork(1);
+        let before = rendered_panes(&mut app);
+
+        for _ in 0..30 {
+            wheel(&mut app, MouseEventKind::ScrollDown, 20, 10);
+        }
+
+        let after = rendered_panes(&mut app);
+        assert_ne!(before[0], after[0], "the visible main menu must scroll");
+        assert_eq!(before[1], after[1]);
+        assert_eq!(app.focus, PaneId::Fork(1));
+    }
+
+    #[test]
+    fn wheel_on_the_split_divider_or_outside_the_frame_does_nothing() {
+        let mut app = scrollable_split_app();
+        let before = rendered_panes(&mut app);
+        for (column, row) in [(49, 6), (100, 6), (10, 24)] {
+            wheel(&mut app, MouseEventKind::ScrollUp, column, row);
+        }
+        assert_eq!(before, rendered_panes(&mut app));
+        assert_eq!(app.focus, PaneId::Fork(1));
+    }
+
+    #[test]
+    fn wheel_over_another_pane_does_not_reach_the_focused_overlay() {
+        let mut app = scrollable_split_app();
+        app.update(AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Char('/'),
+            KeyModifiers::NONE,
+        ))));
+        let before = rendered_panes(&mut app);
+
+        wheel(&mut app, MouseEventKind::ScrollDown, 10, 6);
+
+        let after = rendered_panes(&mut app);
+        assert_eq!(
+            before[1], after[1],
+            "the fork's menu is not under the pointer"
+        );
+        assert_eq!(app.focus, PaneId::Fork(1));
     }
 
     #[test]

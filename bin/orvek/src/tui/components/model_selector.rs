@@ -5,11 +5,11 @@ use super::{
     node::{Component, ComponentUpdate, RenderRequest},
 };
 use crate::tui::theme::Theme;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEventKind};
 use orvek_harness::inference::Model;
 use ratatui::{
     Frame,
-    layout::{Alignment, Rect},
+    layout::{Alignment, Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
@@ -40,6 +40,7 @@ pub(super) enum ModelSelectorEffect {
 
 pub(super) struct ModelSelector {
     selected: usize,
+    navigation_area: Rect,
     displayed_position: f64,
     animation: Option<Animation>,
 }
@@ -56,6 +57,7 @@ impl ModelSelector {
         let selected = model_index(initial);
         Self {
             selected,
+            navigation_area: Rect::default(),
             displayed_position: selected as f64,
             animation: None,
         }
@@ -73,6 +75,8 @@ impl ModelSelector {
         }
 
         match key.code {
+            KeyCode::PageUp => self.select_relative(-(MODELS.len() as isize), now),
+            KeyCode::PageDown => self.select_relative(MODELS.len() as isize, now),
             KeyCode::Left | KeyCode::Up => self.select_relative(-1, now),
             KeyCode::Right | KeyCode::Down => self.select_relative(1, now),
             KeyCode::Enter => ComponentUpdate {
@@ -201,6 +205,19 @@ impl Component for ModelSelector {
                 event: Event::Key(key),
                 now,
             } => self.update_key(key, now),
+            ModelSelectorEvent::Terminal {
+                event: Event::Mouse(mouse),
+                now,
+            } if self
+                .navigation_area
+                .contains(Position::new(mouse.column, mouse.row)) =>
+            {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.select_relative(-1, now),
+                    MouseEventKind::ScrollDown => self.select_relative(1, now),
+                    _ => ComponentUpdate::none(),
+                }
+            }
             ModelSelectorEvent::Terminal { .. } => ComponentUpdate::none(),
             ModelSelectorEvent::AnimationFrame(now) => {
                 if self.advance_animation(now) {
@@ -213,7 +230,9 @@ impl Component for ModelSelector {
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+        self.navigation_area = Rect::default();
         let layout = Floating::new("Select model", 52, 7, &KEY_BINDINGS).render(frame, area, theme);
+        self.navigation_area = layout.body;
         if layout.body.is_empty() {
             return;
         }
@@ -489,5 +508,92 @@ mod tests {
 
         assert_eq!(selector.displayed_position, 1.0);
         assert!(selector.animation_deadline().is_none());
+    }
+    #[test]
+    fn rendered_picker_bounds_wheel_and_page_navigation() {
+        let mut picker = ModelSelector::new(MODELS[0]);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 12)).unwrap();
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
+            .unwrap();
+        let body = picker.navigation_area;
+        assert!(!body.is_empty());
+        let mouse = |kind, column, row| ModelSelectorEvent::Terminal {
+            event: Event::Mouse(crossterm::event::MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }),
+            now: std::time::Instant::now(),
+        };
+        picker.update(mouse(crossterm::event::MouseEventKind::ScrollDown, 0, 0));
+        assert_eq!(picker.selected, 0);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 1);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 0);
+        picker.update(ModelSelectorEvent::Terminal {
+            event: Event::Key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)),
+            now: std::time::Instant::now(),
+        });
+        assert_eq!(
+            picker.selected,
+            MODELS.len().saturating_sub(1)
+        );
+        for _ in 0..40 {
+            picker.update(ModelSelectorEvent::Terminal {
+                event: Event::Key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)),
+                now: std::time::Instant::now(),
+            });
+        }
+        let last = MODELS.len().saturating_sub(1);
+        assert_eq!(picker.selected, last);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, last);
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
+            .unwrap();
+        assert_eq!(picker.selected, last);
+        for _ in 0..40 {
+            picker.update(ModelSelectorEvent::Terminal {
+                event: Event::Key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE)),
+                now: std::time::Instant::now(),
+            });
+        }
+        assert_eq!(picker.selected, 0);
+        terminal
+            .draw(|frame| {
+                picker.render(
+                    frame,
+                    ratatui::layout::Rect::default(),
+                    &crate::tui::theme::Theme::default(),
+                )
+            })
+            .unwrap();
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 0);
     }
 }

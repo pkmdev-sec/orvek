@@ -5,7 +5,7 @@ use super::{
     node::{Component, ComponentUpdate, RenderRequest},
 };
 use crate::tui::theme::{Theme, ThemeMode};
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, MouseEventKind};
 use ratatui::{
     Frame,
     layout::{Position, Rect},
@@ -28,6 +28,7 @@ pub(super) enum ThemeSelectorEffect {
 
 pub(super) struct ThemeSelector {
     selected: usize,
+    navigation_area: Rect,
 }
 
 impl ThemeSelector {
@@ -36,7 +37,22 @@ impl ThemeSelector {
             .iter()
             .position(|mode| *mode == initial)
             .expect("all theme modes are selectable");
-        Self { selected }
+        Self {
+            selected,
+            navigation_area: Rect::default(),
+        }
+    }
+
+    fn select_bounded(&mut self, delta: isize) -> ComponentUpdate<ThemeSelectorEffect> {
+        let next = self
+            .selected
+            .saturating_add_signed(delta)
+            .min(ThemeMode::ALL.len().saturating_sub(1));
+        if next == self.selected {
+            return ComponentUpdate::none();
+        }
+        self.selected = next;
+        ComponentUpdate::render(RenderRequest::Immediate)
     }
 
     fn update_key(
@@ -47,6 +63,16 @@ impl ThemeSelector {
             return ComponentUpdate::none();
         }
         match key.code {
+            KeyCode::PageUp => self.select_bounded(
+                -(isize::try_from(self.navigation_area.height)
+                    .unwrap_or(1)
+                    .max(1)),
+            ),
+            KeyCode::PageDown => self.select_bounded(
+                isize::try_from(self.navigation_area.height)
+                    .unwrap_or(1)
+                    .max(1),
+            ),
             KeyCode::Up | KeyCode::Left => {
                 self.selected = self.selected.saturating_sub(1);
                 ComponentUpdate::render(RenderRequest::Immediate)
@@ -75,15 +101,28 @@ impl Component for ThemeSelector {
     fn update(&mut self, event: Self::Event) -> ComponentUpdate<Self::Effect> {
         match event {
             ThemeSelectorEvent::Terminal(Event::Key(key)) => self.update_key(key),
+            ThemeSelectorEvent::Terminal(Event::Mouse(mouse))
+                if self
+                    .navigation_area
+                    .contains(Position::new(mouse.column, mouse.row)) =>
+            {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.select_bounded(-1),
+                    MouseEventKind::ScrollDown => self.select_bounded(1),
+                    _ => ComponentUpdate::none(),
+                }
+            }
             ThemeSelectorEvent::Terminal(_) => ComponentUpdate::none(),
         }
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+        self.navigation_area = Rect::default();
         if area.is_empty() {
             return;
         }
         let layout = Floating::new("Theme", 38, 7, &KEY_BINDINGS).render(frame, area, theme);
+        self.navigation_area = layout.body;
         let items = ThemeMode::ALL.into_iter().map(|mode| {
             let detail = match mode {
                 ThemeMode::Auto => "Follow the operating system",
@@ -141,5 +180,101 @@ mod tests {
             selector.update(key(KeyCode::Enter)).effects,
             [ThemeSelectorEffect::Apply(ThemeMode::Dark)]
         );
+    }
+    #[test]
+    fn rendered_picker_bounds_wheel_and_page_navigation() {
+        let mut picker = ThemeSelector::new(ThemeMode::Auto);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 12)).unwrap();
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
+            .unwrap();
+        let body = picker.navigation_area;
+        assert!(!body.is_empty());
+        let mouse = |kind, column, row| {
+            ThemeSelectorEvent::Terminal(Event::Mouse(crossterm::event::MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }))
+        };
+        picker.update(mouse(crossterm::event::MouseEventKind::ScrollDown, 0, 0));
+        assert_eq!(picker.selected, 0);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 1);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 0);
+        picker.update(ThemeSelectorEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::PageDown,
+            KeyModifiers::NONE,
+        ))));
+        assert_eq!(
+            picker.selected,
+            crate::tui::theme::ThemeMode::ALL
+                .len()
+                .saturating_sub(1)
+                .min(usize::from(body.height).max(1))
+        );
+        for _ in 0..40 {
+            picker.update(ThemeSelectorEvent::Terminal(Event::Key(KeyEvent::new(
+                KeyCode::PageDown,
+                KeyModifiers::NONE,
+            ))));
+        }
+        let last = crate::tui::theme::ThemeMode::ALL.len().saturating_sub(1);
+        assert_eq!(picker.selected, last);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, last);
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
+            .unwrap();
+        assert_eq!(picker.selected, last);
+        let buffer = terminal.backend().buffer();
+        assert!((body.y..body.bottom()).any(|row| {
+            let text = (body.x..body.right())
+                .map(|column| buffer[(column, row)].symbol())
+                .collect::<String>();
+            text.contains("› ") && text.contains("dark")
+        }));
+        for _ in 0..40 {
+            picker.update(ThemeSelectorEvent::Terminal(Event::Key(KeyEvent::new(
+                KeyCode::PageUp,
+                KeyModifiers::NONE,
+            ))));
+        }
+        assert_eq!(picker.selected, 0);
+        terminal
+            .draw(|frame| {
+                picker.render(
+                    frame,
+                    ratatui::layout::Rect::default(),
+                    &crate::tui::theme::Theme::default(),
+                )
+            })
+            .unwrap();
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 0);
     }
 }

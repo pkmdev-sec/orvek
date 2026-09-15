@@ -5,7 +5,7 @@ use super::{
     node::{Component, ComponentUpdate, RenderRequest},
 };
 use crate::{app::config::ReasoningEffort, tui::theme::Theme};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEventKind};
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -48,6 +48,7 @@ pub(super) enum EffortEffect {
 
 pub(super) struct EffortSelector {
     selected: usize,
+    navigation_area: Rect,
     pro: bool,
     displayed_phase: f64,
     displayed_fill: f64,
@@ -71,6 +72,7 @@ impl EffortSelector {
         let phase = selected as f64;
         Self {
             selected,
+            navigation_area: Rect::default(),
             pro,
             displayed_phase: phase,
             displayed_fill: phase,
@@ -85,12 +87,29 @@ impl EffortSelector {
             .map(|animation| animation.next_frame)
     }
 
+    fn select_bounded(&mut self, delta: isize, now: Instant) -> ComponentUpdate<EffortEffect> {
+        let next = self
+            .selected
+            .saturating_add_signed(delta)
+            .min(ReasoningEffort::ALL.len() - 1);
+        if next == self.selected {
+            return ComponentUpdate::none();
+        }
+        let direction = if next < self.selected { -1 } else { 1 };
+        while self.selected != next {
+            self.select_relative(direction, now);
+        }
+        ComponentUpdate::render(RenderRequest::Immediate)
+    }
+
     fn update_key(&mut self, key: KeyEvent, now: Instant) -> ComponentUpdate<EffortEffect> {
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             return ComponentUpdate::none();
         }
 
         match key.code {
+            KeyCode::PageUp => self.select_bounded(-(ReasoningEffort::ALL.len() as isize), now),
+            KeyCode::PageDown => self.select_bounded(ReasoningEffort::ALL.len() as isize, now),
             KeyCode::Left | KeyCode::Up => {
                 self.select_relative(-1, now);
                 ComponentUpdate::render(RenderRequest::Immediate)
@@ -296,6 +315,19 @@ impl Component for EffortSelector {
                 event: Event::Key(key),
                 now,
             } => self.update_key(key, now),
+            EffortEvent::Terminal {
+                event: Event::Mouse(mouse),
+                now,
+            } if self
+                .navigation_area
+                .contains(Position::new(mouse.column, mouse.row)) =>
+            {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.select_bounded(-1, now),
+                    MouseEventKind::ScrollDown => self.select_bounded(1, now),
+                    _ => ComponentUpdate::none(),
+                }
+            }
             EffortEvent::Terminal { .. } => ComponentUpdate::none(),
             EffortEvent::AnimationFrame(now) => {
                 if self.advance_animation(now) {
@@ -308,11 +340,13 @@ impl Component for EffortSelector {
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+        self.navigation_area = Rect::default();
         if area.is_empty() {
             return;
         }
 
         let layout = Floating::new("Effort", 48, 17, &KEY_BINDINGS).render(frame, area, theme);
+        self.navigation_area = layout.body;
         if layout.body.is_empty() {
             return;
         }
@@ -696,5 +730,92 @@ mod tests {
             .unwrap();
 
         assert_eq!(terminal.backend().buffer().area.width, 3);
+    }
+    #[test]
+    fn rendered_picker_bounds_wheel_and_page_navigation() {
+        let mut picker = EffortSelector::new(ReasoningEffort::ALL[0], false);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 12)).unwrap();
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
+            .unwrap();
+        let body = picker.navigation_area;
+        assert!(!body.is_empty());
+        let mouse = |kind, column, row| EffortEvent::Terminal {
+            event: Event::Mouse(crossterm::event::MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }),
+            now: std::time::Instant::now(),
+        };
+        picker.update(mouse(crossterm::event::MouseEventKind::ScrollDown, 0, 0));
+        assert_eq!(picker.selected, 0);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 1);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 0);
+        picker.update(EffortEvent::Terminal {
+            event: Event::Key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)),
+            now: std::time::Instant::now(),
+        });
+        assert_eq!(
+            picker.selected,
+            ReasoningEffort::ALL.len().saturating_sub(1)
+        );
+        for _ in 0..40 {
+            picker.update(EffortEvent::Terminal {
+                event: Event::Key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)),
+                now: std::time::Instant::now(),
+            });
+        }
+        let last = ReasoningEffort::ALL.len().saturating_sub(1);
+        assert_eq!(picker.selected, last);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, last);
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
+            .unwrap();
+        assert_eq!(picker.selected, last);
+        for _ in 0..40 {
+            picker.update(EffortEvent::Terminal {
+                event: Event::Key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE)),
+                now: std::time::Instant::now(),
+            });
+        }
+        assert_eq!(picker.selected, 0);
+        terminal
+            .draw(|frame| {
+                picker.render(
+                    frame,
+                    ratatui::layout::Rect::default(),
+                    &crate::tui::theme::Theme::default(),
+                )
+            })
+            .unwrap();
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 0);
     }
 }

@@ -5,13 +5,13 @@ use super::{
     node::{Component, ComponentUpdate, RenderRequest},
 };
 use crate::tui::theme::Theme;
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, MouseEventKind};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Paragraph, Wrap},
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -60,6 +60,8 @@ pub(super) enum KeybindingsEffect {
 #[derive(Default)]
 pub(super) struct KeybindingsHelp {
     scroll: u16,
+    body: Rect,
+    max_scroll: u16,
 }
 
 impl Component for KeybindingsHelp {
@@ -80,11 +82,29 @@ impl Component for KeybindingsHelp {
                     }
                     KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
                     KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
+                    KeyCode::PageUp => {
+                        self.scroll = self.scroll.saturating_sub(self.body.height.max(1))
+                    }
+                    KeyCode::PageDown => {
+                        self.scroll = self.scroll.saturating_add(self.body.height.max(1))
+                    }
+                    KeyCode::Home => self.scroll = 0,
+                    KeyCode::End => self.scroll = self.max_scroll,
+                    _ => return ComponentUpdate::none(),
+                }
+            }
+            KeybindingsEvent::Terminal(Event::Mouse(mouse))
+                if self.body.contains(Position::new(mouse.column, mouse.row)) =>
+            {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.scroll = self.scroll.saturating_sub(1),
+                    MouseEventKind::ScrollDown => self.scroll = self.scroll.saturating_add(1),
                     _ => return ComponentUpdate::none(),
                 }
             }
             KeybindingsEvent::Terminal(_) => return ComponentUpdate::none(),
         }
+        self.scroll = self.scroll.min(self.max_scroll);
         ComponentUpdate::render(RenderRequest::Immediate)
     }
 
@@ -94,20 +114,18 @@ impl Component for KeybindingsHelp {
             .saturating_add(3);
         let layout =
             Floating::new("Keyboard shortcuts", 72, height, &FOOTER).render(frame, area, theme);
-        if layout.body.is_empty() {
-            return;
-        }
-        let max_scroll = BINDINGS
-            .len()
-            .saturating_sub(usize::from(layout.body.height));
-        self.scroll = self
-            .scroll
-            .min(u16::try_from(max_scroll).unwrap_or(u16::MAX));
+        self.body = layout.body;
         let lines = BINDINGS
             .iter()
-            .map(|&(key, description)| binding_line(key, description, layout.body.width, theme))
+            .map(|&(key, description)| binding_line(key, description, self.body.width, theme))
             .collect::<Vec<_>>();
-        frame.render_widget(Paragraph::new(lines).scroll((self.scroll, 0)), layout.body);
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+        self.max_scroll = paragraph
+            .line_count(self.body.width)
+            .saturating_sub(usize::from(self.body.height))
+            .min(usize::from(u16::MAX)) as u16;
+        self.scroll = self.scroll.min(self.max_scroll);
+        frame.render_widget(paragraph.scroll((self.scroll, 0)), self.body);
     }
 }
 
@@ -284,5 +302,72 @@ mod tests {
         ))));
 
         assert_eq!(update.effects, [KeybindingsEffect::Dismiss]);
+    }
+    #[test]
+    fn narrow_help_wraps_descriptions_and_wheel_reaches_end() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+        let mut help = KeybindingsHelp::default();
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        let mut seen = String::new();
+        for _ in 0..100 {
+            terminal
+                .draw(|frame| help.render(frame, frame.area(), &Theme::default()))
+                .unwrap();
+            seen.extend(
+                terminal
+                    .backend()
+                    .buffer()
+                    .content()
+                    .iter()
+                    .map(|cell| cell.symbol()),
+            );
+            help.update(KeybindingsEvent::Terminal(Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 20,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            })));
+        }
+        assert!(seen.contains("nonempty"));
+        assert!(seen.contains("latest"));
+        assert!(seen.contains("ctrl+home/end"));
+    }
+    #[test]
+    fn wheel_outside_popup_does_not_scroll_and_resize_clamps_to_content() {
+        use crossterm::event::{
+            Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
+        };
+        let mut panel = KeybindingsHelp::default();
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let before = terminal.backend().buffer().clone();
+        panel.update(KeybindingsEvent::Terminal(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })));
+        terminal
+            .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        assert_eq!(terminal.backend().buffer(), &before);
+        panel.update(KeybindingsEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::End,
+            KeyModifiers::NONE,
+        ))));
+        let mut wide = Terminal::new(TestBackend::new(100, 40)).unwrap();
+        wide.draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let rendered = wide
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("ctrl+s"));
+        assert!(rendered.contains("follow latest"));
     }
 }

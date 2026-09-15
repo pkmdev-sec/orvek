@@ -9,10 +9,10 @@ use crate::tui::{
     theme::Theme,
 };
 use chrono::{DateTime, Utc};
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
@@ -32,11 +32,19 @@ pub(super) enum ContextDiagnosticsEffect {
 
 pub(super) struct ContextDiagnosticsPanel {
     diagnostics: ContextDiagnostics,
+    body: Rect,
+    scroll: u16,
+    max_scroll: u16,
 }
 
 impl ContextDiagnosticsPanel {
     pub(super) const fn new(diagnostics: ContextDiagnostics) -> Self {
-        Self { diagnostics }
+        Self {
+            diagnostics,
+            body: Rect::new(0, 0, 0, 0),
+            scroll: 0,
+            max_scroll: 0,
+        }
     }
 
     pub(super) fn replace(&mut self, diagnostics: ContextDiagnostics) {
@@ -216,35 +224,62 @@ impl Component for ContextDiagnosticsPanel {
     type Effect = ContextDiagnosticsEffect;
 
     fn update(&mut self, event: Self::Event) -> ComponentUpdate<Self::Effect> {
-        let ContextDiagnosticsEvent::Terminal(Event::Key(key)) = event else {
-            return ComponentUpdate::none();
-        };
-        if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
-            return ComponentUpdate::none();
-        }
-        let effect = match key.code {
-            KeyCode::Esc => ContextDiagnosticsEffect::Dismiss,
-            KeyCode::Char('r') if key.modifiers == KeyModifiers::NONE => {
-                ContextDiagnosticsEffect::Refresh
+        match event {
+            ContextDiagnosticsEvent::Terminal(Event::Key(key))
+                if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+            {
+                match key.code {
+                    KeyCode::Esc => {
+                        return ComponentUpdate {
+                            effects: vec![ContextDiagnosticsEffect::Dismiss],
+                            render: RenderRequest::Immediate,
+                        };
+                    }
+                    KeyCode::Char('r') if key.modifiers == KeyModifiers::NONE => {
+                        return ComponentUpdate {
+                            effects: vec![ContextDiagnosticsEffect::Refresh],
+                            render: RenderRequest::Immediate,
+                        };
+                    }
+                    KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
+                    KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
+                    KeyCode::PageUp => {
+                        self.scroll = self.scroll.saturating_sub(self.body.height.max(1))
+                    }
+                    KeyCode::PageDown => {
+                        self.scroll = self.scroll.saturating_add(self.body.height.max(1))
+                    }
+                    KeyCode::Home => self.scroll = 0,
+                    KeyCode::End => self.scroll = self.max_scroll,
+                    _ => return ComponentUpdate::none(),
+                }
+            }
+            ContextDiagnosticsEvent::Terminal(Event::Mouse(mouse))
+                if self.body.contains(Position::new(mouse.column, mouse.row)) =>
+            {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.scroll = self.scroll.saturating_sub(1),
+                    MouseEventKind::ScrollDown => self.scroll = self.scroll.saturating_add(1),
+                    _ => return ComponentUpdate::none(),
+                }
             }
             _ => return ComponentUpdate::none(),
-        };
-        ComponentUpdate {
-            effects: vec![effect],
-            render: RenderRequest::Immediate,
         }
+        self.scroll = self.scroll.min(self.max_scroll);
+        ComponentUpdate::render(RenderRequest::Immediate)
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         let layout =
             Floating::new("Context diagnostics", 78, 28, &FOOTER).render(frame, area, theme);
-        if layout.body.is_empty() {
-            return;
-        }
-        frame.render_widget(
-            Paragraph::new(self.lines(theme)).wrap(Wrap { trim: false }),
-            layout.body,
-        );
+        self.body = layout.body;
+        let paragraph = Paragraph::new(self.lines(theme)).wrap(Wrap { trim: false });
+        self.max_scroll = paragraph
+            .line_count(self.body.width)
+            .saturating_sub(usize::from(self.body.height))
+            .min(usize::from(u16::MAX)) as u16;
+        self.scroll = self.scroll.min(self.max_scroll);
+        frame.render_widget(paragraph.scroll((self.scroll, 0)), self.body);
     }
 }
 
@@ -371,5 +406,75 @@ mod tests {
         });
 
         assert_eq!(rendered, "automatic / 1970-01-01 00:00:00Z · 39.0s");
+    }
+    #[test]
+    fn compact_diagnostics_wheel_reaches_final_metrics() {
+        use super::ContextDiagnosticsEvent;
+        use crossterm::event::{Event, MouseEvent, MouseEventKind};
+        let mut panel = ContextDiagnosticsPanel::new(ContextDiagnostics::default());
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        for _ in 0..80 {
+            terminal
+                .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+                .unwrap();
+            panel.update(ContextDiagnosticsEvent::Terminal(Event::Mouse(
+                MouseEvent {
+                    kind: MouseEventKind::ScrollDown,
+                    column: 20,
+                    row: 5,
+                    modifiers: crossterm::event::KeyModifiers::NONE,
+                },
+            )));
+        }
+        terminal
+            .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Before / next input"), "{rendered}");
+    }
+    #[test]
+    fn wheel_outside_popup_does_not_scroll_and_resize_clamps_to_content() {
+        use crossterm::event::{
+            Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
+        };
+        let mut panel = ContextDiagnosticsPanel::new(ContextDiagnostics::default());
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let before = terminal.backend().buffer().clone();
+        panel.update(super::ContextDiagnosticsEvent::Terminal(Event::Mouse(
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            },
+        )));
+        terminal
+            .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        assert_eq!(terminal.backend().buffer(), &before);
+        panel.update(super::ContextDiagnosticsEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+        )));
+        let mut wide = Terminal::new(TestBackend::new(100, 40)).unwrap();
+        wide.draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let rendered = wide
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Context budget"));
+        assert!(rendered.contains("Before / next input"));
     }
 }

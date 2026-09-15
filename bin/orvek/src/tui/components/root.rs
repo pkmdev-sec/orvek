@@ -734,6 +734,7 @@ impl RootNode {
             .queue
             .component()
             .desired_height()
+            .min((body.height / 3).max(3))
             .min(body.height.saturating_sub(height));
         let queue_width = body.width.saturating_mul(95) / 100;
         let queue_area = Rect {
@@ -973,6 +974,9 @@ impl RootNode {
                 } else {
                     RenderRequest::None
                 });
+            }
+            if self.queue_area.contains(position) {
+                return self.update_queue(event);
             }
             if self.transcript_area.contains(position)
                 && let Some(command) = self.transcript.component().scroll_command(&event)
@@ -2865,7 +2869,7 @@ impl Component for RootNode {
             }
             RootEvent::ConfirmReviewDownload => {
                 self.overlay = Some(Overlay::ReviewDownload(Node::new(
-                    ReviewDownloadConfirmation,
+                    ReviewDownloadConfirmation::default(),
                 )));
                 ComponentUpdate::render(RenderRequest::Immediate)
             }
@@ -3048,14 +3052,27 @@ fn is_skill_picker_trigger(event: &Event) -> bool {
 }
 
 fn is_picker_navigation(event: &Event) -> bool {
-    let Event::Key(key) = event else {
-        return false;
-    };
-    matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
-        && matches!(
-            key.code,
-            KeyCode::Enter | KeyCode::Tab | KeyCode::Up | KeyCode::Down | KeyCode::Esc
-        )
+    match event {
+        // Pointer and terminal lifecycle events belong to the open picker;
+        // they must not dismiss it or reach the obscured transcript.
+        Event::Mouse(_) | Event::Resize(_, _) | Event::FocusGained | Event::FocusLost => true,
+        Event::Key(key) => {
+            matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
+                && matches!(
+                    key.code,
+                    KeyCode::Enter
+                        | KeyCode::Tab
+                        | KeyCode::Up
+                        | KeyCode::Down
+                        | KeyCode::PageUp
+                        | KeyCode::PageDown
+                        | KeyCode::Home
+                        | KeyCode::End
+                        | KeyCode::Esc
+                )
+        }
+        _ => false,
+    }
 }
 
 fn is_mention_edit(event: &Event) -> bool {
@@ -4218,15 +4235,15 @@ mod tests {
     }
 
     #[test]
-    fn mouse_dismisses_mention_popovers_with_an_immediate_redraw() {
+    fn mouse_movement_preserves_mention_popovers() {
         let workspace = tempfile::tempdir().unwrap();
         let mut root = RootNode::new(workspace.path(), ReasoningEffort::Medium);
         root.update(key(KeyCode::Char('@'), KeyModifiers::NONE));
 
         let file_update = root.update(mouse(MouseEventKind::Moved, 0, 0));
 
-        assert!(root.overlay.is_none());
-        assert_eq!(file_update.render, RenderRequest::Immediate);
+        assert!(root.overlay.is_some());
+        assert_eq!(file_update.render, RenderRequest::None);
 
         root.set_skills(vec![Skill::new("autofix", "Repair a pull request.")].into());
         root.update(key(KeyCode::Char(' '), KeyModifiers::NONE));
@@ -4234,8 +4251,8 @@ mod tests {
 
         let skill_update = root.update(mouse(MouseEventKind::Moved, 0, 0));
 
-        assert!(root.overlay.is_none());
-        assert_eq!(skill_update.render, RenderRequest::Immediate);
+        assert!(root.overlay.is_some());
+        assert_eq!(skill_update.render, RenderRequest::None);
     }
 
     #[test]
@@ -4251,6 +4268,43 @@ mod tests {
         assert!(matches!(&root.overlay, Some(Overlay::FileFinder(_))));
         assert_eq!(root.composer().draft(), "inspect @");
         assert_eq!(update.render, super::RenderRequest::Immediate);
+    }
+
+    #[test]
+    fn a_long_queue_leaves_room_for_the_transcript() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        for index in 0..30 {
+            root.queue.component_mut().push(format!("queued {index}"));
+        }
+        render_root_text(&mut root, 60, 24);
+        assert!(root.transcript_area.height >= 10);
+        assert!(root.queue_area.height >= 3);
+        assert!(root.queue_area.height <= 8);
+        let draft = root.composer().draft().to_owned();
+        let area = root.queue_area;
+        let update = root.update(mouse(MouseEventKind::ScrollUp, area.x + 2, area.y + 1));
+        assert!(update.effects.is_empty());
+        assert_eq!(root.composer().draft(), draft);
+        assert!(!render_root_text(&mut root, 60, 24).contains("Scrolled up"));
+    }
+
+    #[test]
+    fn pointer_and_resize_events_keep_file_suggestions_open() {
+        let workspace = tempfile::tempdir().unwrap();
+        let mut root = RootNode::new(workspace.path(), ReasoningEffort::Medium);
+        root.update(key(KeyCode::Char('@'), KeyModifiers::NONE));
+        render_root_text(&mut root, 60, 20);
+        for event in [
+            mouse(MouseEventKind::ScrollDown, 20, 6),
+            mouse(MouseEventKind::Moved, 20, 6),
+            RootEvent::Terminal(Event::Resize(50, 18)),
+            key(KeyCode::PageDown, KeyModifiers::NONE),
+        ] {
+            let update = root.update(event);
+            assert!(matches!(&root.overlay, Some(Overlay::FileFinder(_))));
+            assert!(update.effects.is_empty());
+            assert_eq!(root.composer().draft(), "@");
+        }
     }
 
     #[test]

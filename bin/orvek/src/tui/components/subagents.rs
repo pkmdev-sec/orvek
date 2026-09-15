@@ -16,11 +16,11 @@ use crate::{
         theme::Theme,
     },
 };
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use orvek_harness::inference::Model;
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph, Wrap},
@@ -32,7 +32,7 @@ use std::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-const TREE_KEYS: [(&str, &str); 7] = [
+const TREE_KEYS: [(&str, &str); 9] = [
     ("←/→", "row"),
     ("↑", "parent"),
     ("↓", "child"),
@@ -40,6 +40,8 @@ const TREE_KEYS: [(&str, &str); 7] = [
     ("-/+", "limit"),
     ("f", "filter"),
     ("esc", "close"),
+    ("wheel", "pan"),
+    ("shift+wheel", "pan row"),
 ];
 const TRANSCRIPT_KEYS: [(&str, &str); 4] = [
     ("pgup/pgdn", "scroll"),
@@ -61,6 +63,7 @@ struct AgentNode {
     descriptor: ChildView,
     status: ChildStatus,
     transcript: Node<Transcript>,
+    transcript_area: Rect,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -123,7 +126,15 @@ struct CameraAnimation {
 }
 
 #[derive(Default)]
+enum CameraMode {
+    #[default]
+    FollowFocus,
+    Panned,
+}
+
+#[derive(Default)]
 struct Camera {
+    mode: CameraMode,
     center: Option<WorldPoint>,
     animation: Option<CameraAnimation>,
 }
@@ -133,6 +144,7 @@ pub(super) struct SubagentTree {
     focused: Option<ChildId>,
     remembered_children: HashMap<ChildId, ChildId>,
     camera: Camera,
+    canvas: Rect,
     filter: AgentFilter,
     effort: crate::app::config::ReasoningEffort,
     max_subagents: usize,
@@ -146,6 +158,7 @@ impl SubagentTree {
             focused: None,
             remembered_children: HashMap::new(),
             camera: Camera::default(),
+            canvas: Rect::default(),
             filter: AgentFilter::Active,
             effort,
             max_subagents: DEFAULT_MAX_SUBAGENTS,
@@ -179,6 +192,7 @@ impl SubagentTree {
                         descriptor,
                         status: ChildStatus::Running,
                         transcript: Node::new(transcript),
+                        transcript_area: Rect::default(),
                     });
                     self.focused.get_or_insert(id);
                 }
@@ -295,6 +309,32 @@ impl SubagentTree {
     }
 
     fn update_tree_at(&mut self, event: Event, now: Instant) -> Option<SubagentEffect> {
+        if let Event::Mouse(mouse) = event {
+            if !self.canvas.contains(Position::new(mouse.column, mouse.row)) {
+                return None;
+            }
+            let horizontal = mouse.modifiers.contains(KeyModifiers::SHIFT);
+            let (dx, dy) = match mouse.kind {
+                MouseEventKind::ScrollUp if horizontal => (-6.0, 0.0),
+                MouseEventKind::ScrollDown if horizontal => (6.0, 0.0),
+                MouseEventKind::ScrollUp => (0.0, -3.0),
+                MouseEventKind::ScrollDown => (0.0, 3.0),
+                MouseEventKind::ScrollLeft => (-6.0, 0.0),
+                MouseEventKind::ScrollRight => (6.0, 0.0),
+                _ => return None,
+            };
+            self.advance_camera(now);
+            if let Some(center) = self.camera.center {
+                self.camera.center = Some(WorldPoint {
+                    x: center.x + dx,
+                    y: center.y + dy,
+                });
+                self.camera.animation = None;
+                self.camera.mode = CameraMode::Panned;
+                self.clamp_camera(&self.layout());
+            }
+            return None;
+        }
         let Event::Key(key) = event else {
             return None;
         };
@@ -366,6 +406,17 @@ impl SubagentTree {
         let Some(node) = self.node_mut(id) else {
             return Some(SubagentEffect::Back);
         };
+        if let Event::Mouse(mouse) = &event
+            && !node
+                .transcript_area
+                .contains(Position::new(mouse.column, mouse.row))
+        {
+            return None;
+        }
+        if node.transcript.component().updates_banner_clicked(&event) {
+            node.transcript.update(TranscriptEvent::FollowTail);
+            return None;
+        }
         if let Some(destination) = node.transcript.component().link_destination(&event) {
             return Some(SubagentEffect::OpenLink(destination.to_string()));
         }
@@ -386,6 +437,7 @@ impl SubagentTree {
     }
 
     pub(super) fn render_tree(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+        self.canvas = Rect::default();
         let mut keys = TREE_KEYS;
         keys[5].1 = self.filter.helper();
         let layout = Floating::new("Sub-agent tree", area.width, area.height, &keys)
@@ -426,7 +478,11 @@ impl SubagentTree {
         let focus_center = tree_layout
             .center(focused)
             .expect("focused agent should have a layout position");
-        self.sync_camera_target(focus_center, Instant::now());
+        self.canvas = canvas;
+        match self.camera.mode {
+            CameraMode::FollowFocus => self.sync_camera_target(focus_center, Instant::now()),
+            CameraMode::Panned => self.clamp_camera(&tree_layout),
+        }
         let camera_center = self.camera.center.unwrap_or(focus_center);
 
         render_edges(frame, canvas, theme, &tree_layout, camera_center);
@@ -474,7 +530,11 @@ impl SubagentTree {
         let layout = Floating::new(&title, area.width, area.height, keys)
             .colors(theme.border(), theme.model(node.descriptor.model))
             .render(frame, area, theme);
+        node.transcript_area = layout.body;
         node.transcript.render(frame, layout.body, theme);
+        node.transcript
+            .component_mut()
+            .render_chrome(frame, layout.body, theme);
     }
 
     fn layout(&self) -> TreeLayout {
@@ -506,12 +566,14 @@ impl SubagentTree {
         {
             return;
         }
+        self.camera.mode = CameraMode::FollowFocus;
         self.focused = layout.roots().first().copied();
         self.camera.center = self.focused.and_then(|id| layout.center(id));
         self.camera.animation = None;
     }
 
     fn focus_oldest(&mut self, layout: &TreeLayout) {
+        self.camera.mode = CameraMode::FollowFocus;
         self.focused = self
             .nodes
             .iter()
@@ -570,11 +632,39 @@ impl SubagentTree {
     }
 
     fn recenter_on_focus(&mut self, layout: &TreeLayout, now: Instant) {
+        self.camera.mode = CameraMode::FollowFocus;
         self.advance_camera(now);
         let Some(target) = self.focused.and_then(|id| layout.center(id)) else {
             return;
         };
         self.start_camera_animation(target, now);
+    }
+
+    fn clamp_camera(&mut self, layout: &TreeLayout) {
+        let Some(center) = &mut self.camera.center else {
+            return;
+        };
+        // Keep an extreme node centered at each limit, rather than panning into empty space.
+        let mut min = WorldPoint {
+            x: f64::INFINITY,
+            y: f64::INFINITY,
+        };
+        let mut max = WorldPoint {
+            x: f64::NEG_INFINITY,
+            y: f64::NEG_INFINITY,
+        };
+        for (_, position) in layout.positioned_nodes() {
+            let x = f64::from(position.center_x);
+            let y = f64::from(position.top + NODE_HEIGHT / 2);
+            min.x = min.x.min(x);
+            min.y = min.y.min(y);
+            max.x = max.x.max(x);
+            max.y = max.y.max(y);
+        }
+        if min.x <= max.x {
+            center.x = center.x.clamp(min.x, max.x);
+            center.y = center.y.clamp(min.y, max.y);
+        }
     }
 
     fn sync_camera_target(&mut self, target: WorldPoint, now: Instant) {
@@ -1256,6 +1346,125 @@ mod tests {
             task: format!("Task for {role}"),
             parent: parent.map(ChildId::new),
         }
+    }
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    #[test]
+    fn native_tree_wheel_pans_only_the_canvas_and_survives_repaint() {
+        let mut tree = SubagentTree::new(ReasoningEffort::Medium);
+        for id in 1..=12 {
+            tree.apply(ChildUpdate::Added(tree_descriptor(
+                id,
+                (id > 1).then_some(id - 1),
+                "worker",
+            )));
+        }
+        let before = rendered_text(&render_tree(&mut tree));
+        for (column, row) in [(0, 0), (50, 34), (50, 38)] {
+            tree.update_tree(mouse(MouseEventKind::ScrollDown, column, row));
+            assert_eq!(rendered_text(&render_tree(&mut tree)), before);
+        }
+        tree.update_tree(mouse(MouseEventKind::ScrollDown, 50, 15));
+        let after = rendered_text(&render_tree(&mut tree));
+        assert_ne!(after, before);
+        tree.advance(Instant::now() + Duration::from_secs(1));
+        assert_eq!(rendered_text(&render_tree(&mut tree)), after);
+        assert_eq!(tree.focused, Some(ChildId::new(1)));
+        for _ in 0..100 {
+            tree.update_tree(mouse(MouseEventKind::ScrollDown, 50, 15));
+        }
+        let bottom = rendered_text(&render_tree(&mut tree));
+        tree.update_tree(mouse(MouseEventKind::ScrollDown, 50, 15));
+        assert_eq!(rendered_text(&render_tree(&mut tree)), bottom);
+        assert!(
+            bottom.contains(&format!("#{}", ChildId::new(12))),
+            "{bottom}"
+        );
+        tree.update_tree(Event::Key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)));
+        tree.finish_camera_animation();
+        assert_eq!(rendered_text(&render_tree(&mut tree)), before);
+    }
+
+    #[test]
+    fn native_tree_horizontal_wheel_and_shift_wheel_pan_rows() {
+        let mut tree = SubagentTree::new(ReasoningEffort::Medium);
+        for id in 1..=12 {
+            tree.apply(ChildUpdate::Added(tree_descriptor(id, None, "worker")));
+        }
+        let before = rendered_text(&render_tree(&mut tree));
+        tree.update_tree(mouse(MouseEventKind::ScrollRight, 50, 15));
+        let right = rendered_text(&render_tree(&mut tree));
+        assert_ne!(right, before);
+        tree.update_tree(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 50,
+            row: 15,
+            modifiers: KeyModifiers::SHIFT,
+        }));
+        assert_eq!(rendered_text(&render_tree(&mut tree)), before);
+        tree.update_tree(mouse(MouseEventKind::ScrollLeft, 50, 15));
+        assert_eq!(rendered_text(&render_tree(&mut tree)), before);
+    }
+
+    fn populated_transcript() -> SubagentTree {
+        let mut tree = SubagentTree::new(ReasoningEffort::Medium);
+        tree.apply(ChildUpdate::Added(descriptor()));
+        for sequence in 1..=80 {
+            tree.apply(ChildUpdate::Record {
+                id: ChildId::new(1),
+                record: Arc::new(fixtures::record(sequence, 1, DisplaySample::Text, json!({"item_id": format!("line-{sequence}"), "text": format!("line {sequence}")}))),
+            });
+        }
+        tree
+    }
+
+    #[test]
+    fn native_child_wheel_ignores_frame_and_footer() {
+        let mut tree = populated_transcript();
+        let before = rendered_text(&render_transcript(&mut tree));
+        for (column, row) in [(0, 0), (50, 39)] {
+            tree.update_transcript(
+                ChildId::new(1),
+                mouse(MouseEventKind::ScrollUp, column, row),
+            );
+            assert_eq!(rendered_text(&render_transcript(&mut tree)), before);
+        }
+        tree.update_transcript(ChildId::new(1), mouse(MouseEventKind::ScrollUp, 50, 15));
+        assert_ne!(rendered_text(&render_transcript(&mut tree)), before);
+    }
+
+    #[test]
+    fn native_child_banner_click_returns_to_tail() {
+        let mut tree = populated_transcript();
+        let tail = rendered_text(&render_transcript(&mut tree));
+        tree.update_transcript(
+            ChildId::new(1),
+            Event::Key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE)),
+        );
+        let scrolled = rendered_text(&render_transcript(&mut tree));
+        let (row, line) = scrolled
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains("Ctrl+End to follow"))
+            .unwrap_or_else(|| panic!("follow banner: {scrolled}"));
+        let column = line.chars().position(|ch| ch == '↓').unwrap();
+        tree.update_transcript(
+            ChildId::new(1),
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                column as u16,
+                row as u16,
+            ),
+        );
+        assert_eq!(rendered_text(&render_transcript(&mut tree)), tail);
     }
 
     #[test]

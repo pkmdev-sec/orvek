@@ -6,10 +6,10 @@ use super::{
     node::{Component, ComponentUpdate, RenderRequest},
 };
 use crate::tui::{session::RecentPrompt, theme::Theme};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
@@ -53,6 +53,9 @@ pub(super) struct RecentPromptPicker {
     visible: Vec<usize>,
     selected: usize,
     preview_scroll: u16,
+    preview_max_scroll: u16,
+    preview_area: Rect,
+    list_area: Rect,
 }
 
 impl RecentPromptPicker {
@@ -66,6 +69,9 @@ impl RecentPromptPicker {
             visible,
             selected: 0,
             preview_scroll: 0,
+            preview_max_scroll: 0,
+            preview_area: Rect::default(),
+            list_area: Rect::default(),
         }
     }
 
@@ -102,11 +108,16 @@ impl RecentPromptPicker {
                 ComponentUpdate::render(RenderRequest::Immediate)
             }
             KeyCode::PageUp => {
-                self.preview_scroll = self.preview_scroll.saturating_sub(1);
+                self.preview_scroll = self
+                    .preview_scroll
+                    .saturating_sub(self.preview_area.height.max(1));
                 ComponentUpdate::render(RenderRequest::Immediate)
             }
             KeyCode::PageDown => {
-                self.preview_scroll = self.preview_scroll.saturating_add(1);
+                self.preview_scroll = self
+                    .preview_scroll
+                    .saturating_add(self.preview_area.height.max(1))
+                    .min(self.preview_max_scroll);
                 ComponentUpdate::render(RenderRequest::Immediate)
             }
             KeyCode::Enter | KeyCode::Tab => self.select(),
@@ -266,7 +277,7 @@ impl RecentPromptPicker {
         frame.render_stateful_widget(list, area, &mut state);
     }
 
-    fn render_preview(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+    fn render_preview(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         if area.is_empty() {
             return;
         }
@@ -276,6 +287,16 @@ impl RecentPromptPicker {
             .title(" Preview ")
             .border_style(Style::default().fg(theme.border()))
             .title_style(Style::default().fg(theme.muted()));
+        self.preview_area = block.inner(area);
+        let text = self
+            .selected_prompt()
+            .map_or("", |prompt| prompt.text.as_str());
+        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+        self.preview_max_scroll = paragraph
+            .line_count(self.preview_area.width)
+            .saturating_sub(usize::from(self.preview_area.height))
+            .min(usize::from(u16::MAX)) as u16;
+        self.preview_scroll = self.preview_scroll.min(self.preview_max_scroll);
         let text = self
             .selected_prompt()
             .map_or("", |prompt| prompt.text.as_str());
@@ -298,11 +319,42 @@ impl Component for RecentPromptPicker {
         match event {
             RecentPromptPickerEvent::Terminal(Event::Key(key)) => self.update_key(key),
             RecentPromptPickerEvent::Terminal(Event::Paste(text)) => self.insert_paste(&text),
+            RecentPromptPickerEvent::Terminal(Event::Mouse(mouse)) => {
+                let down = match mouse.kind {
+                    MouseEventKind::ScrollUp => false,
+                    MouseEventKind::ScrollDown => true,
+                    _ => return ComponentUpdate::none(),
+                };
+                let position = Position::new(mouse.column, mouse.row);
+                if self.preview_area.contains(position) {
+                    self.preview_scroll = if down {
+                        self.preview_scroll
+                            .saturating_add(1)
+                            .min(self.preview_max_scroll)
+                    } else {
+                        self.preview_scroll.saturating_sub(1)
+                    };
+                } else if self.list_area.contains(position) {
+                    self.selected = if down {
+                        self.selected
+                            .saturating_add(1)
+                            .min(self.visible.len().saturating_sub(1))
+                    } else {
+                        self.selected.saturating_sub(1)
+                    };
+                    self.preview_scroll = 0;
+                } else {
+                    return ComponentUpdate::none();
+                }
+                ComponentUpdate::render(RenderRequest::Immediate)
+            }
             RecentPromptPickerEvent::Terminal(_) => ComponentUpdate::none(),
         }
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+        self.preview_area = Rect::default();
+        self.list_area = Rect::default();
         if area.is_empty() {
             return;
         }
@@ -340,6 +392,7 @@ impl Component for RecentPromptPicker {
 
         self.render_search(frame, search_area, theme);
         self.render_scope(frame, scope_area, theme);
+        self.list_area = list_area;
         self.render_prompts(frame, list_area, theme);
         self.render_preview(frame, preview_area, theme);
     }
@@ -490,19 +543,44 @@ mod tests {
     }
 
     #[test]
-    fn long_previews_can_be_scrolled_and_reset_for_the_next_prompt() {
-        let mut picker = picker();
-
-        for _ in 0..12 {
-            picker.update(key(KeyCode::PageDown));
-        }
-        assert_eq!(picker.preview_scroll, 12);
-
+    fn long_previews_page_and_reset_for_the_next_prompt() {
+        let text = (0..30)
+            .map(|i| format!("preview row {i}\n"))
+            .collect::<String>();
+        let mut picker = RecentPromptPicker::new(
+            vec![
+                prompt(&text, "current", "/work"),
+                prompt("next prompt", "current", "/work"),
+            ],
+            "current".to_owned(),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(60, 18)).unwrap();
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        picker.update(key(KeyCode::PageDown));
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        assert!(
+            picker.preview_scroll > 1,
+            "page navigation must advance a viewport"
+        );
         picker.update(key(KeyCode::PageUp));
-        assert_eq!(picker.preview_scroll, 11);
-
-        picker.update(key(KeyCode::Down));
         assert_eq!(picker.preview_scroll, 0);
+        picker.update(key(KeyCode::PageDown));
+        picker.update(key(KeyCode::Down));
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert_eq!(rendered.matches("next prompt").count(), 2);
     }
 
     #[test]
@@ -608,5 +686,34 @@ mod tests {
         assert!(footer.contains("type search"));
         assert_eq!(buffer[(9, 4)].symbol(), "╰");
         assert_eq!(buffer[(90, 4)].symbol(), "╯");
+    }
+    #[test]
+    fn preview_cannot_be_scrolled_past_its_last_line() {
+        let mut picker = RecentPromptPicker::new(
+            vec![prompt("only preview line", "current", "/work")],
+            "current".to_owned(),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(60, 18)).unwrap();
+        for _ in 0..30 {
+            terminal
+                .draw(|frame| picker.render(frame, frame.area(), &Theme::default()))
+                .unwrap();
+            picker.update(key(KeyCode::PageDown));
+        }
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert_eq!(
+            rendered.matches("only preview line").count(),
+            2,
+            "list and preview must both remain visible: {rendered}"
+        );
     }
 }

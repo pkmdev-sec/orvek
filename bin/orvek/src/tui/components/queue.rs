@@ -4,11 +4,11 @@ use super::{
     waved_text::WavedText,
 };
 use crate::tui::{format::sanitize_terminal_text_inline, prompt::Submission, theme::Theme};
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use orvek_harness::Digest;
 use ratatui::{
     Frame,
-    layout::{Alignment, Rect},
+    layout::{Alignment, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders},
@@ -71,6 +71,8 @@ enum QueueItemState {
 pub(super) struct MessageQueue {
     items: Vec<QueueItem>,
     selected: usize,
+    first_visible: usize,
+    area: Rect,
     focused: bool,
     updating_label: WavedText,
 }
@@ -79,6 +81,8 @@ impl Default for MessageQueue {
         Self {
             items: Vec::new(),
             selected: 0,
+            first_visible: 0,
+            area: Rect::default(),
             focused: false,
             updating_label: WavedText::new(UPDATING_TEXT, Color::Rgb(220, 220, 220)),
         }
@@ -100,6 +104,10 @@ impl MessageQueue {
             .and_then(|id| self.items.iter().position(|item| item.id == id))
             .unwrap_or(self.items.len().saturating_sub(1));
         self.focused &= !self.items.is_empty();
+        self.first_visible = self.first_visible.min(self.max_offset());
+        if self.focused {
+            self.reveal_selected();
+        }
         self.sync_wave();
     }
     #[cfg(test)]
@@ -137,13 +145,16 @@ impl MessageQueue {
     }
     pub(super) fn set_focused(&mut self, focused: bool) {
         self.focused = focused && !self.items.is_empty();
+        if self.focused {
+            self.reveal_selected();
+        }
     }
     pub(super) fn focus_row(&mut self, row: u16, area: Rect) -> bool {
-        if !area.contains(ratatui::layout::Position::new(area.x, row)) {
+        if self.items.is_empty() || row <= area.y || row >= area.bottom().saturating_sub(1) {
             return false;
         }
         self.selected =
-            usize::from(row.saturating_sub(area.y + 1) / 2).min(self.items.len().saturating_sub(1));
+            (self.first_visible + usize::from((row - area.y - 1) / 2)).min(self.items.len() - 1);
         self.focused = !self.items.is_empty();
         true
     }
@@ -157,11 +168,49 @@ impl MessageQueue {
     pub(super) fn animation_deadline(&self) -> Option<Instant> {
         self.updating_label.animation_deadline()
     }
+    fn visible_items(&self) -> usize {
+        usize::from(self.area.height.saturating_sub(1) / 2)
+    }
+
+    fn max_offset(&self) -> usize {
+        self.items.len().saturating_sub(self.visible_items().max(1))
+    }
+
+    fn reveal_selected(&mut self) {
+        let visible = self.visible_items().max(1);
+        if self.selected < self.first_visible {
+            self.first_visible = self.selected;
+        } else if self.selected >= self.first_visible + visible {
+            self.first_visible = self.selected + 1 - visible;
+        }
+        self.first_visible = self.first_visible.min(self.max_offset());
+    }
+
     fn sync_wave(&mut self) {
         self.updating_label
             .set_active(self.has_pending_action(), Instant::now());
     }
     fn update_terminal(&mut self, event: Event) -> ComponentUpdate<QueueEffect> {
+        if let Event::Mouse(mouse) = &event {
+            if !self.area.contains(Position::new(mouse.column, mouse.row))
+                || self.visible_items() == 0
+                || mouse.modifiers.contains(KeyModifiers::SHIFT)
+            {
+                return ComponentUpdate::none();
+            }
+            let next = match mouse.kind {
+                MouseEventKind::ScrollUp => self.first_visible.saturating_sub(3),
+                MouseEventKind::ScrollDown => {
+                    self.first_visible.saturating_add(3).min(self.max_offset())
+                }
+                _ => return ComponentUpdate::none(),
+            };
+            if next == self.first_visible {
+                return ComponentUpdate::none();
+            }
+            self.first_visible = next;
+            return ComponentUpdate::render(RenderRequest::Immediate);
+        }
         let Event::Key(key) = event else {
             return ComponentUpdate::none();
         };
@@ -176,14 +225,22 @@ impl MessageQueue {
                 render: RenderRequest::Immediate,
             };
         }
-        if matches!(key.code, KeyCode::Up | KeyCode::Down)
-            && !key.modifiers.contains(KeyModifiers::SHIFT)
+        if matches!(
+            key.code,
+            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
+        ) && !key.modifiers.contains(KeyModifiers::SHIFT)
         {
-            self.selected = if key.code == KeyCode::Down {
-                self.selected.saturating_add(1).min(self.items.len() - 1)
+            let step = if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+                self.visible_items().max(1)
             } else {
-                self.selected.saturating_sub(1)
+                1
             };
+            self.selected = if matches!(key.code, KeyCode::Down | KeyCode::PageDown) {
+                self.selected.saturating_add(step).min(self.items.len() - 1)
+            } else {
+                self.selected.saturating_sub(step)
+            };
+            self.reveal_selected();
             return ComponentUpdate::render(RenderRequest::Immediate);
         }
         let selected = self.selected;
@@ -261,7 +318,13 @@ impl Component for MessageQueue {
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        if area.is_empty() || self.items.is_empty() {
+        let resized = self.area != area;
+        self.area = area;
+        self.first_visible = self.first_visible.min(self.max_offset());
+        if resized && self.focused {
+            self.reveal_selected();
+        }
+        if area.width < 4 || area.height < 3 || self.items.is_empty() {
             return;
         }
 
@@ -290,10 +353,17 @@ impl Component for MessageQueue {
         frame.render_widget(block, area);
 
         let content_width = usize::from(area.width.saturating_sub(4));
-        for (index, item) in self.items.iter().enumerate() {
-            let offset = u16::try_from(index.saturating_mul(2)).unwrap_or(u16::MAX);
+        for (visible_index, (index, item)) in self
+            .items
+            .iter()
+            .enumerate()
+            .skip(self.first_visible)
+            .take(self.visible_items())
+            .enumerate()
+        {
+            let offset = u16::try_from(visible_index * 2).unwrap_or(u16::MAX);
             let row_y = area.y + 1 + offset;
-            if index > 0 {
+            if visible_index > 0 {
                 let y = row_y - 1;
                 frame
                     .buffer_mut()
@@ -363,6 +433,103 @@ mod tests {
     fn key(code: KeyCode, modifiers: KeyModifiers) -> QueueEvent {
         QueueEvent::Terminal(Event::Key(KeyEvent::new(code, modifiers)))
     }
+    fn rendered_queue(queue: &mut MessageQueue, height: u16) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(48, height)).unwrap();
+        terminal
+            .draw(|frame| queue.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn wheel_reaches_hidden_queue_items_and_clicks_keep_their_identity() {
+        let mut queue = MessageQueue::default();
+        for index in 0..10 {
+            queue.push(format!("queued item {index}"));
+        }
+        assert!(rendered_queue(&mut queue, 7).contains("queued item 0"));
+        for _ in 0..20 {
+            let update = queue.update(QueueEvent::Terminal(Event::Mouse(
+                crossterm::event::MouseEvent {
+                    kind: crossterm::event::MouseEventKind::ScrollDown,
+                    column: 5,
+                    row: 3,
+                    modifiers: KeyModifiers::NONE,
+                },
+            )));
+            assert!(update.effects.is_empty());
+        }
+        let output = rendered_queue(&mut queue, 7);
+        assert!(output.contains("queued item 7"));
+        assert!(output.contains("queued item 9"));
+        assert!(!output.contains("queued item 0"));
+        assert!(!queue.focused());
+        assert_eq!(queue.len(), 10);
+        queue.focus_row(1, Rect::new(0, 0, 48, 7));
+        let update = queue.update(key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            matches!(update.effects.as_slice(), [QueueEffect::Steer { id, .. }] if *id == QueueId::new(7))
+        );
+    }
+
+    #[test]
+    fn queue_wheel_is_bounded_and_ignores_other_surfaces() {
+        let mut queue = MessageQueue::default();
+        for index in 0..10 {
+            queue.push(format!("queued item {index}"));
+        }
+        let before = rendered_queue(&mut queue, 7);
+        for (kind, column, row) in [
+            (MouseEventKind::ScrollDown, 48, 3),
+            (MouseEventKind::ScrollDown, 5, 7),
+            (MouseEventKind::ScrollUp, 5, 3),
+        ] {
+            let update = queue.update(QueueEvent::Terminal(Event::Mouse(
+                crossterm::event::MouseEvent {
+                    kind,
+                    column,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            )));
+            assert!(update.effects.is_empty());
+            assert_eq!(update.render, RenderRequest::None);
+        }
+        assert_eq!(before, rendered_queue(&mut queue, 7));
+        assert_eq!(queue.len(), 10);
+    }
+
+    #[test]
+    fn queue_page_navigation_and_resize_keep_the_selection_visible() {
+        let mut queue = MessageQueue::default();
+        for index in 0..10 {
+            queue.push(format!("queued item {index}"));
+        }
+        rendered_queue(&mut queue, 7);
+        queue.set_focused(true);
+        assert!(rendered_queue(&mut queue, 7).contains("queued item 9"));
+        let update = queue.update(key(KeyCode::PageUp, KeyModifiers::NONE));
+        assert!(update.effects.is_empty());
+        assert!(rendered_queue(&mut queue, 7).contains("queued item 6"));
+        assert!(rendered_queue(&mut queue, 3).contains("queued item 6"));
+        for _ in 0..20 {
+            queue.update(key(KeyCode::PageUp, KeyModifiers::NONE));
+        }
+        assert!(rendered_queue(&mut queue, 3).contains("queued item 0"));
+        let update = queue.update(key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            matches!(update.effects.as_slice(), [QueueEffect::Steer { id, .. }] if *id == QueueId::new(0))
+        );
+        assert_eq!(queue.len(), 10);
+    }
+
     #[test]
     fn host_receipt_is_required_to_remove_or_reorder_entries() {
         let mut queue = MessageQueue::default();

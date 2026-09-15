@@ -8,10 +8,10 @@ use crate::tui::{
     session::{SessionSummary, format_age},
     theme::Theme,
 };
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{List, ListItem, ListState, Paragraph},
@@ -47,6 +47,7 @@ pub(super) struct SessionPicker {
     query: String,
     matches: Vec<usize>,
     selected: usize,
+    navigation_area: Rect,
     mode: SessionPickerMode,
 }
 
@@ -58,8 +59,21 @@ impl SessionPicker {
             query: String::new(),
             matches,
             selected: 0,
+            navigation_area: Rect::default(),
             mode,
         }
+    }
+
+    fn select_bounded(&mut self, delta: isize) -> ComponentUpdate<SessionPickerEffect> {
+        let next = self
+            .selected
+            .saturating_add_signed(delta)
+            .min(self.matches.len().saturating_sub(1));
+        if next == self.selected {
+            return ComponentUpdate::none();
+        }
+        self.selected = next;
+        ComponentUpdate::render(RenderRequest::Immediate)
     }
 
     fn update_key(
@@ -70,6 +84,16 @@ impl SessionPicker {
             return ComponentUpdate::none();
         }
         match key.code {
+            KeyCode::PageUp => self.select_bounded(
+                -(isize::try_from(self.navigation_area.height / 2)
+                    .unwrap_or(1)
+                    .max(1)),
+            ),
+            KeyCode::PageDown => self.select_bounded(
+                isize::try_from(self.navigation_area.height / 2)
+                    .unwrap_or(1)
+                    .max(1),
+            ),
             KeyCode::Esc => Self::effect(SessionPickerEffect::Dismiss),
             KeyCode::Backspace if !self.query.is_empty() => {
                 if let Some((index, _)) = self.query.grapheme_indices(true).next_back() {
@@ -236,11 +260,23 @@ impl Component for SessionPicker {
         match event {
             SessionPickerEvent::Terminal(Event::Key(key)) => self.update_key(key),
             SessionPickerEvent::Terminal(Event::Paste(text)) => self.insert_paste(&text),
+            SessionPickerEvent::Terminal(Event::Mouse(mouse))
+                if self
+                    .navigation_area
+                    .contains(Position::new(mouse.column, mouse.row)) =>
+            {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.select_bounded(-1),
+                    MouseEventKind::ScrollDown => self.select_bounded(1),
+                    _ => ComponentUpdate::none(),
+                }
+            }
             SessionPickerEvent::Terminal(_) => ComponentUpdate::none(),
         }
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+        self.navigation_area = Rect::default();
         let (title, key_bindings) = match self.mode {
             SessionPickerMode::Resume => ("Resume session", &RESUME_KEY_BINDINGS),
             SessionPickerMode::Mention => ("Mention session", &MENTION_KEY_BINDINGS),
@@ -258,6 +294,7 @@ impl Component for SessionPicker {
             height: layout.body.height.saturating_sub(1),
             ..layout.body
         };
+        self.navigation_area = sessions;
         self.render_search(frame, search, theme);
         self.render_sessions(frame, sessions, theme);
     }
@@ -364,6 +401,108 @@ mod tests {
         }
         assert_eq!(picker.query, "fix");
         assert_eq!(picker.matches, [0]);
+        assert_eq!(picker.selected, 0);
+    }
+    #[test]
+    fn rendered_picker_bounds_wheel_and_page_navigation() {
+        let mut picker = SessionPicker::new(
+            (0..30)
+                .map(|index| summary(&format!("session-{index:02}"), "preview"))
+                .collect(),
+            SessionPickerMode::Resume,
+        );
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 12)).unwrap();
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
+            .unwrap();
+        let body = picker.navigation_area;
+        assert!(!body.is_empty());
+        let mouse = |kind, column, row| {
+            SessionPickerEvent::Terminal(Event::Mouse(crossterm::event::MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }))
+        };
+        picker.update(mouse(crossterm::event::MouseEventKind::ScrollDown, 0, 0));
+        assert_eq!(picker.selected, 0);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 1);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 0);
+        picker.update(SessionPickerEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::PageDown,
+            KeyModifiers::NONE,
+        ))));
+        assert_eq!(
+            picker.selected,
+            picker
+                .matches
+                .len()
+                .saturating_sub(1)
+                .min(usize::from(body.height / 2).max(1))
+        );
+        for _ in 0..40 {
+            picker.update(SessionPickerEvent::Terminal(Event::Key(KeyEvent::new(
+                KeyCode::PageDown,
+                KeyModifiers::NONE,
+            ))));
+        }
+        let last = picker.matches.len().saturating_sub(1);
+        assert_eq!(picker.selected, last);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, last);
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
+            .unwrap();
+        assert_eq!(picker.selected, last);
+        let buffer = terminal.backend().buffer();
+        assert!((body.y..body.bottom()).any(|row| {
+            let text = (body.x..body.right())
+                .map(|column| buffer[(column, row)].symbol())
+                .collect::<String>();
+            text.contains("› ") && text.contains("session-29")
+        }));
+        for _ in 0..40 {
+            picker.update(SessionPickerEvent::Terminal(Event::Key(KeyEvent::new(
+                KeyCode::PageUp,
+                KeyModifiers::NONE,
+            ))));
+        }
+        assert_eq!(picker.selected, 0);
+        terminal
+            .draw(|frame| {
+                picker.render(
+                    frame,
+                    ratatui::layout::Rect::default(),
+                    &crate::tui::theme::Theme::default(),
+                )
+            })
+            .unwrap();
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
         assert_eq!(picker.selected, 0);
     }
 }

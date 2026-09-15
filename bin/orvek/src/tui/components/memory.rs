@@ -6,11 +6,11 @@ use super::{
 };
 use crate::tui::{session::format_age, theme::Theme};
 use chrono::{DateTime, Utc};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
 use orvek_memory::{MemoryAccess, MemoryKey, MemoryRecord, MemorySource, RemoteRole};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{List, ListItem, ListState, Paragraph, Wrap},
@@ -102,6 +102,8 @@ pub(super) struct MemoryBrowser {
     sort: SortMode,
     namespace_scope: NamespaceScope,
     state: BrowserState,
+    body: Rect,
+    max_scroll: u16,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -221,6 +223,8 @@ impl MemoryBrowser {
             sort: SortMode::MostUseful,
             namespace_scope: NamespaceScope::All,
             state: BrowserState::Loading,
+            body: Rect::new(0, 0, 0, 0),
+            max_scroll: 0,
         }
     }
 
@@ -323,11 +327,14 @@ impl MemoryBrowser {
         let next_scroll = match key.code {
             KeyCode::Up => Some(scroll.saturating_sub(1)),
             KeyCode::Down => Some(scroll.saturating_add(1)),
-            KeyCode::PageUp => Some(scroll.saturating_sub(10)),
-            KeyCode::PageDown => Some(scroll.saturating_add(10)),
+            KeyCode::PageUp => Some(scroll.saturating_sub(self.body.height.max(1))),
+            KeyCode::PageDown => Some(scroll.saturating_add(self.body.height.max(1))),
+            KeyCode::Home => Some(0),
+            KeyCode::End => Some(self.max_scroll),
             _ => None,
         };
         if let Some(scroll) = next_scroll {
+            let scroll = scroll.min(self.max_scroll);
             self.state = BrowserState::Detail {
                 key: memory_key,
                 scroll,
@@ -757,13 +764,14 @@ impl MemoryBrowser {
             return;
         };
         let lines = detail_lines(record, theme);
-        let line_count = wrapped_line_count(&lines, area.width);
         let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-        let max_scroll = line_count
+        let max_scroll = paragraph
+            .line_count(area.width)
             .saturating_sub(usize::from(area.height))
             .min(usize::from(u16::MAX)) as u16;
         let scroll = requested_scroll.min(max_scroll);
         if update_scroll {
+            self.max_scroll = max_scroll;
             self.state = BrowserState::Detail { key, scroll };
         }
         frame.render_widget(paragraph.scroll((scroll, 0)), area);
@@ -800,6 +808,27 @@ impl Component for MemoryBrowser {
         match event {
             MemoryBrowserEvent::Terminal(Event::Key(key)) => self.update_key(key),
             MemoryBrowserEvent::Terminal(Event::Paste(text)) => self.insert_paste(&text),
+            MemoryBrowserEvent::Terminal(Event::Mouse(mouse))
+                if self.body.contains(Position::new(mouse.column, mouse.row)) =>
+            {
+                let down = match mouse.kind {
+                    MouseEventKind::ScrollUp => false,
+                    MouseEventKind::ScrollDown => true,
+                    _ => return ComponentUpdate::none(),
+                };
+                match &mut self.state {
+                    BrowserState::List => self.move_selection(down),
+                    BrowserState::Detail { scroll, .. } => {
+                        *scroll = if down {
+                            scroll.saturating_add(1).min(self.max_scroll)
+                        } else {
+                            scroll.saturating_sub(1)
+                        };
+                        ComponentUpdate::render(RenderRequest::Immediate)
+                    }
+                    _ => ComponentUpdate::none(),
+                }
+            }
             MemoryBrowserEvent::Terminal(_) => ComponentUpdate::none(),
             MemoryBrowserEvent::Loaded { access, records } => {
                 self.replace_records(access, records);
@@ -842,6 +871,7 @@ impl Component for MemoryBrowser {
         let state = self.state.clone();
         let title = self.context_label();
         let layout = Floating::new(&title, 88, 28, self.footer()).render(frame, area, theme);
+        self.body = layout.body;
         if layout.body.is_empty() {
             return;
         }
@@ -1159,61 +1189,6 @@ fn visible_tail(query: &str, width: usize) -> &str {
         }
     }
     query
-}
-
-fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
-    let width = usize::from(width);
-    if width == 0 {
-        return 0;
-    }
-
-    lines
-        .iter()
-        .map(|line| {
-            let text = line
-                .spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>();
-            wrapped_text_line_count(&text, width)
-        })
-        .sum()
-}
-
-fn wrapped_text_line_count(text: &str, width: usize) -> usize {
-    let mut words = text.split_whitespace();
-    let Some(first) = words.next() else {
-        return 1;
-    };
-
-    let mut lines = 1;
-    let mut used = 0;
-    place_word(first.width(), width, &mut lines, &mut used);
-    for word in words {
-        let word_width = word.width();
-        if used < width && used.saturating_add(1).saturating_add(word_width) <= width {
-            used += 1 + word_width;
-            continue;
-        }
-
-        lines += 1;
-        used = 0;
-        place_word(word_width, width, &mut lines, &mut used);
-    }
-    lines
-}
-
-fn place_word(word_width: usize, width: usize, lines: &mut usize, used: &mut usize) {
-    if word_width <= width {
-        *used = word_width;
-        return;
-    }
-
-    *lines += (word_width - 1) / width;
-    *used = word_width % width;
-    if *used == 0 {
-        *used = width;
-    }
 }
 
 #[cfg(test)]
@@ -1604,5 +1579,32 @@ mod tests {
         assert!(rendered.contains("Memory metadata"));
         assert!(rendered.contains("first line"));
         assert!(rendered.contains("second line"));
+    }
+    #[test]
+    fn detail_wheel_is_bounded_and_reaches_last_line() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+        let content = (0..40)
+            .map(|i| format!("memory line {i}\n"))
+            .collect::<String>();
+        let mut browser = loaded(vec![record(1, 1, &content)]);
+        browser.update(key(KeyCode::Enter));
+        for _ in 0..100 {
+            render(&mut browser, 60, 14);
+            browser.update(MemoryBrowserEvent::Terminal(Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 25,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            })));
+        }
+        assert!(render(&mut browser, 60, 14).contains("memory line 39"));
+        let before = render(&mut browser, 60, 14);
+        browser.update(MemoryBrowserEvent::Terminal(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })));
+        assert_eq!(render(&mut browser, 60, 14), before);
     }
 }

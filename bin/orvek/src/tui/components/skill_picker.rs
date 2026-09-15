@@ -6,10 +6,10 @@ use super::{
     node::{Component, ComponentUpdate, RenderRequest},
 };
 use crate::{core::extensions::Skill, tui::theme::Theme};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEventKind};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{List, ListItem, ListState, Paragraph},
@@ -36,6 +36,7 @@ pub(super) struct SkillPicker {
     skills: Arc<[Skill]>,
     query: String,
     selected: usize,
+    navigation_area: Rect,
     matches: Vec<usize>,
 }
 
@@ -46,8 +47,21 @@ impl SkillPicker {
             skills,
             query: String::new(),
             selected: 0,
+            navigation_area: Rect::default(),
             matches,
         }
+    }
+
+    fn select_bounded(&mut self, delta: isize) -> ComponentUpdate<SkillPickerEffect> {
+        let next = self
+            .selected
+            .saturating_add_signed(delta)
+            .min(self.matches.len().saturating_sub(1));
+        if next == self.selected {
+            return ComponentUpdate::none();
+        }
+        self.selected = next;
+        ComponentUpdate::render(RenderRequest::Immediate)
     }
 
     fn update_key(&mut self, key: KeyEvent) -> ComponentUpdate<SkillPickerEffect> {
@@ -56,6 +70,16 @@ impl SkillPicker {
         }
 
         match key.code {
+            KeyCode::PageUp => self.select_bounded(
+                -(isize::try_from(self.navigation_area.height)
+                    .unwrap_or(1)
+                    .max(1)),
+            ),
+            KeyCode::PageDown => self.select_bounded(
+                isize::try_from(self.navigation_area.height)
+                    .unwrap_or(1)
+                    .max(1),
+            ),
             KeyCode::Esc => Self::dismiss(),
             KeyCode::Enter | KeyCode::Tab => self.handle_enter(),
             KeyCode::Up => {
@@ -166,12 +190,24 @@ impl Component for SkillPicker {
     fn update(&mut self, event: Self::Event) -> ComponentUpdate<Self::Effect> {
         match event {
             SkillPickerEvent::Terminal(Event::Key(key)) => self.update_key(key),
+            SkillPickerEvent::Terminal(Event::Mouse(mouse))
+                if self
+                    .navigation_area
+                    .contains(Position::new(mouse.column, mouse.row)) =>
+            {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.select_bounded(-1),
+                    MouseEventKind::ScrollDown => self.select_bounded(1),
+                    _ => ComponentUpdate::none(),
+                }
+            }
             SkillPickerEvent::Terminal(_) => ComponentUpdate::none(),
             SkillPickerEvent::Query(query) => self.set_query(query),
         }
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+        self.navigation_area = Rect::default();
         if area.is_empty() {
             return;
         }
@@ -189,6 +225,7 @@ impl Component for SkillPicker {
             height: layout.body.height.saturating_sub(1),
             ..layout.body
         };
+        self.navigation_area = skills_area;
         self.render_search(frame, search_area, theme);
         self.render_skills(frame, skills_area, theme);
     }
@@ -238,5 +275,107 @@ mod tests {
             update.effects.as_slice(),
             [SkillPickerEffect::Insert("open-docs".to_owned())]
         );
+    }
+    #[test]
+    fn rendered_picker_bounds_wheel_and_page_navigation() {
+        let mut picker = SkillPicker::new(
+            (0..30)
+                .map(|index| Skill::new(format!("skill-{index:02}"), "description"))
+                .collect::<Vec<_>>()
+                .into(),
+        );
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 12)).unwrap();
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
+            .unwrap();
+        let body = picker.navigation_area;
+        assert!(!body.is_empty());
+        let mouse = |kind, column, row| {
+            SkillPickerEvent::Terminal(Event::Mouse(crossterm::event::MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }))
+        };
+        picker.update(mouse(crossterm::event::MouseEventKind::ScrollDown, 0, 0));
+        assert_eq!(picker.selected, 0);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 1);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 0);
+        picker.update(SkillPickerEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::PageDown,
+            KeyModifiers::NONE,
+        ))));
+        assert_eq!(
+            picker.selected,
+            picker
+                .matches
+                .len()
+                .saturating_sub(1)
+                .min(usize::from(body.height).max(1))
+        );
+        for _ in 0..40 {
+            picker.update(SkillPickerEvent::Terminal(Event::Key(KeyEvent::new(
+                KeyCode::PageDown,
+                KeyModifiers::NONE,
+            ))));
+        }
+        let last = picker.matches.len().saturating_sub(1);
+        assert_eq!(picker.selected, last);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, last);
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
+            .unwrap();
+        assert_eq!(picker.selected, last);
+        let buffer = terminal.backend().buffer();
+        assert!((body.y..body.bottom()).any(|row| {
+            let text = (body.x..body.right())
+                .map(|column| buffer[(column, row)].symbol())
+                .collect::<String>();
+            text.contains("› ") && text.contains("$skill-29")
+        }));
+        for _ in 0..40 {
+            picker.update(SkillPickerEvent::Terminal(Event::Key(KeyEvent::new(
+                KeyCode::PageUp,
+                KeyModifiers::NONE,
+            ))));
+        }
+        assert_eq!(picker.selected, 0);
+        terminal
+            .draw(|frame| {
+                picker.render(
+                    frame,
+                    ratatui::layout::Rect::default(),
+                    &crate::tui::theme::Theme::default(),
+                )
+            })
+            .unwrap();
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 0);
     }
 }
