@@ -94,6 +94,10 @@ pub(crate) enum ViewChange {
         id: TaskId,
         event: TaskEvent,
     },
+    TaskInput {
+        job: Uuid,
+        arguments: Value,
+    },
     ContextProjected {
         source_revision: u64,
         items: usize,
@@ -228,6 +232,14 @@ impl HostProjection {
             let task = Uuid::parse_str(&record.aggregate).ok().map(TaskId);
             match task.filter(|id| self.tasks.contains(id)) {
                 Some(id) => match serde_json::from_value::<TaskEvent>(record.event) {
+                    Ok(TaskEvent::JobStarted(job))
+                        if job
+                            .invocation
+                            .as_ref()
+                            .is_some_and(|invocation| invocation.session != self.session) =>
+                    {
+                        Vec::new()
+                    }
                     Ok(event) => vec![ViewChange::Task { id, event }],
                     Err(error) => vec![ViewChange::Warning(format!(
                         "Cannot display host task event: {error}"

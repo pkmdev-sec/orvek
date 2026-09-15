@@ -247,8 +247,18 @@ impl TranscriptModel {
                 name,
                 arguments,
             } => {
-                if self.tools.contains_key(call_id) {
-                    return false;
+                if let Some(id) = self.tools.get(call_id).copied() {
+                    // Replay can deliver the execution before its provider proposal.
+                    // Fill missing input without resetting the execution or its output.
+                    self.update(id, |kind| {
+                        if let EntryKind::Tool(tool) = kind
+                            && tool.arguments.is_null()
+                        {
+                            tool.arguments = serde_json::from_str(arguments)
+                                .unwrap_or_else(|_| Value::String(bounded(arguments)));
+                        }
+                    });
+                    return true;
                 }
                 let tool = ToolEntry {
                     name: name.clone(),
@@ -366,6 +376,15 @@ impl TranscriptModel {
                     text: format!("Task {task} registered with the host"),
                     verified: false,
                 });
+            }
+            ViewChange::TaskInput { job, arguments } => {
+                if let Some(entry) = self.jobs.get(job).copied() {
+                    self.update(entry, |kind| {
+                        if let EntryKind::Tool(tool) = kind {
+                            tool.arguments = arguments.clone();
+                        }
+                    });
+                }
             }
             ViewChange::Task { id, event } => {
                 if let TaskEvent::JobStarted(job) = event {
@@ -796,6 +815,7 @@ fn outcome_name(value: Outcome) -> &'static str {
         Outcome::BudgetExhausted => "budget exhausted",
         Outcome::Cancelled => "cancelled",
         Outcome::Failed => "failed",
+        Outcome::FinishedUnverified => "finished unverified",
     }
 }
 fn delivery_advances(current: &MessageDeliveryState, next: &MessageDeliveryState) -> bool {

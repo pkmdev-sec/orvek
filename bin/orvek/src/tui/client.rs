@@ -1121,6 +1121,24 @@ pub(super) async fn run(
                     if let Some(current)=panes.get_mut(&pane).filter(|value|value.generation==generation) {
                         for change in current.projection.apply(frame) {
                             if matches!(&change,ViewChange::Submission(_)|ViewChange::SubmissionChanged {..}|ViewChange::QueueChanged) {refresh_queue(&mut jobs,&sender,pane,current);}
+                            if let ViewChange::Task { event: orvek_harness::state::TaskEvent::JobStarted(job), .. } = &change
+                                && let Some(invocation) = &job.invocation
+                                && invocation.session == current.view.id
+                                && invocation.call_id.is_some()
+                                && matches!(invocation.capability.as_str(), "exec_command" | "write_stdin")
+                            {
+                                let client = current.client.clone();
+                                let invocation = invocation.clone();
+                                let job = job.id;
+                                let out = sender.clone();
+                                jobs.spawn(async move {
+                                    let change = match task_input(&client, &invocation).await {
+                                        Ok(arguments) => ViewChange::TaskInput { job, arguments },
+                                        Err(error) => ViewChange::Warning(format!("Cannot display input for job {job}: {error}")),
+                                    };
+                                    let _ = out.send(Update::Enriched { pane, generation, change }).await;
+                                });
+                            }
                             if let ViewChange::ShellStarted { request } = &change {
                                 let client = current.client.clone();
                                 let known = current.shell_commands.get(request).cloned();
@@ -1561,6 +1579,64 @@ fn schedule(
     }
 }
 
+/// Resolve recorded invocation input through the authenticated host, not its store.
+async fn task_input(
+    client: &HostClient,
+    invocation: &orvek_harness::state::JobInvocation,
+) -> std::result::Result<serde_json::Value, String> {
+    use base64::Engine as _;
+    const MAX_INPUT_BYTES: usize = 1024 * 1024;
+    let mut bytes = Vec::new();
+    loop {
+        let Response::Artifact(page) = client
+            .query(Command::ReadArtifact {
+                digest: invocation.input,
+                offset: bytes.len(),
+                limit: 64 * 1024,
+            })
+            .await
+            .map_err(|error| error.to_string())?
+        else {
+            return Err("host returned an unexpected artifact response".into());
+        };
+        let total = page["bytes"].as_u64().ok_or("artifact length is missing")?;
+        if total > MAX_INPUT_BYTES as u64 {
+            return Err("invocation input exceeds the 1 MiB display limit".into());
+        }
+        let data = page["data"].as_str().ok_or("artifact data is missing")?;
+        let chunk = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|error| format!("invalid artifact encoding: {error}"))?;
+        if chunk.is_empty() && bytes.len() < total as usize {
+            return Err("artifact download made no progress".into());
+        }
+        bytes.extend(chunk);
+        if bytes.len() == total as usize {
+            return decode_task_input(&bytes, &invocation.capability);
+        }
+        if bytes.len() > total as usize {
+            return Err("artifact length does not match its data".into());
+        }
+    }
+}
+
+fn decode_task_input(
+    bytes: &[u8],
+    capability: &str,
+) -> std::result::Result<serde_json::Value, String> {
+    #[derive(serde::Deserialize)]
+    struct Input {
+        name: String,
+        arguments: serde_json::Map<String, serde_json::Value>,
+    }
+    let input: Input = serde_json::from_slice(bytes)
+        .map_err(|error| format!("invalid invocation input: {error}"))?;
+    if input.name != capability {
+        return Err("input capability does not match the recorded invocation".into());
+    }
+    Ok(serde_json::Value::Object(input.arguments))
+}
+
 #[allow(clippy::too_many_arguments)]
 /// Renders a published shell run for the transcript. The report artifact
 /// carries the execution status and stdout/stderr artifact digests; both
@@ -1828,3 +1904,7 @@ fn refresh_queue(
             .await;
     });
 }
+
+#[cfg(test)]
+#[path = "client_task_input_tests.rs"]
+mod task_input_tests;

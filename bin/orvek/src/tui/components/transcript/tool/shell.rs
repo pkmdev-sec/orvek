@@ -14,7 +14,8 @@ pub(super) fn present(tool: &ToolEntry, width: u16, theme: &Theme, expanded: boo
     }
     let command = tool
         .arguments
-        .get("cmd")
+        .get("command")
+        .or_else(|| tool.arguments.get("cmd"))
         .and_then(Value::as_str)
         .unwrap_or("<command unavailable>");
     let mut presentation =
@@ -26,7 +27,12 @@ pub(super) fn present(tool: &ToolEntry, width: u16, theme: &Theme, expanded: boo
         return presentation;
     }
 
-    if let Some(workdir) = tool.arguments.get("workdir").and_then(Value::as_str) {
+    if let Some(workdir) = tool
+        .arguments
+        .get("cwd")
+        .or_else(|| tool.arguments.get("workdir"))
+        .and_then(Value::as_str)
+    {
         presentation = presentation.unselectable_details(super::super::markdown::wrap_plain(
             &format!("cwd {}", shorten_home(Path::new(workdir))),
             width,
