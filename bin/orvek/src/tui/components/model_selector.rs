@@ -551,10 +551,7 @@ mod tests {
             event: Event::Key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)),
             now: std::time::Instant::now(),
         });
-        assert_eq!(
-            picker.selected,
-            MODELS.len().saturating_sub(1)
-        );
+        assert_eq!(picker.selected, MODELS.len().saturating_sub(1));
         for _ in 0..40 {
             picker.update(ModelSelectorEvent::Terminal {
                 event: Event::Key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)),
