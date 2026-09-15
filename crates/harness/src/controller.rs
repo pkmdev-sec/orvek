@@ -1237,7 +1237,7 @@ impl Host {
                         });
                     }
                     state = store.load_session(session)?;
-                    let _ = store.session_command(
+                    store.session_command(
                         session,
                         state.revision,
                         Uuid::new_v4(),
@@ -1246,7 +1246,7 @@ impl Host {
                             outcome: None,
                             error: Some(error.to_string()),
                         },
-                    );
+                    )?;
                 }
             }
             result

@@ -97,14 +97,9 @@ pub(crate) struct MessageUpdate {
     pub(crate) delivery: MessageDeliveryState,
 }
 
-// Pending/Interrupted/Failed/Unknown/Closing/Closed were speculative parity
-// with `tact_subagents::AgentStatus`, but the host does not expose child jobs
-// yet (`bin/orvek` does not depend on `orvek-subagents`, and no code path ever
-// produces a `ChildUpdate`), so nothing can ever construct them. Trimmed to
-// the two states `SubagentTree::apply` actually reaches; the child-jobs lane
-// can reintroduce whatever states its real wire protocol needs.
+// Keep this presentation state aligned with the lifecycle variants emitted by
+// `orvek_harness::controller::SubagentEvent`.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(dead_code)] // Retained by the child presentation reducer until host child events are wired.
 pub(crate) enum ChildStatus {
     Running,
     // The child's own output is referenced, never inlined: a schema-valid
@@ -129,9 +124,11 @@ pub(crate) struct ChildView {
     pub(crate) parent: Option<ChildId>,
 }
 #[derive(Debug)]
-#[allow(dead_code)] // The host-native wire currently emits only message updates.
 pub(crate) enum ChildUpdate {
     Added(ChildView),
+    // Lifecycle and directed-message events are live. Full child transcript
+    // streaming is retained for the inspector contract but is not emitted yet.
+    #[allow(dead_code)]
     Record {
         id: ChildId,
         record: Arc<TranscriptRecord>,
@@ -140,5 +137,7 @@ pub(crate) enum ChildUpdate {
         id: ChildId,
         status: ChildStatus,
     },
+    // The native host does not expose child-to-child message events yet.
+    #[allow(dead_code)]
     Message(MessageUpdate),
 }

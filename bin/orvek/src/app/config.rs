@@ -664,16 +664,20 @@ impl Config {
             .map_err(Into::into)
     }
 
-    pub(crate) fn persist_thinking(&self, effort: ReasoningEffort) -> Result<()> {
-        Self::persist_thinking_at(&self.path, effort)
-    }
-
-    pub(crate) fn persist_reasoning_mode(&self, mode: ReasoningMode) -> Result<()> {
-        Self::persist_reasoning_mode_at(&self.path, mode)
-    }
-
-    pub(crate) fn persist_fast_mode(&self, enabled: bool) -> Result<()> {
-        Self::persist_fast_mode_at(&self.path, enabled)
+    pub(crate) fn persist_agent_settings(
+        &self,
+        effort: ReasoningEffort,
+        mode: ReasoningMode,
+        fast_mode: bool,
+    ) -> Result<()> {
+        let mut document = Self::read_document(&self.path)?;
+        if !document.contains_key("agent") {
+            document["agent"] = Item::Table(Table::new());
+        }
+        document["agent"]["thinking"] = value(effort.as_str());
+        document["agent"]["reasoning_mode"] = value(mode.as_str());
+        document["agent"]["fast_mode"] = value(fast_mode);
+        Self::write_document(&self.path, document)
     }
 
     pub(crate) fn persist_max_subagents(&self, limit: usize) -> Result<()> {
@@ -766,14 +770,17 @@ impl Config {
         Self::write_document(&self.path, document)
     }
 
+    #[cfg(test)]
     fn persist_thinking_at(path: &Path, effort: ReasoningEffort) -> Result<()> {
         Self::persist_setting(path, "agent", "thinking", effort.as_str())
     }
 
+    #[cfg(test)]
     fn persist_reasoning_mode_at(path: &Path, mode: ReasoningMode) -> Result<()> {
         Self::persist_setting(path, "agent", "reasoning_mode", mode.as_str())
     }
 
+    #[cfg(test)]
     fn persist_fast_mode_at(path: &Path, enabled: bool) -> Result<()> {
         let mut document = Self::read_document(path)?;
         if !document.contains_key("agent") {
@@ -3338,6 +3345,47 @@ mod tests {
         assert_eq!(document["agent"]["fast_mode"].as_bool(), Some(true));
         assert_eq!(document["agent"]["web_search"].as_bool(), Some(false));
         assert_eq!(document["theme"]["accent"].as_str(), Some("#AABBCC"));
+    }
+
+    #[test]
+    fn persisting_agent_settings_updates_one_document() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"# Keep this comment.
+[agent]
+thinking = "low"
+reasoning_mode = "standard"
+fast_mode = false
+web_search = false
+"#,
+        )
+        .unwrap();
+        let config = Config::load_with(
+            ConfigOverrides {
+                path: Some(path.clone()),
+                ..ConfigOverrides::default()
+            },
+            Environment {
+                codex_home: Some(directory.path().join("codex")),
+                ..Environment::default()
+            },
+            directory.path(),
+        )
+        .unwrap();
+
+        config
+            .persist_agent_settings(ReasoningEffort::Xhigh, ReasoningMode::Pro, true)
+            .unwrap();
+
+        let contents = fs::read_to_string(path).unwrap();
+        let document = toml::from_str::<toml::Value>(&contents).unwrap();
+        assert!(contents.contains("# Keep this comment."));
+        assert_eq!(document["agent"]["thinking"].as_str(), Some("xhigh"));
+        assert_eq!(document["agent"]["reasoning_mode"].as_str(), Some("pro"));
+        assert_eq!(document["agent"]["fast_mode"].as_bool(), Some(true));
+        assert_eq!(document["agent"]["web_search"].as_bool(), Some(false));
     }
 
     #[test]

@@ -35,7 +35,7 @@ use crate::{
         context::ContextDiagnostics,
         format::sanitize_terminal_text,
         prompt::Submission,
-        session::{RecentPrompt, SessionSummary},
+        session::{MAX_RECENT_PROMPTS, RecentPrompt, SessionSummary},
         theme::{Theme, ThemeMode},
         transcript::TranscriptRecord,
     },
@@ -166,7 +166,7 @@ pub(crate) enum RootEvent {
     #[cfg(test)]
     ContextTokens(u64),
     Transcript(Arc<TranscriptRecord>),
-    AgentStreamClosed,
+    ViewDisconnected,
     Subagent(ChildUpdate),
     ReplaceDraft(String),
     HandoffFinished(String),
@@ -206,15 +206,6 @@ pub(crate) enum RootEvent {
     MemoryDeleteFailed {
         error: String,
         conflict: bool,
-    },
-    SessionRestored {
-        projection: Box<RestoredSessionProjection>,
-        effort: ReasoningEffort,
-        reasoning_mode: ReasoningMode,
-        preferred_reasoning_mode: ReasoningMode,
-        fast_mode: bool,
-        model: Model,
-        skills: Arc<[Skill]>,
     },
     NotifyError(String),
     NotifySuccess(String),
@@ -600,7 +591,7 @@ impl RootNode {
         let mut recent_prompts = Vec::new();
         for record in records {
             if let Some(prompt) = recent_prompt(&record) {
-                recent_prompts.push(prompt);
+                remember_recent_prompt(&mut recent_prompts, prompt);
             }
             let observation = context_diagnostics.observe(&record);
             if observation.completed_tokens.is_some() {
@@ -2368,6 +2359,9 @@ impl RootNode {
         self.in_flight_turns = 0;
         self.transcript_activity = None;
         self.activity_outcome = ActivityState::Cancelled;
+        self.composer
+            .component_mut()
+            .update(ComposerEvent::TurnsCleared);
         self.refresh_activity(Instant::now());
         ComponentUpdate::render(RenderRequest::Immediate)
     }
@@ -2656,7 +2650,7 @@ impl Component for RootNode {
                 }
 
                 if let Some(prompt) = recent_prompt(&record) {
-                    self.recent_prompts.push(prompt);
+                    remember_recent_prompt(&mut self.recent_prompts, prompt);
                 }
                 let turn_finished = matches!(
                     record.host(),
@@ -2690,12 +2684,16 @@ impl Component for RootNode {
                 }
                 update
             }
-            RootEvent::AgentStreamClosed => {
+            RootEvent::ViewDisconnected => {
+                self.in_flight_turns = 0;
+                self.activity_outcome = ActivityState::Error;
                 let mut update = self.update_transcript(TranscriptEvent::AgentStreamClosed);
+                self.transcript_activity = None;
                 let timer =
                     self.update_composer(ComposerEvent::TurnsCleared, RenderRequest::Immediate);
                 update.effects.extend(timer.effects);
                 update.render = update.render.max(timer.render);
+                self.refresh_activity(Instant::now());
                 update
             }
             RootEvent::Subagent(update) => self.apply_subagent_update(update),
@@ -2870,28 +2868,6 @@ impl Component for RootNode {
             RootEvent::MemoryDeleteFailed { error, conflict } => {
                 self.update_memory(MemoryBrowserEvent::DeleteFailed { error, conflict })
             }
-            RootEvent::SessionRestored {
-                projection,
-                effort,
-                reasoning_mode,
-                preferred_reasoning_mode,
-                fast_mode,
-                model,
-                skills,
-            } => {
-                let workspace = self.workspace.clone();
-                self.install_session_projection(
-                    &workspace,
-                    effort,
-                    reasoning_mode,
-                    preferred_reasoning_mode,
-                    fast_mode,
-                    *projection,
-                );
-                self.set_model(model);
-                self.set_skills(skills);
-                ComponentUpdate::render(RenderRequest::Immediate)
-            }
             RootEvent::NotifyError(message) => {
                 self.notification = Some(Notification::plain(message, Color::Red));
                 ComponentUpdate::render(RenderRequest::Immediate)
@@ -2922,15 +2898,25 @@ impl Component for RootNode {
 fn turn_timer_event(record: &TranscriptRecord) -> Option<ComposerEvent> {
     use crate::tui::host_projection::ViewChange;
     match record.host()? {
-        ViewChange::RequestStarted { .. } if record.recorded_at_unix_ms() != 0 => {
+        ViewChange::RequestStarted { request } if record.recorded_at_unix_ms() != 0 => {
             Some(ComposerEvent::TurnStarted {
+                request: *request,
                 elapsed: Duration::ZERO,
                 now: Instant::now(),
             })
         }
-        ViewChange::RequestSettled { .. } => Some(ComposerEvent::TurnFinished),
+        ViewChange::RequestSettled { request, .. } => {
+            Some(ComposerEvent::TurnFinished { request: *request })
+        }
         _ => None,
     }
+}
+
+fn remember_recent_prompt(prompts: &mut Vec<RecentPromptDraft>, prompt: RecentPromptDraft) {
+    if prompts.len() == MAX_RECENT_PROMPTS {
+        prompts.remove(0);
+    }
+    prompts.push(prompt);
 }
 
 fn recent_prompt(record: &TranscriptRecord) -> Option<RecentPromptDraft> {
@@ -3538,6 +3524,39 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_clears_active_turn_timers() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(RootEvent::Transcript(agent_record(
+            1,
+            DisplaySample::Start,
+            json!({}),
+        )));
+        assert_eq!(root.composer.component().active_turn_timer_count(), 1);
+
+        root.update(RootEvent::TurnsCancelled);
+
+        assert_eq!(root.composer.component().active_turn_timer_count(), 0);
+        assert_eq!(root.in_flight_turns, 0);
+        assert_eq!(root.activity.visual().state(), ActivityState::Cancelled);
+    }
+
+    #[test]
+    fn terminal_view_disconnect_clears_timer_and_marks_error() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(RootEvent::Transcript(agent_record(
+            1,
+            DisplaySample::Start,
+            json!({}),
+        )));
+
+        root.update(RootEvent::ViewDisconnected);
+
+        assert_eq!(root.composer.component().active_turn_timer_count(), 0);
+        assert_eq!(root.in_flight_turns, 0);
+        assert_eq!(root.activity.visual().state(), ActivityState::Error);
+    }
+
+    #[test]
     fn task_state_unifies_the_header_and_composer_line_grid() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         root.update(RootEvent::Transcript(agent_record(
@@ -3584,9 +3603,11 @@ mod tests {
                 .any(|cell| cell.modifier.contains(Modifier::DIM))
         );
 
+        assert_eq!(root.composer.component().active_turn_timer_count(), 1);
         root.update(RootEvent::TurnsCancelled);
         assert_eq!(root.activity.visual().state(), ActivityState::Cancelled);
         assert_eq!(root.in_flight_turns, 0);
+        assert_eq!(root.composer.component().active_turn_timer_count(), 0);
 
         let mut completed = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         completed.update(RootEvent::Transcript(agent_record(

@@ -99,7 +99,7 @@ pub struct GitIdentity {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GitCommandReceipt {
     pub step: String,
-    /// Fixed command arguments, with the private scratch prefix replaced by <scratch>.
+    /// Fixed command arguments, with the private scratch prefix replaced by `<scratch>`.
     pub arguments: Vec<String>,
     pub stdin_digest: Digest,
     pub stdout_digest: Digest,

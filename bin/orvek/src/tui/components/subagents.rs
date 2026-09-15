@@ -58,6 +58,7 @@ const CAMERA_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 const CAMERA_MIN_DURATION: Duration = Duration::from_millis(120);
 const CAMERA_MAX_DURATION: Duration = Duration::from_millis(240);
 const INSPECTOR_HEIGHT: u16 = 6;
+const MAX_RETAINED_AGENTS: usize = 1024;
 
 struct AgentNode {
     descriptor: ChildView,
@@ -185,6 +186,17 @@ impl SubagentTree {
                 if let Some(node) = self.node_mut(descriptor.id) {
                     node.descriptor = descriptor;
                 } else {
+                    if self.nodes.len() >= MAX_RETAINED_AGENTS
+                        && let Some(index) =
+                            self.nodes.iter().position(|node| !node.status.is_active())
+                    {
+                        let removed = self.nodes.remove(index).descriptor.id;
+                        self.remembered_children
+                            .retain(|parent, child| *parent != removed && *child != removed);
+                        if self.focused == Some(removed) {
+                            self.focused = None;
+                        }
+                    }
                     let id = descriptor.id;
                     let mut transcript = Transcript::with_effort(self.effort);
                     transcript.set_workspace(&self.workspace);
@@ -2092,5 +2104,40 @@ mod tests {
             tree.update_transcript(ChildId::new(1), escape()),
             Some(SubagentEffect::Back)
         ));
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+
+    fn descriptor(id: u64) -> ChildView {
+        ChildView {
+            id: ChildId::new(id),
+            session_id: "session".into(),
+            model: Model::Luna,
+            role: "worker".into(),
+            task: format!("task {id}"),
+            parent: None,
+        }
+    }
+
+    #[test]
+    fn completed_agent_tree_history_is_bounded() {
+        let mut tree = SubagentTree::new(crate::app::config::ReasoningEffort::Low);
+        for id in 1..=MAX_RETAINED_AGENTS as u64 {
+            assert!(tree.apply(ChildUpdate::Added(descriptor(id))));
+            assert!(tree.apply(ChildUpdate::Status {
+                id: ChildId::new(id),
+                status: ChildStatus::Cancelled,
+            }));
+        }
+
+        assert!(tree.apply(ChildUpdate::Added(descriptor(
+            MAX_RETAINED_AGENTS as u64 + 1,
+        ))));
+
+        assert_eq!(tree.nodes.len(), MAX_RETAINED_AGENTS);
+        assert!(tree.node(ChildId::new(1)).is_none());
     }
 }

@@ -136,11 +136,10 @@ mod tests {
         collections::HashSet,
         time::{Duration, Instant},
     };
-    const STATES: [ActivityState; 7] = [
+    const STATES: [ActivityState; 6] = [
         ActivityState::Idle,
         ActivityState::Thinking,
         ActivityState::Working,
-        ActivityState::Compacting,
         ActivityState::Complete,
         ActivityState::Error,
         ActivityState::Cancelled,

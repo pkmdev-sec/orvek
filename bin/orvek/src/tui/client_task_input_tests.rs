@@ -192,3 +192,47 @@ fn malformed_or_mismatched_invocation_input_is_an_error() {
         .is_err()
     );
 }
+
+#[test]
+fn session_replacement_routes_fork_failures_to_fork_cleanup() {
+    let event = SessionReplacement::Fork.failure_event(PaneId::Fork(7), "failed".into());
+    assert!(matches!(
+        event,
+        AppEvent::ForkFailed {
+            pane: PaneId::Fork(7),
+            error
+        } if error == "failed"
+    ));
+
+    let event =
+        SessionReplacement::New(DraftReset::Clear).failure_event(PaneId::Main, "failed".into());
+    assert!(matches!(
+        event,
+        AppEvent::NewSessionFailed {
+            pane: PaneId::Main,
+            error
+        } if error == "failed"
+    ));
+}
+
+#[test]
+fn subagent_spawn_preserves_session_and_parent_identity() {
+    let session = SessionId::new();
+    let parent = Uuid::new_v4();
+    let agent = Uuid::new_v4();
+    let event = orvek_harness::controller::SubagentEvent::Spawned {
+        session,
+        request: Uuid::new_v4(),
+        agent,
+        parent: Some(parent),
+        role: "reviewer".into(),
+        task: "Review lifecycle".into(),
+        model: "luna".into(),
+    };
+
+    let Some(ChildUpdate::Added(child)) = subagent_update(&event) else {
+        panic!("spawn should map to a child");
+    };
+    assert_eq!(child.session_id, session.to_string());
+    assert_eq!(child.parent, Some(ChildId(parent)));
+}

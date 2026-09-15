@@ -26,7 +26,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -36,6 +36,7 @@ use uuid::Uuid;
 
 const DEFAULT_MAX_CHILDREN: usize = 8;
 const HARD_MAX_CHILDREN: usize = 32;
+const MAX_RETAINED_CHILDREN: usize = 1024;
 const MAX_CHILD_CALLS: u32 = 12;
 const MAX_CHILD_OUTPUT_TOKENS: u64 = 8192;
 const CHILD_TOOL_TIMEOUT_MS: u64 = 60_000;
@@ -105,6 +106,7 @@ struct Child {
     role: String,
     model: String,
     status: ChildStatus,
+    created_at: u64,
     result: Option<Value>,
     error: Option<String>,
     inbox: Vec<String>,
@@ -120,6 +122,7 @@ pub struct Subagents {
     events: tokio::sync::broadcast::Sender<SubagentEvent>,
     enabled: AtomicBool,
     max_children: AtomicUsize,
+    next_child_sequence: AtomicU64,
 }
 
 impl Default for Subagents {
@@ -211,6 +214,20 @@ impl ChildToolBackend for WorkspaceChildTools {
     }
 }
 
+fn prune_terminal_children(children: &mut HashMap<Uuid, Child>) {
+    while children.len() >= MAX_RETAINED_CHILDREN {
+        let Some(oldest) = children
+            .iter()
+            .filter(|(_, child)| child.status.terminal())
+            .min_by_key(|(_, child)| child.created_at)
+            .map(|(id, _)| *id)
+        else {
+            break;
+        };
+        children.remove(&oldest);
+    }
+}
+
 impl Subagents {
     pub fn new() -> Self {
         let (events, _) = tokio::sync::broadcast::channel(256);
@@ -219,6 +236,7 @@ impl Subagents {
             events,
             enabled: AtomicBool::new(true),
             max_children: AtomicUsize::new(DEFAULT_MAX_CHILDREN),
+            next_child_sequence: AtomicU64::new(0),
         }
     }
 
@@ -391,8 +409,10 @@ impl Subagents {
         }
         let validator = compile_schema(&spawn.output_schema)?;
         let id = Uuid::new_v4();
+        let created_at = self.next_child_sequence.fetch_add(1, Ordering::Relaxed);
         {
             let mut children = self.children.lock().await;
+            prune_terminal_children(&mut children);
             let running = children
                 .values()
                 .filter(|child| child.status == ChildStatus::Running)
@@ -409,6 +429,7 @@ impl Subagents {
                     role: spawn.role.clone(),
                     model: run.model.model.as_str().to_owned(),
                     status: ChildStatus::Running,
+                    created_at,
                     result: None,
                     error: None,
                     inbox: Vec::new(),
@@ -954,4 +975,40 @@ fn child_definitions(backend: &dyn ChildToolBackend) -> Vec<Value> {
         }
     }));
     tools
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+
+    fn child(created_at: u64) -> Child {
+        Child {
+            session: SessionId::new(),
+            request: Uuid::new_v4(),
+            role: "worker".into(),
+            model: "luna".into(),
+            status: ChildStatus::Cancelled,
+            created_at,
+            result: None,
+            error: None,
+            inbox: Vec::new(),
+            token: CancellationToken::new(),
+            handle: None,
+        }
+    }
+
+    #[test]
+    fn completed_child_history_is_bounded() {
+        let mut children = HashMap::new();
+        let oldest = Uuid::new_v4();
+        children.insert(oldest, child(0));
+        for created_at in 1..MAX_RETAINED_CHILDREN as u64 {
+            children.insert(Uuid::new_v4(), child(created_at));
+        }
+
+        prune_terminal_children(&mut children);
+
+        assert_eq!(children.len(), MAX_RETAINED_CHILDREN - 1);
+        assert!(!children.contains_key(&oldest));
+    }
 }

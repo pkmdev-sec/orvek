@@ -7,11 +7,16 @@ use std::{
 
 pub(crate) fn open(url: &str) -> io::Result<()> {
     let mut command = command(url)?;
-    command
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
+    let _ = std::thread::Builder::new()
+        .name("orvek-browser-reaper".into())
+        .spawn(move || {
+            let _ = child.wait();
+        });
     Ok(())
 }
 

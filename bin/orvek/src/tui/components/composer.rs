@@ -40,6 +40,7 @@ use std::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
+use uuid::Uuid;
 
 const MIN_CONTENT_ROWS: usize = 3;
 const MAX_CONTENT_ROWS: usize = 6;
@@ -89,10 +90,13 @@ pub(crate) enum ComposerEvent {
         now: Instant,
     },
     TurnStarted {
+        request: Uuid,
         elapsed: Duration,
         now: Instant,
     },
-    TurnFinished,
+    TurnFinished {
+        request: Uuid,
+    },
     TurnsCleared,
     AnimationFrame(Instant),
 }
@@ -150,14 +154,16 @@ struct CachedLayout {
 }
 
 struct TurnTimer {
+    request: Uuid,
     observed_at: Instant,
     elapsed_at_observation: Duration,
     displayed_seconds: u64,
 }
 
 impl TurnTimer {
-    fn new(elapsed: Duration, now: Instant) -> Self {
+    fn new(request: Uuid, elapsed: Duration, now: Instant) -> Self {
         Self {
+            request,
             observed_at: now,
             elapsed_at_observation: elapsed,
             displayed_seconds: elapsed.as_secs(),
@@ -360,14 +366,31 @@ impl Composer {
                 });
                 ComposerUpdate::changed()
             }
-            ComposerEvent::TurnStarted { elapsed, now } => {
-                self.turn_timers.push_back(TurnTimer::new(elapsed, now));
-                ComposerUpdate::changed()
-            }
-            ComposerEvent::TurnFinished => {
-                if self.turn_timers.pop_front().is_none() {
+            ComposerEvent::TurnStarted {
+                request,
+                elapsed,
+                now,
+            } => {
+                if self
+                    .turn_timers
+                    .iter()
+                    .any(|timer| timer.request == request)
+                {
                     return ComposerUpdate::unchanged();
                 }
+                self.turn_timers
+                    .push_back(TurnTimer::new(request, elapsed, now));
+                ComposerUpdate::changed()
+            }
+            ComposerEvent::TurnFinished { request } => {
+                let Some(position) = self
+                    .turn_timers
+                    .iter()
+                    .position(|timer| timer.request == request)
+                else {
+                    return ComposerUpdate::unchanged();
+                };
+                self.turn_timers.remove(position);
                 ComposerUpdate::changed()
             }
             ComposerEvent::TurnsCleared => {
@@ -436,6 +459,11 @@ impl Composer {
             )
             .chain(self.turn_timers.iter().map(TurnTimer::deadline))
             .min()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_turn_timer_count(&self) -> usize {
+        self.turn_timers.len()
     }
 
     pub(crate) fn desired_height(&mut self, width: u16) -> u16 {
@@ -1699,6 +1727,7 @@ mod tests {
         time::{Duration, Instant},
     };
     use unicode_width::UnicodeWidthStr;
+    use uuid::Uuid;
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> ComposerEvent {
         ComposerEvent::Terminal(Event::Key(KeyEvent::new(code, modifiers)))
@@ -1848,7 +1877,9 @@ mod tests {
     fn turn_timer_is_rendered_immediately_before_the_model() {
         let mut composer = Composer::new(Path::new("/work"), ReasoningEffort::Medium);
         let started_at = Instant::now();
+        let request = Uuid::new_v4();
         composer.update(ComposerEvent::TurnStarted {
+            request,
             elapsed: Duration::from_secs(65),
             now: started_at,
         });
@@ -1863,30 +1894,76 @@ mod tests {
         let terminal = render(&mut composer, 72, 5);
         assert!(rows(&terminal)[0].contains(" 1m 7s  gpt-5.6-sol "));
 
-        composer.update(ComposerEvent::TurnFinished);
+        composer.update(ComposerEvent::TurnFinished { request });
         let terminal = render(&mut composer, 72, 5);
         assert!(!rows(&terminal)[0].contains("1m 7s"));
     }
 
     #[test]
-    fn completing_one_run_keeps_the_next_active_run_timed() {
+    fn settlement_stops_only_the_matching_timer() {
         let mut composer = Composer::new(Path::new("/work"), ReasoningEffort::Medium);
         let now = Instant::now();
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
         composer.update(ComposerEvent::TurnStarted {
+            request: first,
             elapsed: Duration::from_secs(65),
             now,
         });
         composer.update(ComposerEvent::TurnStarted {
+            request: second,
             elapsed: Duration::from_secs(5),
             now,
         });
         composer.update(ComposerEvent::AnimationFrame(now + Duration::from_secs(2)));
 
-        composer.update(ComposerEvent::TurnFinished);
+        composer.update(ComposerEvent::TurnFinished { request: second });
 
         let terminal = render(&mut composer, 72, 5);
-        assert!(rows(&terminal)[0].contains(" 7s  gpt-5.6-sol "));
+        assert!(rows(&terminal)[0].contains(" 1m 7s  gpt-5.6-sol "));
+        assert_eq!(composer.active_turn_timer_count(), 1);
         assert!(composer.animation_deadline().is_some());
+
+        composer.update(ComposerEvent::TurnFinished { request: first });
+        assert_eq!(composer.active_turn_timer_count(), 0);
+    }
+
+    #[test]
+    fn duplicate_start_does_not_leave_an_orphaned_timer() {
+        let mut composer = Composer::new(Path::new("/work"), ReasoningEffort::Medium);
+        let now = Instant::now();
+        let request = Uuid::new_v4();
+        composer.update(ComposerEvent::TurnStarted {
+            request,
+            elapsed: Duration::ZERO,
+            now,
+        });
+        let duplicate = composer.update(ComposerEvent::TurnStarted {
+            request,
+            elapsed: Duration::from_secs(4),
+            now,
+        });
+
+        assert!(!duplicate.changed);
+        assert_eq!(composer.active_turn_timer_count(), 1);
+        composer.update(ComposerEvent::TurnFinished { request });
+        assert_eq!(composer.active_turn_timer_count(), 0);
+    }
+
+    #[test]
+    fn clearing_turns_stops_every_timer_and_deadline() {
+        let mut composer = Composer::new(Path::new("/work"), ReasoningEffort::Medium);
+        composer.update(ComposerEvent::TurnStarted {
+            request: Uuid::new_v4(),
+            elapsed: Duration::ZERO,
+            now: Instant::now(),
+        });
+
+        let update = composer.update(ComposerEvent::TurnsCleared);
+
+        assert!(update.changed);
+        assert_eq!(composer.active_turn_timer_count(), 0);
+        assert!(composer.animation_deadline().is_none());
     }
 
     #[test]

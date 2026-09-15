@@ -34,7 +34,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinSet,
+};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -53,6 +56,13 @@ struct Pane {
     queue_loading: bool,
     queue_dirty: bool,
 }
+struct PreparedSession {
+    configured: ConfiguredSession,
+    projection: HostProjection,
+    queue: session::QueueSnapshot,
+    history: Vec<ViewChange>,
+}
+
 enum Update {
     /// A journal-derived display change that needed an extra host round trip
     /// (for example shell output artifacts) before it could render.
@@ -120,6 +130,7 @@ enum Update {
         pane: PaneId,
         generation: u64,
         error: String,
+        terminal: bool,
     },
     Reply {
         pane: PaneId,
@@ -152,6 +163,7 @@ enum Update {
 #[derive(Clone, Copy)]
 enum SessionReplacement {
     New(DraftReset),
+    Fork,
     Settings,
 }
 
@@ -166,12 +178,20 @@ impl SessionReplacement {
     const fn draft_reset(self) -> DraftReset {
         match self {
             Self::New(reset) => reset,
+            Self::Fork => DraftReset::Clear,
             Self::Settings => DraftReset::Preserve,
         }
     }
 
     const fn persists_settings(self) -> bool {
         matches!(self, Self::Settings)
+    }
+
+    fn failure_event(self, pane: PaneId, error: String) -> AppEvent {
+        match self {
+            Self::Fork => AppEvent::ForkFailed { pane, error },
+            Self::New(_) | Self::Settings => AppEvent::NewSessionFailed { pane, error },
+        }
     }
 }
 
@@ -209,8 +229,8 @@ pub(super) async fn run(
     // `ThemeMode::Auto` is the default and resolves through the theme's system
     // scheme, so without this watcher the "follow the operating system" mode
     // never actually follows anything.
-    let (schemes, mut system_schemes) = mpsc::unbounded_channel();
-    super::theme::watch_system_scheme(schemes, shutdown.clone());
+    let (schemes, mut system_schemes) = watch::channel(None);
+    let _system_scheme_watcher = super::theme::watch_system_scheme(schemes, shutdown.clone());
     let mut jobs = JoinSet::new();
     {
         // Runs in the background and fails silently: a network or registry
@@ -236,8 +256,9 @@ pub(super) async fn run(
     if configured.session.active_request.is_some() {
         herdr.working(None);
     }
-    install(PaneId::Main, 0, configured, &mut panes, &mut app, &sender).await?;
-    let mut expected_generations = HashMap::from([(PaneId::Main, 0u64)]);
+    let prepared = prepare_install(configured).await?;
+    install(PaneId::Main, 0, prepared, &mut panes, &mut app, &sender);
+    let mut expected_generations = HashMap::new();
     let mut next_generation = 1u64;
     let mut effects = VecDeque::new();
     if selector {
@@ -299,10 +320,20 @@ pub(super) async fn run(
                                     pane,
                                     generation,
                                     result: Box::new(result),
-                                    replacement: SessionReplacement::New(DraftReset::Clear),
+                                    replacement: SessionReplacement::Fork,
                                 })
                                 .await;
                         });
+                    } else {
+                        expected_generations.remove(&pane);
+                        schedule(
+                            app.update(AppEvent::ForkFailed {
+                                pane,
+                                error: "parent session is no longer available".into(),
+                            }),
+                            &mut scheduler,
+                            &mut effects,
+                        );
                     }
                 }
                 AppEffect::Pane { pane, effect } => {
@@ -1050,8 +1081,10 @@ pub(super) async fn run(
             .min();
         tokio::select! {
             ()=shutdown.cancelled()=>break,
-            Some(scheme)=system_schemes.recv()=>{
-                schedule(app.update(AppEvent::SystemThemeChanged(scheme)),&mut scheduler,&mut effects);
+            Ok(())=system_schemes.changed()=>{
+                if let Some(scheme)=*system_schemes.borrow_and_update() {
+                    schedule(app.update(AppEvent::SystemThemeChanged(scheme)),&mut scheduler,&mut effects);
+                }
             }
             Some(event)=input.next()=>{
                 let event=event.map_err(RuntimeError::Terminal)?;
@@ -1065,10 +1098,18 @@ pub(super) async fn run(
                         if let Some(current)=panes.get_mut(&pane) {current.handoff=None;}
                         match *result {
                             Ok(prepared)=>{
-                                let replacement=next_generation;next_generation=next_generation.saturating_add(1);expected_generations.insert(pane,replacement);
                                 let view=prepared.configured.session.clone();let skills=prepared.configured.skills.clone();
-                                schedule(app.update(AppEvent::HandoffReady {pane,prompt:prepared.prompt,effort:view.model.thinking.into(),reasoning_mode:view.model.reasoning_mode.into(),fast_mode:view.model.fast_mode,model:view.model.model,context_window_tokens:view.context_window_tokens,skills}),&mut scheduler,&mut effects);
-                                install(pane,replacement,prepared.configured,&mut panes,&mut app,&sender).await?;
+                                match prepare_install(prepared.configured).await {
+                                    Ok(installation) => {
+                                        let replacement=next_generation;next_generation=next_generation.saturating_add(1);
+                                        schedule(app.update(AppEvent::HandoffReady {pane,prompt:prepared.prompt,effort:view.model.thinking.into(),reasoning_mode:view.model.reasoning_mode.into(),fast_mode:view.model.fast_mode,model:view.model.model,context_window_tokens:view.context_window_tokens,skills}),&mut scheduler,&mut effects);
+                                        install(pane,replacement,installation,&mut panes,&mut app,&sender);
+                                    }
+                                    Err(error) => {
+                                        schedule(app.update(AppEvent::HandoffFailed {pane,error:error.to_string()}),&mut scheduler,&mut effects);
+                                        schedule(app.update(AppEvent::EditorDraft {pane,draft:prepared.prompt}),&mut scheduler,&mut effects);
+                                    }
+                                }
                             }
                             Err(failure)=>{
                                 let event=if matches!(&*failure.error,Error::AuxiliaryCancelled){AppEvent::HandoffCancelled(pane)}else{AppEvent::HandoffFailed {pane,error:failure.error.to_string()}};
@@ -1110,11 +1151,10 @@ pub(super) async fn run(
                 }
                 Update::Watch {pane,generation,frame}=>{
                     if let WatchFrame::Subagent { session, event } = &frame {
-                        if let Some(current)=panes.get(&pane).filter(|value|value.generation==generation && value.view.id==*session) {
-                            let _ = current;
-                            if let Some(update) = subagent_update(event) {
-                                schedule(app.update(AppEvent::Subagent { pane, update }),&mut scheduler,&mut effects);
-                            }
+                        if panes.get(&pane).is_some_and(|value| value.generation == generation && value.view.id == *session)
+                            && let Some(update) = subagent_update(event)
+                        {
+                            schedule(app.update(AppEvent::Subagent { pane, update }),&mut scheduler,&mut effects);
                         }
                         continue;
                     }
@@ -1274,12 +1314,18 @@ pub(super) async fn run(
                         schedule(app.update(AppEvent::MemoryDeleteFailed {pane,error,conflict}),&mut scheduler,&mut effects);
                     }
                 }
-                Update::Disconnected {pane,generation,error}=>{
-                    if panes.get(&pane).is_some_and(|value|value.generation==generation) {schedule(app.update(AppEvent::NotifyError {pane,error}),&mut scheduler,&mut effects);}
+                Update::Disconnected {pane,generation,error,terminal}=>{
+                    if panes.get(&pane).is_some_and(|value|value.generation==generation) {
+                        if terminal {schedule(app.update(AppEvent::ViewDisconnected(pane)),&mut scheduler,&mut effects);}
+                        schedule(app.update(AppEvent::NotifyError {pane,error}),&mut scheduler,&mut effects);
+                    }
                 }
                 Update::Reply {pane,generation,result}=>{
                     if let Some(current)=panes.get_mut(&pane).filter(|value|value.generation==generation) {
-                        match result {Ok(Response::Submission(_))=>refresh_queue(&mut jobs,&sender,pane,current),Ok(Response::TaskFinished(_))|Ok(Response::Cancelled {..})=>{},Ok(_)=>{},Err(error)=>{
+                        match result {Ok(Response::Submission(_))=>refresh_queue(&mut jobs,&sender,pane,current),Ok(Response::Cancelled {requested})=>{
+                            refresh_queue(&mut jobs,&sender,pane,current);
+                            if requested {schedule(app.update(AppEvent::TurnsCancelled(pane)),&mut scheduler,&mut effects);}
+                        },Ok(Response::TaskFinished(_))=>{},Ok(_)=>{},Err(error)=>{
                             refresh_queue(&mut jobs,&sender,pane,current);
                             schedule(app.update(AppEvent::NotifyError {pane,error:error.to_string()}),&mut scheduler,&mut effects);}}
                     }
@@ -1323,29 +1369,74 @@ pub(super) async fn run(
                         }
                     }
                 }
-                Update::Session {pane,generation,result,replacement} if expected_generations.get(&pane) == Some(&generation) => match *result {
-                    Ok(configured)=>{
-                        let view=configured.session.clone();let skills=configured.skills.clone();
-                        if replacement.persists_settings() {
-                            config.set_thinking(view.model.thinking.into());
-                            config.set_reasoning_mode(view.model.reasoning_mode.into());
-                            config.set_fast_mode(view.model.fast_mode);
-                            config.persist_thinking(view.model.thinking.into())?;
-                            config.persist_reasoning_mode(view.model.reasoning_mode.into())?;
-                            config.persist_fast_mode(view.model.fast_mode)?;
+                Update::Session {pane,generation,result,replacement} if expected_generations.get(&pane) == Some(&generation) => {
+                    expected_generations.remove(&pane);
+                    let previous_settings = replacement
+                        .persists_settings()
+                        .then(|| panes.get(&pane))
+                        .flatten()
+                        .map(|current| {
+                            (current.view.model, config.agent().reasoning_mode())
+                        });
+                    match *result {
+                        Ok(configured) => {
+                            let view = configured.session.clone();
+                            let skills = configured.skills.clone();
+                            match prepare_install(configured).await {
+                                Ok(prepared) => {
+                                    let persisted = if replacement.persists_settings() {
+                                        config.persist_agent_settings(
+                                            view.model.thinking.into(),
+                                            view.model.reasoning_mode.into(),
+                                            view.model.fast_mode,
+                                        )
+                                    } else {
+                                        Ok(())
+                                    };
+                                    if let Err(error) = persisted {
+                                        reject_session_replacement(
+                                            replacement,
+                                            pane,
+                                            error.to_string(),
+                                            previous_settings,
+                                            &mut app,
+                                            &mut scheduler,
+                                            &mut effects,
+                                        );
+                                    } else {
+                                        if replacement.persists_settings() {
+                                            config.set_thinking(view.model.thinking.into());
+                                            config.set_reasoning_mode(view.model.reasoning_mode.into());
+                                            config.set_fast_mode(view.model.fast_mode);
+                                        }
+                                        schedule(app.update(AppEvent::NewSessionReady {pane,effort:view.model.thinking.into(),reasoning_mode:view.model.reasoning_mode.into(),fast_mode:view.model.fast_mode,model:view.model.model,context_window_tokens:view.context_window_tokens,draft_reset:replacement.draft_reset(),skills}),&mut scheduler,&mut effects);
+                                        install(pane,generation,prepared,&mut panes,&mut app,&sender);
+                                        if matches!(replacement, SessionReplacement::Fork) {
+                                            schedule(app.update(AppEvent::ForkReady { pane }), &mut scheduler, &mut effects);
+                                        }
+                                    }
+                                }
+                                Err(error) => reject_session_replacement(
+                                    replacement,
+                                    pane,
+                                    error.to_string(),
+                                    previous_settings,
+                                    &mut app,
+                                    &mut scheduler,
+                                    &mut effects,
+                                ),
+                            }
                         }
-                        schedule(app.update(AppEvent::NewSessionReady {pane,effort:view.model.thinking.into(),reasoning_mode:view.model.reasoning_mode.into(),fast_mode:view.model.fast_mode,model:view.model.model,context_window_tokens:view.context_window_tokens,draft_reset:replacement.draft_reset(),skills}),&mut scheduler,&mut effects);
-                        install(pane,generation,configured,&mut panes,&mut app,&sender).await?;
-                        schedule(app.update(AppEvent::ForkReady {pane}),&mut scheduler,&mut effects);
+                        Err(error) => reject_session_replacement(
+                            replacement,
+                            pane,
+                            error.to_string(),
+                            previous_settings,
+                            &mut app,
+                            &mut scheduler,
+                            &mut effects,
+                        ),
                     }
-                    Err(error)=>{
-                        if replacement.persists_settings()
-                            && let Some(current)=panes.get(&pane)
-                        {
-                            schedule(app.update(AppEvent::SettingsConfirmed {pane,model:current.view.model,preferred:config.agent().reasoning_mode()}),&mut scheduler,&mut effects);
-                        }
-                        schedule(app.update(AppEvent::NewSessionFailed {pane,error:error.to_string()}),&mut scheduler,&mut effects)
-                    },
                 },
                 Update::Session { .. } => {},
                 Update::Event {pane,generation,event} => { if panes.get(&pane).is_some_and(|value|value.generation==generation) { schedule(app.update(event),&mut scheduler,&mut effects); } },
@@ -1366,21 +1457,37 @@ pub(super) async fn run(
     Ok(session)
 }
 
-async fn install(
-    pane: PaneId,
-    generation: u64,
-    configured: ConfiguredSession,
-    panes: &mut HashMap<PaneId, Pane>,
-    app: &mut AppNode,
-    sender: &mpsc::Sender<Update>,
-) -> Result<()> {
-    if let Some(old) = panes.remove(&pane) {
-        old.watch.cancel();
-    }
+async fn prepare_install(configured: ConfiguredSession) -> Result<PreparedSession> {
     let mut projection = HostProjection::at_snapshot(&configured.session);
     let queue = session::queued(&configured.client, configured.session.id).await?;
     if let Some((request, visible)) = queue.active_auxiliary {
         projection.classify_auxiliary(request, visible);
+    }
+    let history = session::history(&configured.client, &configured.session).await?;
+    Ok(PreparedSession {
+        configured,
+        projection,
+        queue,
+        history,
+    })
+}
+
+fn install(
+    pane: PaneId,
+    generation: u64,
+    prepared: PreparedSession,
+    panes: &mut HashMap<PaneId, Pane>,
+    app: &mut AppNode,
+    sender: &mpsc::Sender<Update>,
+) {
+    let PreparedSession {
+        configured,
+        projection,
+        queue,
+        history,
+    } = prepared;
+    if let Some(old) = panes.remove(&pane) {
+        old.watch.cancel();
     }
     let queue_sequence = queue.sequence;
     app.update(AppEvent::QueueChanged {
@@ -1388,7 +1495,7 @@ async fn install(
         inputs: queue.inputs,
     });
     let cursor = projection.cursor();
-    for change in session::history(&configured.client, &configured.session).await? {
+    for change in history {
         app.update(AppEvent::Transcript {
             pane,
             record: Arc::new(TranscriptRecord::from_host(
@@ -1439,8 +1546,8 @@ async fn install(
             queue_dirty: false,
         },
     );
-    Ok(())
 }
+
 fn watch(
     pane: PaneId,
     generation: u64,
@@ -1497,6 +1604,7 @@ fn watch(
                     pane,
                     generation,
                     error: message,
+                    terminal: failures > 5,
                 },
             )
             .await
@@ -1564,6 +1672,36 @@ fn spawn_successor(
             })
             .await;
     });
+}
+
+fn reject_session_replacement(
+    replacement: SessionReplacement,
+    pane: PaneId,
+    error: String,
+    previous_settings: Option<(
+        orvek_harness::inference::ModelSettings,
+        crate::app::config::ReasoningMode,
+    )>,
+    app: &mut AppNode,
+    scheduler: &mut RenderScheduler,
+    effects: &mut VecDeque<AppEffect>,
+) {
+    if let Some((model, preferred)) = previous_settings {
+        schedule(
+            app.update(AppEvent::SettingsConfirmed {
+                pane,
+                model,
+                preferred,
+            }),
+            scheduler,
+            effects,
+        );
+    }
+    schedule(
+        app.update(replacement.failure_event(pane, error)),
+        scheduler,
+        effects,
+    );
 }
 
 fn schedule(
@@ -1711,7 +1849,9 @@ fn subagent_update(event: &orvek_harness::controller::SubagentEvent) -> Option<C
     use orvek_harness::controller::SubagentEvent;
     match event {
         SubagentEvent::Spawned {
+            session,
             agent,
+            parent,
             role,
             task,
             model,
@@ -1720,11 +1860,11 @@ fn subagent_update(event: &orvek_harness::controller::SubagentEvent) -> Option<C
             let model = model.parse().ok()?;
             Some(ChildUpdate::Added(ChildView {
                 id: ChildId(*agent),
-                session_id: String::new(),
+                session_id: session.to_string(),
                 model,
                 role: role.clone(),
                 task: task.clone(),
-                parent: None,
+                parent: parent.map(ChildId),
             }))
         }
         SubagentEvent::Returned { agent, output, .. } => Some(ChildUpdate::Status {

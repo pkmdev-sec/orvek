@@ -3,7 +3,7 @@
 use super::{
     node::{ComponentUpdate, Node, RenderRequest},
     queue::{QueueId, QueuedInput},
-    root::{DraftReset, RestoredSessionProjection, RootEffect, RootEvent, RootNode},
+    root::{DraftReset, RootEffect, RootEvent, RootNode},
 };
 use crate::{
     app::config::{ReasoningEffort, ReasoningMode},
@@ -32,7 +32,6 @@ use unicode_width::UnicodeWidthStr;
 const SPLIT_HINT: &str = " mouse: focus · Ctrl+C: clear · Ctrl+C×2: close ";
 const MIN_SPLIT_HINT_WIDTH: u16 = 60;
 
-#[allow(dead_code)] // Reducer compatibility events remain covered while host adapters land per feature.
 pub(crate) enum AppEvent {
     SettingsConfirmed {
         pane: PaneId,
@@ -64,7 +63,7 @@ pub(crate) enum AppEvent {
         pane: PaneId,
         record: Arc<TranscriptRecord>,
     },
-    AgentStreamClosed(PaneId),
+    ViewDisconnected(PaneId),
     Subagent {
         pane: PaneId,
         update: ChildUpdate,
@@ -163,23 +162,9 @@ pub(crate) enum AppEvent {
         error: String,
         conflict: bool,
     },
-    SessionRestored {
-        pane: PaneId,
-        projection: Box<RestoredSessionProjection>,
-        effort: ReasoningEffort,
-        reasoning_mode: ReasoningMode,
-        preferred_reasoning_mode: ReasoningMode,
-        fast_mode: bool,
-        model: Model,
-        skills: Arc<[Skill]>,
-    },
     NotifyError {
         pane: PaneId,
         error: String,
-    },
-    NotifySuccess {
-        pane: PaneId,
-        message: String,
     },
     ConfirmReviewDownload {
         pane: PaneId,
@@ -282,9 +267,7 @@ impl AppNode {
             AppEvent::Transcript { pane, record } => {
                 self.update_root(pane, RootEvent::Transcript(record))
             }
-            AppEvent::AgentStreamClosed(pane) => {
-                self.update_root(pane, RootEvent::AgentStreamClosed)
-            }
+            AppEvent::ViewDisconnected(pane) => self.update_root(pane, RootEvent::ViewDisconnected),
             AppEvent::Subagent { pane, update } => {
                 self.update_root(pane, RootEvent::Subagent(update))
             }
@@ -431,32 +414,8 @@ impl AppNode {
                 error,
                 conflict,
             } => self.update_root(pane, RootEvent::MemoryDeleteFailed { error, conflict }),
-            AppEvent::SessionRestored {
-                pane,
-                projection,
-                effort,
-                reasoning_mode,
-                preferred_reasoning_mode,
-                fast_mode,
-                model,
-                skills,
-            } => self.update_root(
-                pane,
-                RootEvent::SessionRestored {
-                    projection,
-                    effort,
-                    reasoning_mode,
-                    preferred_reasoning_mode,
-                    fast_mode,
-                    model,
-                    skills,
-                },
-            ),
             AppEvent::NotifyError { pane, error } => {
                 self.update_root(pane, RootEvent::NotifyError(error))
-            }
-            AppEvent::NotifySuccess { pane, message } => {
-                self.update_root(pane, RootEvent::NotifySuccess(message))
             }
             AppEvent::ConfirmReviewDownload { pane } => {
                 self.update_root(pane, RootEvent::ConfirmReviewDownload)
@@ -901,6 +860,10 @@ mod tests {
         AppNode::new(Theme::default(), workspace, root)
     }
 
+    fn complete_fork(app: &mut AppNode, pane: PaneId) {
+        app.update(AppEvent::ForkReady { pane });
+    }
+
     fn control(character: char) -> AppEvent {
         AppEvent::Terminal(Event::Key(KeyEvent::new(
             KeyCode::Char(character),
@@ -926,9 +889,7 @@ mod tests {
             record: Arc::new(record),
         });
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
         app
     }
 
@@ -1224,9 +1185,7 @@ mod tests {
     fn fork_effort_changes_do_not_change_the_primary_composer() {
         let mut app = app();
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
         app.update(control('s'));
         app.update(AppEvent::Terminal(Event::Key(KeyEvent::new(
             KeyCode::Right,
@@ -1262,9 +1221,7 @@ mod tests {
     fn preferred_reasoning_mode_is_shared_without_changing_running_sessions() {
         let mut app = app();
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
 
         app.set_preferred_reasoning_mode(ReasoningMode::Pro);
 
@@ -1320,9 +1277,7 @@ mod tests {
     fn control_c_clears_the_focused_fork_composer_before_closing_it() {
         let mut app = app();
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
         app.update(AppEvent::Terminal(Event::Key(KeyEvent::new(
             KeyCode::Char('h'),
             KeyModifiers::NONE,
@@ -1414,9 +1369,7 @@ mod tests {
     fn promoted_fork_can_open_another_fork() {
         let mut app = app();
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
         let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
         terminal.draw(|frame| app.render(frame)).unwrap();
         app.update(AppEvent::Terminal(Event::Mouse(MouseEvent {
@@ -1445,9 +1398,7 @@ mod tests {
     fn promoted_fork_refreshes_an_open_actions_menu() {
         let mut app = app();
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
         let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
         terminal.draw(|frame| app.render(frame)).unwrap();
         app.update(AppEvent::Terminal(Event::Key(KeyEvent::new(
@@ -1554,9 +1505,7 @@ mod tests {
         let mut app = app();
         app.set_memory_enabled(true);
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
 
         for pane in [PaneId::Main, PaneId::Fork(1)] {
             let update = open_memory(&mut app, pane);
@@ -1589,9 +1538,7 @@ mod tests {
     fn config_reload_updates_memory_action_availability_for_every_root() {
         let mut app = app();
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
 
         app.update(AppEvent::ConfigReloaded {
             pane: PaneId::Main,

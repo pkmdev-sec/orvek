@@ -14,8 +14,6 @@ pub(crate) enum ActivityState {
     Idle,
     Thinking,
     Working,
-    #[allow(dead_code)]
-    Compacting,
     Complete,
     Error,
     Cancelled,
@@ -27,7 +25,6 @@ impl ActivityState {
             Self::Idle => "Ready",
             Self::Thinking => "Thinking",
             Self::Working => "Working",
-            Self::Compacting => "Compacting",
             Self::Complete => "Complete",
             Self::Error => "Error",
             Self::Cancelled => "Cancelled",
@@ -35,7 +32,7 @@ impl ActivityState {
     }
 
     pub(crate) const fn active(self) -> bool {
-        matches!(self, Self::Thinking | Self::Working | Self::Compacting)
+        matches!(self, Self::Thinking | Self::Working)
     }
 
     pub(crate) const fn color(self, theme: &Theme) -> Color {
@@ -43,7 +40,6 @@ impl ActivityState {
             Self::Idle => theme.muted(),
             Self::Thinking => theme.thinking_medium(),
             Self::Working => theme.accent(),
-            Self::Compacting => theme.thinking_high(),
             Self::Complete => Color::Green,
             Self::Error => theme.thinking_xhigh(),
             Self::Cancelled => Color::Magenta,
@@ -55,14 +51,12 @@ impl ActivityState {
             (Self::Idle, false) => "○",
             (Self::Thinking, false) => "◌",
             (Self::Working, false) => "›",
-            (Self::Compacting, false) => "↔",
             (Self::Complete, false) => "✓",
             (Self::Error, false) => "×",
             (Self::Cancelled, false) => "−",
             (Self::Idle, true) => "O",
             (Self::Thinking, true) => "*",
             (Self::Working, true) => ">",
-            (Self::Compacting, true) => "=",
             (Self::Complete, true) => "+",
             (Self::Error, true) => "!",
             (Self::Cancelled, true) => "-",
@@ -74,7 +68,6 @@ impl ActivityState {
             Self::Idle => [14, 17, 17, 14],
             Self::Thinking => [14, 16, 17, 14],
             Self::Working => [8, 4, 4, 8],
-            Self::Compacting => [27, 17, 17, 27],
             Self::Complete => [1, 2, 20, 8],
             Self::Error => [17, 10, 10, 17],
             Self::Cancelled => [0, 31, 0, 0],
@@ -113,11 +106,6 @@ impl ActivityState {
                         row[x] = true;
                     }
                 }
-            }
-            Self::Compacting => {
-                let edge = [0, 1, 2, 2, 1, 0][phase_position(frame, 6)];
-                pixels =
-                    std::array::from_fn(|_| std::array::from_fn(|x| x == edge || x == 4 - edge));
             }
             _ => {}
         }
@@ -231,13 +219,12 @@ mod tests {
             ActivityState::Idle,
             ActivityState::Thinking,
             ActivityState::Working,
-            ActivityState::Compacting,
             ActivityState::Complete,
             ActivityState::Error,
             ActivityState::Cancelled,
         ]
         .map(|state| state.color(&theme));
-        assert_eq!(colors.into_iter().collect::<HashSet<Color>>().len(), 7);
+        assert_eq!(colors.into_iter().collect::<HashSet<Color>>().len(), 6);
     }
 
     #[test]
