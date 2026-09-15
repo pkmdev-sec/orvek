@@ -143,7 +143,7 @@ framing, and reasoning-sized auxiliary limits.
 | Shell commands | `RootEffect::RunShell` falls into the client catch-all: "waiting for its host capability adapter"; `ShellStarted`/`ShellPublished` map to `Vec::new()` in the projection |
 | Memory browser | `LoadMemories`/`DeleteMemory` hit the same catch-all |
 | MCP runtime | Only config/render references remain; no host-side MCP execution |
-| Subagents | `orvek-subagents` crate exists and passes tests, but no `spawn_agent` capability is exposed to harness tasks |
+| Subagents | Done in `791898c`: the orvek-subagents tool contract runs on the harness provider (GLM/Spark capable; nanocodex cannot host them), with journaled read-only child jobs, schema-validated digest-referenced results, live TUI child-tree updates, lifecycle tools, and config policy |
 | Review rendering | Review submit path is wired; `ReviewRecorded` journal events are dropped from the projection |
 | TUI parity | Local prompt echo is host-side only; `Compact`/`CancelCompaction`, `ContinueSubagent`, `PersistSteer`, `Interrupted`/`ContextCompacted` entries, and 18 removed benchmarks/~293 tests remain un-restored |
 | Evolution loop | Phases 13-15: dispatch APIs have no callers, no activation consumption, no IPC command, no CLI surface |
@@ -159,8 +159,7 @@ Each unit ends in a verifiable state and lands independently.
    or documented local-store adapter; same pending-effect removal.
 3. `feat(tui): render review records` — map `ReviewRecorded`/`Feedback` out of
    the `Vec::new()` arms.
-4. `feat(harness): subagent capability for tasks` — expose bounded spawn/wait
-   tools backed by the `orvek-subagents` runtime inside task sandboxes.
+4. Done (`791898c`) — see the gap table note above.
 5. `feat(harness): phase 13 activation boundary` — typed final audit,
    activation, monitoring, and rollback Store transactions with tests.
 6. `feat(harness): phase 14 coordinator` — durable campaign loop
