@@ -150,11 +150,8 @@ impl Host {
                 response
                     .response
                     .as_ref()
-                    .and_then(|output| match output.output.as_slice() {
-                        [OutputItem::Message { text, .. }] => Some(text.clone()),
-                        _ => None,
-                    })
-                    .and_then(|text| parse_ordinary_kind(&text).ok())
+                    .and_then(|output| classification_text(&output.output))
+                    .and_then(|text| parse_ordinary_kind(text).ok())
             })
             .flatten();
         {
@@ -578,6 +575,19 @@ impl Host {
     }
 }
 
+fn classification_text(output: &[OutputItem]) -> Option<&str> {
+    let mut message = None;
+    for item in output {
+        match item {
+            OutputItem::Message { text, .. } if message.is_none() => message = Some(text.as_str()),
+            OutputItem::Opaque { item }
+                if item.get("type").and_then(Value::as_str) == Some("reasoning") => {}
+            _ => return None,
+        }
+    }
+    message
+}
+
 fn ordinary_classification_request(
     model: crate::inference::ModelSettings,
     session: SessionId,
@@ -637,6 +647,33 @@ fn auxiliary_tools(spec: &AuxiliarySpec) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classifier_accepts_reasoning_plus_exactly_one_message() {
+        let reasoning = OutputItem::Opaque {
+            item: json!({"type":"reasoning","encrypted_content":"ciphertext"}),
+        };
+        let message = OutputItem::Message {
+            id: "message-1".into(),
+            text: r#"{"kind":"information"}"#.into(),
+            refusals: Vec::new(),
+        };
+
+        assert_eq!(
+            classification_text(&[reasoning.clone(), message.clone()]),
+            Some(r#"{"kind":"information"}"#)
+        );
+        assert_eq!(classification_text(&[message.clone(), message]), None);
+        assert_eq!(
+            classification_text(&[
+                reasoning,
+                OutputItem::Opaque {
+                    item: json!({"type":"future_output"}),
+                },
+            ]),
+            None
+        );
+    }
 
     #[test]
     fn ordinary_classification_uses_only_current_input_and_attachment_markers() {
