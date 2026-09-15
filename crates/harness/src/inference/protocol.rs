@@ -657,6 +657,58 @@ mod tests {
     }
 
     #[test]
+    fn bridge_reasoning_item_keeps_its_output_index_in_the_terminal() {
+        let mut decoder = Decoder::default();
+        let reasoning = json!({
+            "id": "rs-1", "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "thinking"}], "content": [],
+        });
+        let message = json!({
+            "id": "msg-1", "type": "message", "role": "assistant", "status": "completed",
+            "content": [{"type": "output_text", "text": "{\"kind\":\"information\"}"}],
+        });
+        decoder
+            .event(
+                &serde_json::to_vec(&json!({
+                    "type": "response.output_item.done", "output_index": 0, "item": reasoning,
+                }))
+                .unwrap(),
+                &mut |_| {},
+            )
+            .unwrap();
+        decoder
+            .event(
+                &serde_json::to_vec(&json!({
+                    "type": "response.output_item.done", "output_index": 1, "item": message,
+                }))
+                .unwrap(),
+                &mut |_| {},
+            )
+            .unwrap();
+
+        let terminal = json!({
+            "type": "response.completed",
+            "response": {
+                "id": "response-1", "status": "completed",
+                "output": [
+                    {"id": "rs-1", "type": "reasoning",
+                     "summary": [{"type": "summary_text", "text": "thinking"}], "content": []},
+                    {"id": "msg-1", "type": "message", "role": "assistant", "status": "completed",
+                     "content": [{"type": "output_text", "text": "{\"kind\":\"information\"}"}]},
+                ],
+                "usage": {"input_tokens": 41, "output_tokens": 200, "total_tokens": 241},
+            },
+        });
+        assert!(
+            decoder
+                .event(&serde_json::to_vec(&terminal).unwrap(), &mut |_| {})
+                .unwrap()
+        );
+        let provider = decoder.terminal.expect("terminal response");
+        assert_eq!(provider.status, crate::inference::ResponseStatus::Completed);
+    }
+
+    #[test]
     fn bridge_terminal_event_name_yields_to_the_status() {
         let mut decoder = Decoder::default();
         let done = json!({
