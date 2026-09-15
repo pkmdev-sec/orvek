@@ -13,7 +13,7 @@ context_window_tokens = 1000000
 ```
 
 The supported range is 16,384 through 1,000,000 tokens, with a default of 272,000. Automatic
-projection begins at 90% of the configured window. The host currently converts that threshold to a
+projection begins at 85% of the configured window. The host currently converts that threshold to a
 request byte budget using four bytes per token, so it is a conservative estimate rather than the
 provider's exact tokenizer count.
 

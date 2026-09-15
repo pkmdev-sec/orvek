@@ -14,7 +14,7 @@ const RENDERER: &[u8] =
 pub const DEFAULT_WINDOW_TOKENS: u64 = 272_000;
 pub const MIN_WINDOW_TOKENS: u64 = 16_384;
 pub const MAX_WINDOW_TOKENS: u64 = 1_000_000;
-const AUTOMATIC_PROJECTION_PERCENT: u64 = 90;
+const AUTOMATIC_PROJECTION_PERCENT: u64 = 85;
 const APPROXIMATE_BYTES_PER_TOKEN: u64 = 4;
 const REQUEST_ENVELOPE_BYTES: u64 = 1024 * 1024;
 
@@ -191,9 +191,9 @@ mod tests {
     use super::{automatic_projection_token_limit, projection_byte_limit, request_byte_limit};
 
     #[test]
-    fn million_token_window_projects_at_ninety_percent() {
-        assert_eq!(automatic_projection_token_limit(1_000_000), 900_000);
-        assert_eq!(projection_byte_limit(1_000_000).unwrap(), 3_600_000);
+    fn million_token_window_projects_at_eighty_five_percent() {
+        assert_eq!(automatic_projection_token_limit(1_000_000), 850_000);
+        assert_eq!(projection_byte_limit(1_000_000).unwrap(), 3_400_000);
         assert_eq!(request_byte_limit(1_000_000).unwrap(), 5_048_576);
     }
 

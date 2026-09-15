@@ -3307,7 +3307,7 @@ mod tests {
         );
         assert_eq!(
             root.context_diagnostics.auto_compact_token_limit,
-            Some(900_000)
+            Some(850_000)
         );
     }
 
