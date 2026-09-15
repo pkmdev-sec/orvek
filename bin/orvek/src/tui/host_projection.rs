@@ -73,6 +73,13 @@ pub(crate) enum ViewChange {
     },
     Settings(ModelSettings),
     TaskLinked(TaskId),
+    ShellStarted {
+        request: Uuid,
+    },
+    ShellPublished {
+        request: Uuid,
+        report: orvek_harness::Digest,
+    },
     Task {
         id: TaskId,
         event: TaskEvent,
@@ -249,9 +256,15 @@ impl HostProjection {
                 match command {
                     SessionCommand::AdmissionPinned { .. }
                     | SessionCommand::LegacyImportBound { .. } => Vec::new(),
-                    SessionCommand::ReviewRecorded { .. }
-                    | SessionCommand::ShellStarted { .. }
-                    | SessionCommand::ShellPublished { .. } => Vec::new(),
+                    SessionCommand::ReviewRecorded { .. } => Vec::new(),
+                    SessionCommand::ShellStarted { .. } => {
+                        vec![ViewChange::ShellStarted { request: operation }]
+                    }
+                    SessionCommand::ShellPublished {
+                        request, report, ..
+                    } => {
+                        vec![ViewChange::ShellPublished { request, report }]
+                    }
                     SessionCommand::WorkspaceSaved { seed, .. } => {
                         vec![ViewChange::WorkspaceSaved(seed)]
                     }
@@ -450,6 +463,26 @@ mod tests {
     };
     use serde_json::json;
 
+    fn event_at(
+        session: SessionId,
+        sequence: u64,
+        operation: Uuid,
+        command: SessionCommand,
+    ) -> WatchFrame {
+        WatchFrame::Journal(JournalRecord {
+            sequence,
+            aggregate: session.to_string(),
+            kind: "session".into(),
+            revision: sequence,
+            event: serde_json::to_value(SessionEvent::Command {
+                operation,
+                command,
+                at_ms: sequence,
+            })
+            .unwrap(),
+        })
+    }
+
     fn event(session: SessionId, sequence: u64, command: SessionCommand) -> WatchFrame {
         WatchFrame::Journal(JournalRecord {
             sequence,
@@ -463,6 +496,55 @@ mod tests {
             })
             .unwrap(),
         })
+    }
+
+    #[test]
+    fn shell_lifecycle_events_carry_their_request_identity() {
+        let session = SessionId::new();
+        let mut projection = HostProjection::new(session, 0);
+        let request = Uuid::new_v4();
+        let digest = orvek_harness::Digest::of(b"shell");
+
+        let changes = projection.apply(event_at(
+            session,
+            1,
+            request,
+            SessionCommand::ShellStarted {
+                job: orvek_harness::manual::ManualJob {
+                    job: Uuid::new_v4(),
+                    task: None,
+                    before: digest,
+                    origin: digest,
+                    environment: digest,
+                    started_ms: 1,
+                    scope_revision: None,
+                },
+            },
+        ));
+        assert!(matches!(
+            changes.as_slice(),
+            [super::ViewChange::ShellStarted { request: observed }] if *observed == request
+        ));
+
+        let report = orvek_harness::Digest::of(b"report");
+        let changes = projection.apply(event_at(
+            session,
+            2,
+            request,
+            SessionCommand::ShellPublished {
+                request,
+                report,
+                seed: None,
+                settled: true,
+            },
+        ));
+        assert!(matches!(
+            changes.as_slice(),
+            [super::ViewChange::ShellPublished {
+                request: observed,
+                report: observed_report,
+            }] if *observed == request && *observed_report == report
+        ));
     }
 
     #[test]

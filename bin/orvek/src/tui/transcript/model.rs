@@ -135,7 +135,9 @@ impl TranscriptModel {
             | ViewChange::WorkspaceSaved(_)
             | ViewChange::QueueChanged
             | ViewChange::Submission(_)
-            | ViewChange::SubmissionChanged { .. } => return false,
+            | ViewChange::SubmissionChanged { .. }
+            | ViewChange::ShellStarted { .. }
+            | ViewChange::ShellPublished { .. } => return false,
             ViewChange::HistoricalImport {
                 manifest,
                 source_session,

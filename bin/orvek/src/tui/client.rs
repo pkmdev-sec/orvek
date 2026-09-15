@@ -34,6 +34,7 @@ use std::{
 };
 use tokio::{sync::mpsc, task::JoinSet};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 struct Pane {
     view: SessionView,
@@ -43,11 +44,21 @@ struct Pane {
     watch: CancellationToken,
     handoff: Option<CancellationToken>,
     pending: Option<(Request, super::prompt::Submission)>,
+    /// Commands dispatched as host shell submissions, keyed by request id so
+    /// journal events that carry only ids can still render the command.
+    shell_commands: HashMap<Uuid, String>,
     queue_sequence: u64,
     queue_loading: bool,
     queue_dirty: bool,
 }
 enum Update {
+    /// A journal-derived display change that needed an extra host round trip
+    /// (for example shell output artifacts) before it could render.
+    Enriched {
+        pane: PaneId,
+        generation: u64,
+        change: ViewChange,
+    },
     Handoff {
         pane: PaneId,
         generation: u64,
@@ -278,7 +289,48 @@ pub(super) async fn run(
                     match effect {
                         RootEffect::Submit(prompt) => {
                             dispatch_submission(
-                                &mut jobs, &sender, pane, generation, client, session, prompt, None,
+                                &mut jobs,
+                                &sender,
+                                pane,
+                                generation,
+                                SubmissionJob {
+                                    client,
+                                    session,
+                                    prompt,
+                                    existing: None,
+                                },
+                            );
+                        }
+                        RootEffect::RunShell(command) => {
+                            let prompt = super::prompt::Submission::from(command.clone());
+                            let spec = orvek_harness::manual::ShellSpec {
+                                command,
+                                expected_task: None,
+                                scope_revision: None,
+                                timeout_ms: 120_000,
+                                output_bytes: 256 * 1024,
+                            };
+                            let request = Request::new(Command::Submit {
+                                session,
+                                content: prompt.host_content(),
+                                intent: orvek_harness::submission::SubmitIntent::Shell { spec },
+                            });
+                            if let Some(current) = panes.get_mut(&pane) {
+                                current
+                                    .shell_commands
+                                    .insert(request.id, prompt.display_text().to_owned());
+                            }
+                            dispatch_submission(
+                                &mut jobs,
+                                &sender,
+                                pane,
+                                generation,
+                                SubmissionJob {
+                                    client,
+                                    session,
+                                    prompt,
+                                    existing: Some(request),
+                                },
                             );
                         }
                         RootEffect::Handoff => {
@@ -326,10 +378,12 @@ pub(super) async fn run(
                                 &sender,
                                 pane,
                                 generation,
-                                client,
-                                session,
-                                prompt,
-                                Some(request),
+                                SubmissionJob {
+                                    client,
+                                    session,
+                                    prompt,
+                                    existing: Some(request),
+                                },
                             );
                         }
                         RootEffect::RetrySubmission => {
@@ -339,10 +393,12 @@ pub(super) async fn run(
                                     &sender,
                                     pane,
                                     generation,
-                                    client,
-                                    session,
-                                    prompt.clone(),
-                                    Some(request.clone()),
+                                    SubmissionJob {
+                                        client,
+                                        session,
+                                        prompt: prompt.clone(),
+                                        existing: Some(request.clone()),
+                                    },
                                 );
                             }
                         }
@@ -932,6 +988,35 @@ pub(super) async fn run(
                     if let Some(current)=panes.get_mut(&pane).filter(|value|value.generation==generation) {
                         for change in current.projection.apply(frame) {
                             if matches!(&change,ViewChange::Submission(_)|ViewChange::SubmissionChanged {..}|ViewChange::QueueChanged) {refresh_queue(&mut jobs,&sender,pane,current);}
+                            if let ViewChange::ShellPublished { request, report } = &change {
+                                let client = current.client.clone();
+                                let out = sender.clone();
+                                let request = *request;
+                                let report = *report;
+                                jobs.spawn(async move {
+                                    if let Some(output) = shell_output_text(&client, report).await {
+                                        let _ = out.send(Update::Enriched { pane, generation, change: ViewChange::ToolResult {
+                                            request: Some(request),
+                                            call_id: format!("shell-{request}"),
+                                            output,
+                                        } }).await;
+                                    }
+                                });
+                            }
+                            let change = match change {
+                                ViewChange::ShellStarted { request } => {
+                                    match current.shell_commands.get(&request) {
+                                        Some(command) => ViewChange::ToolProposed {
+                                            request: Some(request),
+                                            call_id: format!("shell-{request}"),
+                                            name: "shell".into(),
+                                            arguments: serde_json::json!({"command": command}).to_string(),
+                                        },
+                                        None => ViewChange::ShellStarted { request },
+                                    }
+                                }
+                                other => other,
+                            };
                             match &change {
                                 ViewChange::Settings(settings)=>current.view.model = *settings,
                                 ViewChange::WorkspaceSaved(seed)=>current.view.branch.workspace=Some(seed.clone()),
@@ -953,6 +1038,12 @@ pub(super) async fn run(
                             let record=Arc::new(TranscriptRecord::from_host(current.projection.sequence(),current.projection.recorded_ms(),current.projection.cursor(),change));
                             schedule(app.update(AppEvent::Transcript {pane,record}),&mut scheduler,&mut effects);
                         }
+                    }
+                }
+                Update::Enriched {pane,generation,change}=>{
+                    if let Some(current)=panes.get(&pane).filter(|value|value.generation==generation) {
+                        let record=Arc::new(TranscriptRecord::from_host(current.projection.sequence(),current.projection.recorded_ms(),current.projection.cursor(),change));
+                        schedule(app.update(AppEvent::Transcript {pane,record}),&mut scheduler,&mut effects);
                     }
                 }
                 Update::Disconnected {pane,generation,error}=>{
@@ -1114,6 +1205,7 @@ async fn install(
             watch: cancel,
             handoff: None,
             pending: None,
+            shell_commands: HashMap::new(),
             queue_sequence,
             queue_loading: false,
             queue_dirty: false,
@@ -1260,17 +1352,87 @@ fn schedule(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Renders a published shell run for the transcript. The report artifact
+/// carries the execution status and stdout/stderr artifact digests; both
+/// streams are fetched in bounded chunks and truncated for display.
+async fn shell_output_text(
+    client: &crate::app::host::HostClient,
+    report: orvek_harness::Digest,
+) -> Option<String> {
+    use base64::Engine as _;
+    let engine = &base64::engine::general_purpose::STANDARD;
+
+    async fn artifact(
+        client: &crate::app::host::HostClient,
+        engine: &base64::engine::GeneralPurpose,
+        digest: orvek_harness::Digest,
+        limit: usize,
+    ) -> Option<String> {
+        let Response::Artifact(page) = client
+            .query(Command::ReadArtifact {
+                digest,
+                offset: 0,
+                limit,
+            })
+            .await
+            .ok()?
+        else {
+            return None;
+        };
+        let data = page.get("data")?.as_str()?;
+        let bytes = engine.decode(data).ok()?;
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    }
+    let report_text = artifact(client, engine, report, 64 * 1024).await?;
+    let parsed: serde_json::Value = serde_json::from_str(&report_text).ok()?;
+    let digest_of = |value: &serde_json::Value| {
+        value
+            .as_str()
+            .and_then(|text| text.strip_prefix("sha256:").unwrap_or(text).parse().ok())
+    };
+    let mut parts = Vec::new();
+    if let Some(status) = parsed.get("status").and_then(|value| value.as_str()) {
+        parts.push(format!("status: {status}"));
+    }
+    if let Some(error) = parsed.get("error").and_then(|value| value.as_str()) {
+        parts.push(format!("error: {error}"));
+    }
+    for stream in ["stdout", "stderr"] {
+        let Some(digest) = parsed.get(stream).and_then(digest_of) else {
+            continue;
+        };
+        if let Some(text) = artifact(client, engine, digest, 16 * 1024).await
+            && !text.trim().is_empty()
+        {
+            parts.push(format!("{stream}:\n{}", text.trim_end()));
+        }
+    }
+    Some(parts.join("\n\n"))
+}
+
+/// One outbound turn: who submits it, what the user typed, and an optional
+/// pre-built request for intents the client constructs itself.
+struct SubmissionJob {
+    client: HostClient,
+    session: orvek_harness::session::SessionId,
+    prompt: super::prompt::Submission,
+    existing: Option<Request>,
+}
+
 fn dispatch_submission(
     jobs: &mut JoinSet<()>,
     sender: &mpsc::Sender<Update>,
     pane: PaneId,
     generation: u64,
-    client: HostClient,
-    session: orvek_harness::session::SessionId,
-    prompt: super::prompt::Submission,
-    existing: Option<Request>,
+    submission: SubmissionJob,
 ) {
     let sender = sender.clone();
+    let SubmissionJob {
+        client,
+        session,
+        prompt,
+        existing,
+    } = submission;
     jobs.spawn(async move {
         let request = match existing {
             Some(request) => Ok(request),
