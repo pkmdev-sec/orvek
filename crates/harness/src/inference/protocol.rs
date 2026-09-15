@@ -424,12 +424,14 @@ impl Decoder {
                     .ok_or(FailureKind::MalformedResponse)?;
                 let id = string(response, "id")?;
                 self.bind_id(id)?;
-                let expected = kind
-                    .strip_prefix("response.")
-                    .ok_or(FailureKind::MalformedResponse)?;
-                if string(response, "status")? != expected {
-                    return Err(FailureKind::MalformedResponse);
-                }
+                // Some OpenAI-compatible bridges always name the terminal
+                // event `response.completed` and carry the real outcome in
+                // `status`. Trust the status whenever it names a terminal
+                // outcome instead of requiring it to match the event name.
+                let expected = match string(response, "status")? {
+                    status @ ("completed" | "failed" | "incomplete") => status,
+                    _ => return Err(FailureKind::MalformedResponse),
+                };
                 let history_items = response
                     .get("output")
                     .and_then(Value::as_array)
@@ -645,6 +647,55 @@ mod tests {
             decoder
                 .event(&serde_json::to_vec(&terminal).unwrap(), &mut |_| {})
                 .unwrap()
+        );
+    }
+
+    #[test]
+    fn bridge_terminal_event_name_yields_to_the_status() {
+        let mut decoder = Decoder::default();
+        let done = json!({
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": {
+                "id": "msg-1",
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": "{\"kind\":\"infor"}],
+            },
+        });
+        decoder
+            .event(&serde_json::to_vec(&done).unwrap(), &mut |_| {})
+            .unwrap();
+
+        // The z.ai bridge names every terminal event `response.completed`
+        // and reports a truncation through `status` and `incomplete_details`.
+        let terminal = json!({
+            "type": "response.completed",
+            "response": {
+                "id": "response-1",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [{
+                    "id": "msg-1",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "{\"kind\":\"infor"}],
+                }],
+                "usage": {"input_tokens": 41, "output_tokens": 200, "total_tokens": 241},
+            },
+        });
+
+        assert!(
+            decoder
+                .event(&serde_json::to_vec(&terminal).unwrap(), &mut |_| {})
+                .unwrap()
+        );
+        let provider = decoder.terminal.expect("terminal response");
+        assert_eq!(
+            provider.status,
+            crate::inference::ResponseStatus::Incomplete
         );
     }
 

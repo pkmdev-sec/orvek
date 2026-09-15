@@ -451,9 +451,9 @@ async fn malformed_events_and_inconsistent_terminal_ids_do_not_finish() {
             created(),
             json!({"type":"response.completed","response":{"id":"other","status":"completed","output":[],"usage":usage()}}),
         ],
-        vec![
-            json!({"type":"response.completed","response":{"id":"response-fixture","status":"incomplete","output":[],"usage":usage()}}),
-        ],
+        // A terminal event whose status names a different outcome now decodes
+        // as that outcome; bridges rely on it. It must not be treated as
+        // malformed.
         vec![terminal("completed", vec![tool("{}"), tool("{}")], usage())],
         vec![json!({"type":"error","error":{"message":"unsafe provider detail"}})],
         vec![

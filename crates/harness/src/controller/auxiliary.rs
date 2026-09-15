@@ -608,13 +608,16 @@ fn ordinary_classification_request(
         };
         *part = json!({"type":"input_text","text":marker});
     }
+    // The output budget must cover reasoning tokens too: GLM-class models
+    // think by default and their reasoning counts against
+    // `max_output_tokens`, so a tiny cap truncates the JSON verdict.
     InferenceRequest::new(
         model,
         latest_input,
         Vec::new(),
         CLASSIFICATION_INSTRUCTIONS.into(),
         session.to_string(),
-        64,
+        2048,
     )
     .map_err(|_| HostError::Invalid("invalid classification request"))
 }
@@ -704,7 +707,7 @@ mod tests {
             }])
         );
         assert_eq!(wire["tools"], json!([]));
-        assert_eq!(wire["max_output_tokens"], 64);
+        assert_eq!(wire["max_output_tokens"], 2048);
         let encoded = serde_json::to_string(&wire).unwrap();
         assert!(!encoded.contains("image-digest-sentinel"));
         assert!(!encoded.contains("review-digest-sentinel"));
