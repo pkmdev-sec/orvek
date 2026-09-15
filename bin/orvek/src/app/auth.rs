@@ -5,9 +5,12 @@ use crate::app::{
     error::{AuthError, AuthResult, SecretError},
     secret::SecretString,
 };
-use orvek_harness::inference::auth::{
-    Auth, ChatGptAuthStatus, ChatGptLogin, SecretString as ProviderSecret, chatgpt_auth_status,
-    logout_chatgpt,
+use orvek_harness::{
+    Digest,
+    inference::auth::{
+        Auth, ChatGptAuthStatus, ChatGptLogin, SecretString as ProviderSecret, chatgpt_auth_status,
+        logout_chatgpt,
+    },
 };
 use std::{path::Path, result::Result as StdResult};
 
@@ -41,6 +44,12 @@ impl AuthConfig {
         let selected = self.select_auth(|| SecretString::from_environment(OPENAI_API_KEY))?;
 
         selected.into_provider_auth(self.file())
+    }
+
+    pub(crate) fn credential_identity(&self) -> AuthResult<Option<Digest>> {
+        let selected = self.select_auth(|| SecretString::from_environment(OPENAI_API_KEY))?;
+
+        Ok(selected.credential_identity())
     }
 
     pub(crate) fn status(&self) -> AuthResult<()> {
@@ -130,6 +139,13 @@ impl AuthConfig {
 }
 
 impl SelectedAuth {
+    fn credential_identity(&self) -> Option<Digest> {
+        match self {
+            Self::ChatGpt => None,
+            Self::ApiKey(api_key) => Some(Digest::of(api_key.expose_secret().as_bytes())),
+        }
+    }
+
     fn into_provider_auth(self, auth_file: &Path) -> AuthResult<Auth> {
         match self {
             Self::ChatGpt => Auth::chatgpt(auth_file.to_owned()).map_err(Into::into),
@@ -213,6 +229,19 @@ mod tests {
 
         assert_eq!(auth.mode(), ProviderAuthMode::ApiKey);
         assert!(!format!("{auth:?}").contains("api-key"));
+    }
+
+    #[test]
+    fn api_key_identity_detects_rotation_without_retaining_the_key() {
+        let first = SelectedAuth::ApiKey(SecretString::new("first-api-key".into()));
+        let same = SelectedAuth::ApiKey(SecretString::new("first-api-key".into()));
+        let rotated = SelectedAuth::ApiKey(SecretString::new("rotated-api-key".into()));
+
+        assert_eq!(first.credential_identity(), same.credential_identity());
+        assert_ne!(first.credential_identity(), rotated.credential_identity());
+        assert_eq!(SelectedAuth::ChatGpt.credential_identity(), None);
+        let rendered = format!("{:?}", first.credential_identity());
+        assert!(!rendered.contains("first-api-key"));
     }
 
     #[test]

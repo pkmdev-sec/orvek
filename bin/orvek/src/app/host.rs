@@ -353,6 +353,7 @@ fn configuration_identity(config: &Config) -> Result<Digest> {
         "config_path": config.path(),
         "file_revision": revision,
         "auth": config.auth(),
+        "credential_identity": config.auth().credential_identity()?,
         "mcp": config.mcp_servers(),
         "memory": config.memory(),
         "children": config.subagents(),
