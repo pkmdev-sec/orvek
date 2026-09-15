@@ -4,6 +4,7 @@ mod history;
 mod layout;
 
 use super::{
+    activity::ActivityVisual,
     node::{Component, ComponentUpdate, RenderRequest},
     selection::{TextRange, TextSpan},
     waved_text::WavedText,
@@ -126,6 +127,7 @@ pub(crate) struct Composer {
     subagent_hit_area: Option<Rect>,
     layout: Option<CachedLayout>,
     history: PromptHistory,
+    activity: ActivityVisual,
 }
 
 pub(crate) struct ComposerDraft {
@@ -229,6 +231,7 @@ impl Composer {
             subagent_hit_area: None,
             layout: None,
             history: PromptHistory::default(),
+            activity: ActivityVisual::default(),
         }
     }
 
@@ -449,6 +452,10 @@ impl Composer {
         u16::try_from(rows + 2).unwrap_or(u16::MAX)
     }
 
+    pub(crate) fn set_activity(&mut self, activity: ActivityVisual) {
+        self.activity = activity;
+    }
+
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         self.render_focused(frame, area, theme, true);
     }
@@ -495,12 +502,24 @@ impl Composer {
         let buffer = frame.buffer_mut();
         buffer.set_style(area, Style::default().fg(theme.text()));
         self.render_chrome(buffer, area, theme);
-        let border = self.border_style(theme);
-
         for row in 0..visible_rows {
             let y = area.y + 1 + u16::try_from(row).unwrap_or(u16::MAX);
-            draw_symbol(buffer, area.x, y, "│", border);
-            draw_symbol(buffer, area.right() - 1, y, "│", border);
+            let left = Position::new(area.x, y);
+            let right = Position::new(area.right() - 1, y);
+            draw_symbol(
+                buffer,
+                left.x,
+                left.y,
+                "│",
+                self.line_style(theme, area, left),
+            );
+            draw_symbol(
+                buffer,
+                right.x,
+                right.y,
+                "│",
+                self.line_style(theme, area, right),
+            );
 
             let Some(line) = self
                 .layout
@@ -1189,18 +1208,55 @@ impl Composer {
         self.model_hit_area = None;
         self.subagent_hit_area = None;
         let shell_mode = self.draft.starts_with('!');
-        let border = self.border_style(theme);
         let top = area.y;
         let bottom = area.bottom() - 1;
 
         for x in area.x..area.right() {
-            draw_symbol(buffer, x, top, "─", border);
-            draw_symbol(buffer, x, bottom, "─", border);
+            let top_position = Position::new(x, top);
+            let bottom_position = Position::new(x, bottom);
+            draw_symbol(
+                buffer,
+                x,
+                top,
+                "─",
+                self.line_style(theme, area, top_position),
+            );
+            draw_symbol(
+                buffer,
+                x,
+                bottom,
+                "─",
+                self.line_style(theme, area, bottom_position),
+            );
         }
-        draw_symbol(buffer, area.x, top, "╭", border);
-        draw_symbol(buffer, area.right() - 1, top, "╮", border);
-        draw_symbol(buffer, area.x, bottom, "╰", border);
-        draw_symbol(buffer, area.right() - 1, bottom, "╯", border);
+        draw_symbol(
+            buffer,
+            area.x,
+            top,
+            "╭",
+            self.line_style(theme, area, Position::new(area.x, top)),
+        );
+        draw_symbol(
+            buffer,
+            area.right() - 1,
+            top,
+            "╮",
+            self.line_style(theme, area, Position::new(area.right() - 1, top)),
+        );
+        draw_symbol(
+            buffer,
+            area.x,
+            bottom,
+            "╰",
+            self.line_style(theme, area, Position::new(area.x, bottom)),
+        );
+        draw_symbol(
+            buffer,
+            area.right() - 1,
+            bottom,
+            "╯",
+            self.line_style(theme, area, Position::new(area.right() - 1, bottom)),
+        );
 
         if area.width < 4 {
             return;
@@ -1278,7 +1334,7 @@ impl Composer {
         if let Some(wave) = &self.activity_wave {
             let mut x =
                 content_start + u16::try_from(usage_before_activity.width()).unwrap_or(u16::MAX);
-            for span in wave.spans() {
+            for span in wave.spans_with_color(self.activity.color(theme)) {
                 if x >= right_start {
                     break;
                 }
@@ -1447,14 +1503,15 @@ impl Composer {
         );
     }
 
-    fn border_style(&self, theme: &Theme) -> Style {
-        Style::default().fg(if self.review_wave.is_some() {
+    fn line_style(&self, theme: &Theme, area: Rect, position: Position) -> Style {
+        let idle_color = if self.review_wave.is_some() {
             Color::Green
         } else if self.draft.starts_with('!') {
             Color::Yellow
         } else {
             theme.border()
-        })
+        };
+        self.activity.line_style(theme, area, position, idle_color)
     }
 }
 
@@ -1624,7 +1681,10 @@ mod tests {
     };
     use crate::{
         app::config::{ReasoningEffort, ReasoningMode},
-        tui::theme::Theme,
+        tui::{
+            components::activity::{ActivityState, ActivityVisual},
+            theme::Theme,
+        },
     };
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use orvek_harness::inference::Model;
@@ -1632,7 +1692,7 @@ mod tests {
         Terminal,
         backend::TestBackend,
         layout::{Position, Rect},
-        style::Color,
+        style::{Color, Modifier},
     };
     use std::{
         path::Path,
@@ -1712,6 +1772,37 @@ mod tests {
         let action_help = action_key + 2;
         assert_eq!(buffer[(action_key, 4)].fg, Color::Reset);
         assert_eq!(buffer[(action_help, 4)].fg, Theme::default().muted());
+    }
+
+    #[test]
+    fn task_state_colors_the_line_grid_and_moves_its_glow() {
+        let mut composer = Composer::new(Path::new("/work"), ReasoningEffort::Medium);
+        let border_symbols = ["─", "│", "╭", "╮", "╰", "╯"];
+        let render_frame = |composer: &mut Composer, frame| {
+            composer.set_activity(ActivityVisual::new(ActivityState::Thinking, frame, true));
+            let terminal = render(composer, 60, 5);
+            let border = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .enumerate()
+                .filter(|(_, cell)| border_symbols.contains(&cell.symbol()))
+                .map(|(index, cell)| (index, cell.fg, cell.modifier))
+                .collect::<Vec<_>>();
+            assert!(border.iter().all(|(_, color, _)| *color == Color::Cyan));
+            border
+                .into_iter()
+                .filter(|(_, _, modifiers)| modifiers.contains(Modifier::BOLD))
+                .map(|(index, _, _)| index)
+                .collect::<Vec<_>>()
+        };
+
+        let first = render_frame(&mut composer, 0);
+        let advanced = render_frame(&mut composer, 8);
+
+        assert!(!first.is_empty());
+        assert_ne!(first, advanced);
     }
 
     #[test]

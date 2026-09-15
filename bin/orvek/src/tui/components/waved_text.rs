@@ -66,6 +66,10 @@ impl WavedText {
     }
 
     pub(super) fn spans(&self) -> Vec<Span<'static>> {
+        self.spans_with_color(self.base_color)
+    }
+
+    pub(super) fn spans_with_color(&self, color: Color) -> Vec<Span<'static>> {
         self.text
             .chars()
             .enumerate()
@@ -73,9 +77,9 @@ impl WavedText {
                 let style = if self.active {
                     let percentage =
                         SHADE_PERCENTAGES[(index + self.frame) % SHADE_PERCENTAGES.len()];
-                    shade(self.base_color, percentage)
+                    shade(color, percentage)
                 } else {
-                    Style::default().fg(self.base_color)
+                    Style::default().fg(color)
                 };
                 Span::styled(character.to_string(), style)
             })
@@ -119,6 +123,12 @@ mod tests {
 
         assert_eq!(waved.animation_deadline(), None);
         assert!(waved.spans().iter().all(|span| span.style.fg == Some(base)));
+        assert!(
+            waved
+                .spans_with_color(Color::Green)
+                .iter()
+                .all(|span| span.style.fg == Some(Color::Green))
+        );
     }
 
     #[test]

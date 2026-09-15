@@ -1,6 +1,7 @@
 //! Stateful UI components and their event boundary.
 
 mod actions;
+mod activity;
 mod activity_mark;
 mod app;
 mod composer;

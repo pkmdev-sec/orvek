@@ -2,7 +2,8 @@
 
 use super::{
     actions::{Action, ActionAvailability, ActionsEffect, ActionsEvent, ActionsMenu},
-    activity_mark::{ActivityMark, ActivityState},
+    activity::ActivityState,
+    activity_mark::ActivityMark,
     composer::{Composer, ComposerChromeTarget, ComposerDraft, ComposerEffect, ComposerEvent},
     context_diagnostics::{
         ContextDiagnosticsEffect, ContextDiagnosticsEvent, ContextDiagnosticsPanel,
@@ -368,6 +369,7 @@ pub(crate) struct RootNode {
     blocking_task: Option<BlockingTask>,
     activity: ActivityMark,
     activity_outcome: ActivityState,
+    transcript_activity: Option<ActivityState>,
     review_url: Option<String>,
     fork_available: bool,
     skills: Arc<[Skill]>,
@@ -413,6 +415,7 @@ impl RootNode {
             blocking_task: None,
             activity: ActivityMark::new(Instant::now()),
             activity_outcome: ActivityState::Idle,
+            transcript_activity: None,
             review_url: None,
             fork_available: true,
             skills: Arc::from([]),
@@ -699,6 +702,7 @@ impl RootNode {
         }
         .min(area.width);
         self.activity.set_preferences(header_height == 2, false);
+        let activity = self.activity.visual();
         self.activity.render(
             frame,
             Rect::new(area.x, area.y, mark_width, header_height),
@@ -709,9 +713,9 @@ impl RootNode {
             frame.buffer_mut().set_stringn(
                 label_x,
                 area.y,
-                self.activity.state().label(),
+                activity.state().label(),
                 usize::from(area.right() - label_x),
-                Style::default().fg(theme.code_text()),
+                activity.label_style(theme),
             );
         }
         let body = Rect {
@@ -770,6 +774,7 @@ impl RootNode {
         let composer_selection = (self.selection.surface() == Some(Surface::Composer))
             .then(|| self.selection.range())
             .flatten();
+        self.composer.component_mut().set_activity(activity);
         self.composer.component_mut().render_focused_with_selection(
             frame,
             composer_area,
@@ -1610,7 +1615,7 @@ impl RootNode {
             }
             Some(ActionsEffect::Trigger(Action::Handoff)) => {
                 self.overlay = None;
-                self.blocking_task = Some(BlockingTask::Handoff);
+                self.start_blocking_task(BlockingTask::Handoff);
                 let waiting = self.update_composer(
                     ComposerEvent::ReviewWaiting {
                         waiting: true,
@@ -2276,6 +2281,7 @@ impl RootNode {
             }
             Some(ComposerEffect::RunShell(command)) => {
                 self.in_flight_shells = self.in_flight_shells.saturating_add(1);
+                self.refresh_activity(Instant::now());
                 vec![RootEffect::RunShell(command)]
             }
             Some(ComposerEffect::OpenDraftEditor) => vec![RootEffect::OpenDraftEditor],
@@ -2351,6 +2357,8 @@ impl RootNode {
     }
 
     fn turns_cancelled(&mut self) -> ComponentUpdate<RootEffect> {
+        self.in_flight_turns = 0;
+        self.transcript_activity = None;
         self.activity_outcome = ActivityState::Cancelled;
         self.refresh_activity(Instant::now());
         ComponentUpdate::render(RenderRequest::Immediate)
@@ -2360,13 +2368,16 @@ impl RootNode {
         let update = self.transcript.update(event);
         let mut render = update.render;
         for effect in update.effects {
+            let now = Instant::now();
+            self.transcript_activity = effect.state;
+            self.refresh_activity(now);
             let composer = self
                 .composer
                 .component_mut()
                 .update(ComposerEvent::Activity {
                     active: effect.active,
                     status: effect.status,
-                    now: Instant::now(),
+                    now,
                 });
             if composer.changed {
                 render = render.max(RenderRequest::Streaming);
@@ -2439,12 +2450,26 @@ impl RootNode {
         }
     }
 
+    fn start_blocking_task(&mut self, task: BlockingTask) {
+        self.blocking_task = Some(task);
+        self.activity_outcome = ActivityState::Idle;
+        self.refresh_activity(Instant::now());
+    }
+
+    fn finish_blocking_task(&mut self, outcome: ActivityState) {
+        self.blocking_task = None;
+        self.activity_outcome = outcome;
+        self.refresh_activity(Instant::now());
+    }
+
     /// Projects turn, shell, and overlay activity into the header mark. The
     /// outcome state persists after a turn settles so the mark lands on
     /// Complete, Error, or Cancelled instead of snapping straight to Idle.
     fn refresh_activity(&mut self, now: Instant) {
         let state = if self.in_flight_shells > 0 || self.subagents.active_count() > 0 {
             ActivityState::Working
+        } else if let Some(state) = self.transcript_activity {
+            state
         } else if self.in_flight_turns > 0 || self.blocking_task.is_some() {
             ActivityState::Thinking
         } else {
@@ -2506,13 +2531,12 @@ impl RootNode {
         }
         let active = self.subagents.active_count();
         if active != previous_active {
+            let now = Instant::now();
+            self.refresh_activity(now);
             let _ = self
                 .composer
                 .component_mut()
-                .update(ComposerEvent::ActiveSubagents {
-                    count: active,
-                    now: Instant::now(),
-                });
+                .update(ComposerEvent::ActiveSubagents { count: active, now });
         }
         if subagents_changed {
             result.render = result.render.max(RenderRequest::Immediate);
@@ -2671,7 +2695,7 @@ impl Component for RootNode {
                 self.update_composer(ComposerEvent::ReplaceDraft(draft), RenderRequest::Immediate)
             }
             RootEvent::HandoffFinished(prompt) => {
-                self.blocking_task = None;
+                self.finish_blocking_task(ActivityState::Complete);
                 let waiting = self.update_composer(
                     ComposerEvent::ReviewWaiting {
                         waiting: false,
@@ -2689,7 +2713,7 @@ impl Component for RootNode {
                 draft
             }
             RootEvent::HandoffCancelled => {
-                self.blocking_task = None;
+                self.finish_blocking_task(ActivityState::Cancelled);
                 self.notification = Some(Notification::plain(
                     "Handoff cancelled.".to_owned(),
                     Color::Yellow,
@@ -2704,7 +2728,7 @@ impl Component for RootNode {
                 )
             }
             RootEvent::HandoffFailed(message) => {
-                self.blocking_task = None;
+                self.finish_blocking_task(ActivityState::Error);
                 self.notification = Some(Notification::plain(message, Color::Red));
                 self.update_composer(
                     ComposerEvent::ReviewWaiting {
@@ -2716,7 +2740,7 @@ impl Component for RootNode {
                 )
             }
             RootEvent::ReviewStarted => {
-                self.blocking_task = Some(BlockingTask::Review);
+                self.start_blocking_task(BlockingTask::Review);
                 self.review_url = None;
                 self.update_composer(
                     ComposerEvent::ReviewWaiting {
@@ -2739,7 +2763,7 @@ impl Component for RootNode {
                 )
             }
             RootEvent::ReviewFinished { markdown, feedback } => {
-                self.blocking_task = None;
+                self.finish_blocking_task(ActivityState::Complete);
                 self.review_url = None;
                 let waiting = self.update_composer(
                     ComposerEvent::ReviewWaiting {
@@ -2777,7 +2801,7 @@ impl Component for RootNode {
                 update
             }
             RootEvent::ReviewCancelled => {
-                self.blocking_task = None;
+                self.finish_blocking_task(ActivityState::Cancelled);
                 self.review_url = None;
                 self.notification = Some(Notification::plain(
                     "Review cancelled.".to_owned(),
@@ -2793,7 +2817,7 @@ impl Component for RootNode {
                 )
             }
             RootEvent::ReviewFailed(message) => {
-                self.blocking_task = None;
+                self.finish_blocking_task(ActivityState::Error);
                 self.review_url = None;
                 self.notification = Some(Notification::plain(message, Color::Red));
                 self.update_composer(
@@ -2807,7 +2831,8 @@ impl Component for RootNode {
             }
             RootEvent::ShellFinished => {
                 self.in_flight_shells = self.in_flight_shells.saturating_sub(1);
-                ComponentUpdate::none()
+                self.refresh_activity(Instant::now());
+                ComponentUpdate::render(RenderRequest::Immediate)
             }
             RootEvent::TurnsCancelled => self.turns_cancelled(),
             RootEvent::ForkReady => self.fork_ready(),
@@ -3212,9 +3237,9 @@ fn is_plain_key(event: &Event, character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        Component, ComposerChromeTarget, ConfirmationAction, DraftReset, Overlay, RenderRequest,
-        RootEffect, RootEvent, RootNode, SessionListKind, SubagentOverlay, ThreadState,
-        TranscriptEvent,
+        ActivityState, Component, ComposerChromeTarget, ConfirmationAction, DraftReset, Overlay,
+        RenderRequest, RootEffect, RootEvent, RootNode, SessionListKind, SubagentOverlay,
+        ThreadState, TranscriptEvent,
     };
     use crate::{
         app::config::{ReasoningEffort, ReasoningMode},
@@ -3490,6 +3515,77 @@ mod tests {
         let settled=projection.transcript.update(TranscriptEvent::Record(agent_record(6,DisplaySample::ToolReturn,json!({"call_id":"orphaned-shell","tool":"exec_command","status":"completed","structured_result":{"exit_code":0}}))));
         assert_eq!(settled.effects.len(), 1);
         assert!(!settled.effects[0].active);
+    }
+
+    #[test]
+    fn task_state_unifies_the_header_and_composer_line_grid() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(RootEvent::Transcript(agent_record(
+            1,
+            DisplaySample::Start,
+            json!({}),
+        )));
+        assert_eq!(root.activity.visual().state(), ActivityState::Thinking);
+
+        root.update(RootEvent::Transcript(agent_record(
+            2,
+            DisplaySample::ToolStart,
+            json!({
+                "call_id": "shell",
+                "tool": "exec_command",
+                "arguments": {"cmd": "cargo test"},
+            }),
+        )));
+        assert_eq!(root.activity.visual().state(), ActivityState::Working);
+
+        let theme = Theme::default();
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        terminal
+            .draw(|frame| root.render(frame, frame.area(), &theme))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let label = text_column(buffer, 0, "Working");
+        assert_eq!(buffer[(label, 0)].fg, theme.accent());
+        assert!(buffer[(label, 0)].modifier.contains(Modifier::BOLD));
+        let border_cells = buffer
+            .content()
+            .iter()
+            .filter(|cell| ["─", "│", "╭", "╮", "╰", "╯"].contains(&cell.symbol()))
+            .collect::<Vec<_>>();
+        assert!(border_cells.iter().all(|cell| cell.fg == theme.accent()));
+        assert!(
+            border_cells
+                .iter()
+                .any(|cell| cell.modifier.contains(Modifier::BOLD))
+        );
+        assert!(
+            border_cells
+                .iter()
+                .any(|cell| cell.modifier.contains(Modifier::DIM))
+        );
+
+        root.update(RootEvent::TurnsCancelled);
+        assert_eq!(root.activity.visual().state(), ActivityState::Cancelled);
+        assert_eq!(root.in_flight_turns, 0);
+
+        let mut completed = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        completed.update(RootEvent::Transcript(agent_record(
+            1,
+            DisplaySample::Start,
+            json!({}),
+        )));
+        completed.update(RootEvent::Transcript(agent_record(
+            2,
+            DisplaySample::End,
+            json!({"duration_ns": 1_000_000}),
+        )));
+        assert_eq!(completed.activity.visual().state(), ActivityState::Complete);
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        terminal
+            .draw(|frame| completed.render(frame, frame.area(), &theme))
+            .unwrap();
+        let label = text_column(terminal.backend().buffer(), 0, "Complete");
+        assert_eq!(terminal.backend().buffer()[(label, 0)].fg, Color::Green);
     }
 
     #[test]
@@ -4813,6 +4909,10 @@ mod tests {
         assert_eq!(submitted.effects, [RootEffect::RunShell("pwd".to_owned())]);
         assert!(root.queue.component().is_empty());
         assert_eq!(root.in_flight_turns, 1);
+        assert_eq!(root.activity.visual().state(), ActivityState::Working);
+
+        root.update(RootEvent::ShellFinished);
+        assert_eq!(root.activity.visual().state(), ActivityState::Thinking);
     }
 
     #[test]
@@ -6259,6 +6359,7 @@ mod tests {
     fn review_waiting_is_shown_in_the_composer_instead_of_the_transcript() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         root.update(RootEvent::ReviewStarted);
+        assert_eq!(root.activity.visual().state(), ActivityState::Thinking);
         root.update(RootEvent::Transcript(agent_record(
             1,
             DisplaySample::Start,
@@ -6276,6 +6377,7 @@ mod tests {
         assert!(!rendered.contains("Preparing review overview"));
 
         root.update(RootEvent::ReviewCancelled);
+        assert_eq!(root.activity.visual().state(), ActivityState::Cancelled);
         assert!(!render_root_text(&mut root, 100, 20).contains("Waiting for review"));
     }
 

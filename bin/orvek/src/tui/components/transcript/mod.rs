@@ -9,6 +9,7 @@ mod message;
 mod tool;
 
 use super::{
+    activity::ActivityState,
     node::{Component, ComponentUpdate, RenderRequest},
     selection::{TextRange, TextSpan},
 };
@@ -67,6 +68,7 @@ pub(crate) enum TranscriptEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TranscriptEffect {
     pub(crate) active: bool,
+    pub(crate) state: Option<ActivityState>,
     pub(crate) status: Option<String>,
 }
 
@@ -420,8 +422,10 @@ impl Transcript {
     }
 
     fn activity(&self) -> TranscriptEffect {
+        let active = self.model.is_active();
         TranscriptEffect {
-            active: self.model.is_active(),
+            active,
+            state: activity_state(self.model.transient(), active),
             status: self.model.transient().map(transient_label),
         }
     }
@@ -1226,6 +1230,21 @@ fn unix_milliseconds() -> u64 {
     u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
 }
 
+fn activity_state(status: Option<&TransientStatus>, active: bool) -> Option<ActivityState> {
+    match status {
+        Some(
+            TransientStatus::Tool(_)
+            | TransientStatus::Responding
+            | TransientStatus::WaitingForBackgroundWork,
+        ) => Some(ActivityState::Working),
+        Some(TransientStatus::Error(_)) => Some(ActivityState::Error),
+        Some(TransientStatus::Thinking | TransientStatus::Reconnecting) => {
+            Some(ActivityState::Thinking)
+        }
+        None => active.then_some(ActivityState::Thinking),
+    }
+}
+
 fn transient_label(status: &TransientStatus) -> String {
     match status {
         TransientStatus::Thinking => "Thinking…".to_owned(),
@@ -1972,15 +1991,18 @@ fn line_width(text: &str) -> usize {
 mod tests {
     use super::{
         Anchor, Component, ExpandableCommand, RenderRequest, ScrollCommand, ScrollState,
-        Transcript, TranscriptEvent, render_user, unix_milliseconds,
+        Transcript, TranscriptEvent, activity_state, render_user, unix_milliseconds,
     };
     use crate::{
         app::config::{ReasoningEffort, ReasoningMode},
         tui::{
             children::{MessageOrigin, MessageUpdate},
+            components::activity::ActivityState,
             fixtures::{self, DisplaySample},
             theme::Theme,
-            transcript::{EntryKind, LocalEvent, SessionStarted, TranscriptRecord, TurnId},
+            transcript::{
+                EntryKind, LocalEvent, SessionStarted, TranscriptRecord, TransientStatus, TurnId,
+            },
         },
     };
     use crossterm::event::{
@@ -1995,6 +2017,23 @@ mod tests {
         sync::Arc,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn transient_work_projects_to_reusable_task_states() {
+        assert_eq!(
+            activity_state(Some(&TransientStatus::Thinking), true),
+            Some(ActivityState::Thinking)
+        );
+        assert_eq!(
+            activity_state(Some(&TransientStatus::Tool("shell".to_owned())), true),
+            Some(ActivityState::Working)
+        );
+        assert_eq!(
+            activity_state(Some(&TransientStatus::Responding), true),
+            Some(ActivityState::Working)
+        );
+        assert_eq!(activity_state(None, false), None);
+    }
 
     #[test]
     fn user_messages_normalize_carriage_returns() {
