@@ -1,12 +1,5 @@
-use serde_json::{Value, json};
-use std::{
-    collections::BTreeMap,
-    fs,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
 use orvek_harness::{
-    Digest, Store,
+    Channel, Digest, Store,
     contract::*,
     controller::{Host, HostUpdate},
     inference::{
@@ -14,9 +7,16 @@ use orvek_harness::{
         auth::{Auth, SecretString},
     },
     runtime::DockerExecutor,
-    session::SessionConfig,
+    session::SessionAdmissionRequest,
     state::Outcome,
     verification::{CheckProgram, ControlFailure, Expectation, Probe},
+};
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeMap,
+    fs,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -25,7 +25,18 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+enum ProviderReply {
+    Response(Vec<Value>),
+    Rejected(u16),
+}
+
 async fn provider(outputs: Vec<Vec<Value>>) -> (String, tokio::task::JoinHandle<Vec<Value>>) {
+    provider_replies(outputs.into_iter().map(ProviderReply::Response).collect()).await
+}
+
+async fn provider_replies(
+    outputs: Vec<ProviderReply>,
+) -> (String, tokio::task::JoinHandle<Vec<Value>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}/v1/responses", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
@@ -54,6 +65,13 @@ async fn provider(outputs: Vec<Vec<Value>>) -> (String, tokio::task::JoinHandle<
             let mut bytes = vec![0; length];
             socket.read_exact(&mut bytes).await.unwrap();
             requests.push(serde_json::from_slice(&bytes).unwrap());
+            let output = match output {
+                ProviderReply::Response(output) => output,
+                ProviderReply::Rejected(status) => {
+                    socket.write_all(format!("HTTP/1.1 {status} Rejected\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+                    continue;
+                }
+            };
             let event = json!({"type":"response.completed","response":{"id":format!("resp_{index}"),"status":"completed","output":output,"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}});
             let payload = format!("event: response.completed\ndata: {event}\n\n");
             let reply = format!(
@@ -91,9 +109,6 @@ async fn human_shell_keeps_private_changes_across_requests_without_model_calls_o
     fs::create_dir(&source).unwrap();
     fs::write(source.join("value"), "before").unwrap();
     let state_root = root.path().join("state");
-    let store = Store::open(&state_root).unwrap();
-    let artifacts = store.artifacts().clone();
-    drop(store);
     let client = ResponsesClient::new(
         Auth::api_key(SecretString::new("fixture".into())).unwrap(),
         Route::new(Transport::Http, "http://127.0.0.1:1/v1/responses").unwrap(),
@@ -114,11 +129,12 @@ async fn human_shell_keeps_private_changes_across_requests_without_model_calls_o
         .unwrap(),
     );
     let session = host
-        .create_session(SessionConfig {
-            workspace: source.clone(),
-            model: ModelSettings::default(),
-            instructions: String::new(),
-        })
+        .create_session(SessionAdmissionRequest::new(
+            source.clone(),
+            ModelSettings::default(),
+            orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        ))
         .await
         .unwrap();
     let request = uuid::Uuid::new_v4();
@@ -137,13 +153,13 @@ async fn human_shell_keeps_private_changes_across_requests_without_model_calls_o
     )
     .await
     .unwrap();
-    let report = wait_shell(&host, &artifacts, session.id, request).await;
+    let report = wait_shell(&host, session.id, request).await;
     assert!(matches!(
         report.status,
         orvek_harness::runtime::ExecutionStatus::Exited(0)
     ));
     assert!(report.adopted);
-    assert_eq!(artifacts.read(report.stdout).unwrap(), b"done");
+    assert_eq!(artifact_bytes(&host, report.stdout).await, b"done");
     let state = host.session(session.id).await.unwrap();
     assert!(
         state.history.is_empty(),
@@ -177,10 +193,14 @@ async fn human_shell_keeps_private_changes_across_requests_without_model_calls_o
     )
     .await
     .unwrap();
-    let report = wait_shell(&host, &artifacts, session.id, next).await;
-    assert_eq!(artifacts.read(report.stdout).unwrap(), b"afteruser note");
+    let report = wait_shell(&host, session.id, next).await;
+    assert_eq!(
+        artifact_bytes(&host, report.stdout).await,
+        b"afteruser note"
+    );
     assert!(report.adopted);
-    let snapshot = Snapshot::load(report.after.unwrap(), &artifacts).unwrap();
+    let snapshot: Snapshot =
+        serde_json::from_slice(&artifact_bytes(&host, report.after.unwrap()).await).unwrap();
     assert!(
         matches!(snapshot.entries.get("value"), Some(Entry::File { content, .. }) if *content == Digest::of(b"after"))
     );
@@ -199,7 +219,7 @@ async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_cod
             AuxiliaryContext, AuxiliaryKind, AuxiliaryLimits, AuxiliaryReport, AuxiliarySpec,
             AuxiliaryStatus,
         },
-        session::{SessionCommand, SessionId},
+        session::SessionCommand,
         submission::{SubmissionStatus, SubmitIntent},
     };
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/ct");
@@ -213,21 +233,36 @@ async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_cod
     fs::create_dir(&source).unwrap();
     fs::write(source.join("value"), "unchanged").unwrap();
     let state_root = root.path().join("state");
-    let mut store = Store::open(&state_root).unwrap();
-    let session = store
-        .create_session(
-            SessionId::new(),
-            SessionConfig {
-                workspace: source.clone().canonicalize().unwrap(),
-                model: ModelSettings::default(),
-                instructions: String::new(),
+    let setup = Host::open(
+        &state_root,
+        ResponsesClient::new(
+            Auth::api_key(SecretString::new("fixture".into())).unwrap(),
+            Route::new(Transport::Http, "http://127.0.0.1:1/v1/responses").unwrap(),
+            InferenceLimits {
+                max_attempts: 1,
+                ..InferenceLimits::default()
             },
-            None,
         )
+        .unwrap(),
+        DockerExecutor::connect("debian:bookworm-slim")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let session = setup
+        .create_session(SessionAdmissionRequest::new(
+            source.clone().canonicalize().unwrap(),
+            ModelSettings::default(),
+            orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        ))
+        .await
         .unwrap();
+    drop(setup);
+    let mut store = Store::open(&state_root).unwrap();
     let policy = store
-        .artifacts()
-        .put(
+        .public_artifacts()
+        .write(
             &serde_json::to_vec(&orvek_harness::admission::RequestPolicy {
                 version: 1,
                 delivery: DeliveryKind::Source,
@@ -239,7 +274,8 @@ async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_cod
             })
             .unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .digest();
     let original = uuid::Uuid::new_v4();
     let (session, task, _) = store
         .start_request(
@@ -271,7 +307,6 @@ async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_cod
         )
         .unwrap();
     let original_history = session.history.clone();
-    let artifacts = store.artifacts().clone();
     drop(store);
     let forbidden = json!({"type":"function_call","id":"fc_forbidden_aux","call_id":"call_forbidden_aux","name":"write_file","arguments":"{\"path\":\"value\",\"content\":\"must not run\"}","status":"completed"});
     let (endpoint, served) =
@@ -339,9 +374,7 @@ async fn auxiliary_answer_is_durable_readonly_hidden_and_cannot_complete_the_cod
         "{settled:?}"
     );
     let report: AuxiliaryReport = serde_json::from_slice(
-        &artifacts
-            .read(settled.result.expect("durable answer artifact"))
-            .unwrap(),
+        &artifact_bytes(&host, settled.result.expect("durable answer artifact")).await,
     )
     .unwrap();
     assert_eq!(report.status, AuxiliaryStatus::Completed);
@@ -483,9 +516,6 @@ async fn run_ordinary_classifier(output: Vec<Value>, usage: Option<Value>) -> Cl
     let source = root.path().join("source");
     fs::create_dir(&source).unwrap();
     let state_root = root.path().join("state");
-    let store = Store::open(&state_root).unwrap();
-    let artifacts = store.artifacts().clone();
-    drop(store);
     let (endpoint, served) = provider_with_usage(vec![(output, usage)]).await;
     let client = ResponsesClient::new(
         Auth::api_key(SecretString::new("fixture-key".into())).unwrap(),
@@ -507,11 +537,12 @@ async fn run_ordinary_classifier(output: Vec<Value>, usage: Option<Value>) -> Cl
         .unwrap(),
     );
     let session = host
-        .create_session(SessionConfig {
-            workspace: source.clone(),
-            model: ModelSettings::default(),
-            instructions: String::new(),
-        })
+        .create_session(SessionAdmissionRequest::new(
+            source.clone(),
+            ModelSettings::default(),
+            orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        ))
         .await
         .unwrap();
     let policy = orvek_harness::admission::RequestPolicy {
@@ -556,11 +587,10 @@ async fn run_ordinary_classifier(output: Vec<Value>, usage: Option<Value>) -> Cl
         replay, settled,
         "resubmitting the same ordinary request must not redispatch the classifier"
     );
-    let records = settled
-        .records
-        .iter()
-        .map(|digest| serde_json::from_slice(&artifacts.read(*digest).unwrap()).unwrap())
-        .collect();
+    let mut records = Vec::new();
+    for digest in &settled.records {
+        records.push(serde_json::from_slice(&artifact_bytes(&host, *digest).await).unwrap());
+    }
     let state = host.session(session.id).await.unwrap();
     ClassifierRun {
         session: session.id,
@@ -818,11 +848,12 @@ async fn ordinary_action_continues_an_incomplete_task_and_charges_its_classifier
         .unwrap(),
     );
     let session = host
-        .create_session(SessionConfig {
-            workspace: source.clone(),
-            model: ModelSettings::default(),
-            instructions: String::new(),
-        })
+        .create_session(SessionAdmissionRequest::new(
+            source.clone(),
+            ModelSettings::default(),
+            orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        ))
         .await
         .unwrap();
     let policy = orvek_harness::admission::RequestPolicy {
@@ -1037,11 +1068,12 @@ async fn ordinary_cancellation_during_classification_settles_without_admitting_a
         .unwrap(),
     );
     let session = host
-        .create_session(SessionConfig {
-            workspace: source.clone(),
-            model: ModelSettings::default(),
-            instructions: String::new(),
-        })
+        .create_session(SessionAdmissionRequest::new(
+            source.clone(),
+            ModelSettings::default(),
+            orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        ))
         .await
         .unwrap();
     let policy = orvek_harness::admission::RequestPolicy {
@@ -1132,7 +1164,7 @@ async fn resumed_task_keeps_its_original_baseline_working_changes_and_monotonic_
 
 #[tokio::test]
 #[ignore = "requires local Docker and pre-pulled debian:bookworm-slim"]
-async fn natural_request_cannot_edit_until_its_behavioral_contract_is_pinned() {
+async fn natural_request_can_write_and_execute_before_pinning_its_contract() {
     exercise(DeliveryKind::Source, Mode::Natural).await;
 }
 
@@ -1142,7 +1174,28 @@ async fn disconnected_submission_and_followup_keep_one_task_and_its_original_che
     exercise(DeliveryKind::Source, Mode::Queued).await;
 }
 
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn unresolved_questions_allow_research_but_not_completion() {
+    exercise(DeliveryKind::Source, Mode::OpenQuestions).await;
+}
+
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn rate_limit_retry_admits_a_fresh_call_and_then_delivers() {
+    exercise(DeliveryKind::Source, Mode::RateLimitRetry).await;
+}
+
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn repeated_rate_limits_stop_without_fabricated_spend_or_completion() {
+    exercise(DeliveryKind::Source, Mode::RateLimitExhaustion).await;
+}
+
 enum Mode {
+    RateLimitRetry,
+    RateLimitExhaustion,
+    OpenQuestions,
     Ordinary,
     OrdinaryAction,
     ExplicitCompletion,
@@ -1153,6 +1206,9 @@ enum Mode {
 }
 
 async fn exercise(delivery: DeliveryKind, mode: Mode) {
+    let questions = matches!(mode, Mode::OpenQuestions);
+    let rate_limit_retry = matches!(mode, Mode::RateLimitRetry);
+    let rate_limit_exhaustion = matches!(mode, Mode::RateLimitExhaustion);
     let completion_tool = matches!(mode, Mode::ExplicitCompletion);
     let resume = matches!(mode, Mode::Resume);
     let queued = matches!(mode, Mode::Queued);
@@ -1181,7 +1237,6 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
     // shorter `state` name the other tests in this file already use.
     let state_root = root.path().join("state");
     let store = Store::open(&state_root).unwrap();
-    let artifacts = store.artifacts().clone();
     let program = CheckProgram {
         version: 1,
         probes: vec![Probe::Command {
@@ -1198,9 +1253,10 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         }),
     };
     let verifier = store
-        .artifacts()
-        .put(&serde_json::to_vec(&program).unwrap())
-        .unwrap();
+        .public_artifacts()
+        .write(&serde_json::to_vec(&program).unwrap())
+        .unwrap()
+        .digest();
     drop(store);
     let contract = Contract {
         request: "Fix addition".into(),
@@ -1230,7 +1286,11 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         )]),
         protected_behavior: vec![],
         assumptions: vec![],
-        open_questions: vec![],
+        open_questions: if questions {
+            vec!["Which additional operands matter?".into()]
+        } else {
+            vec![]
+        },
         delivery,
         limits: Limits {
             model_calls: if queued || ordinary_action {
@@ -1327,10 +1387,13 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
             assumptions: vec![],
             open_questions: vec![],
         };
-        let mut forbidden = write;
-        forbidden["call_id"] = json!("call_forbidden");
-        forbidden["id"] = json!("fc_forbidden");
-        outputs.insert(0, vec![forbidden]);
+        let early_write = json!({"type":"function_call","id":"fc_early_write","call_id":"call_early_write","name":"write_file","arguments":serde_json::to_string(&json!({"operation":"replace","path":"discovery-note","expected":{"kind":"absent"},"content":"discovery write"})).unwrap(),"status":"completed"});
+        let early_exec = json!({"type":"function_call","id":"fc_early_exec","call_id":"call_early_exec","name":"exec_command","arguments":serde_json::to_string(&json!({"command":"test \"$(cat discovery-note)\" = \"discovery write\" && rm discovery-note && printf early-workspace-ok"})).unwrap(),"status":"completed"});
+        outputs.insert(0, vec![
+            json!({"type":"reasoning","id":"rs_discovery","summary":[{"type":"summary_text","text":"Inspect the workspace before proposing the contract."}]}),
+            early_write,
+            early_exec,
+        ]);
         outputs.insert(1, vec![json!({"type":"function_call","id":"fc_contract","call_id":"call_contract","name":"propose_contract","arguments":serde_json::to_string(&draft).unwrap(),"status":"completed"})]);
         if queued {
             let mut addition = draft;
@@ -1354,7 +1417,30 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
             outputs.push(vec![final_message("msg_followup_done")]);
         }
     }
-    let (endpoint, served) = provider(outputs).await;
+    if questions {
+        outputs = vec![
+            vec![
+                json!({"type":"function_call","id":"fc_research","call_id":"call_research","name":"exec_command","arguments":serde_json::to_string(&json!({"command":"printf research-ok > question-notes; cat question-notes"})).unwrap(),"status":"completed"}),
+            ],
+            vec![
+                json!({"type":"function_call","id":"fc_question_blocker","call_id":"call_question_blocker","name":"report_blocker","arguments":"{\"reason\":\"Need the requested operand range\"}","status":"completed"}),
+            ],
+        ];
+    }
+    let (endpoint, served) = if rate_limit_exhaustion {
+        provider_replies(vec![
+            ProviderReply::Rejected(429),
+            ProviderReply::Rejected(429),
+            ProviderReply::Rejected(429),
+        ])
+        .await
+    } else if rate_limit_retry {
+        let mut replies = vec![ProviderReply::Rejected(429)];
+        replies.extend(outputs.into_iter().map(ProviderReply::Response));
+        provider_replies(replies).await
+    } else {
+        provider(outputs).await
+    };
     let auth = Auth::api_key(SecretString::new("fixture-key".into())).unwrap();
     let route = Route::new(Transport::Http, &endpoint).unwrap();
     let client = ResponsesClient::new(
@@ -1371,11 +1457,12 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         .unwrap();
     let mut host = Arc::new(Host::open(&state_root, client, executor).unwrap());
     let session = host
-        .create_session(SessionConfig {
-            workspace: source.clone(),
-            model: ModelSettings::default(),
-            instructions: String::new(),
-        })
+        .create_session(SessionAdmissionRequest::new(
+            source.clone(),
+            ModelSettings::default(),
+            orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        ))
         .await
         .unwrap();
     let updates = Arc::new(Mutex::new(Vec::new()));
@@ -1484,9 +1571,8 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
             assert_eq!(branch.current_task, None);
             assert_eq!(branch.outcome, None);
             assert_eq!(branch.branch.workspace, parent.branch.workspace);
-            let source = orvek_harness::workspace::Snapshot::load(
-                branch.branch.workspace.as_ref().unwrap().source,
-                &artifacts,
+            let source: orvek_harness::workspace::Snapshot = serde_json::from_slice(
+                &artifact_bytes(&host, branch.branch.workspace.as_ref().unwrap().source).await,
             )
             .unwrap();
             assert!(
@@ -1576,9 +1662,7 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
             "{settled:?}"
         );
         let report: orvek_harness::auxiliary::AuxiliaryReport = serde_json::from_slice(
-            &artifacts
-                .read(settled.result.expect("durable answer"))
-                .unwrap(),
+            &artifact_bytes(&host, settled.result.expect("durable answer")).await,
         )
         .unwrap();
         assert_eq!(
@@ -1623,6 +1707,64 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         .await
         .unwrap()
     };
+    if rate_limit_exhaustion {
+        assert_eq!(result.task.outcome, Some(Outcome::Failed), "{result:?}");
+        assert_eq!(result.task.usage.model_calls, 3);
+        assert_eq!(result.task.usage.tokens, 0);
+        assert_eq!(result.task.model_receipts.len(), 3);
+        assert!(
+            result
+                .task
+                .model_receipts
+                .values()
+                .all(|receipt| receipt.tokens == Some(0))
+        );
+        assert!(result.task.certificates.is_empty());
+        assert_eq!(served.await.unwrap().len(), 3);
+        return;
+    }
+    if rate_limit_retry {
+        assert_eq!(result.task.outcome, Some(Outcome::Complete), "{result:?}");
+        assert_eq!(result.task.usage.model_calls, 4);
+        assert_eq!(result.task.usage.tokens, 18);
+        assert_eq!(result.task.model_receipts.len(), 4);
+        assert_eq!(
+            result
+                .task
+                .model_receipts
+                .values()
+                .filter(|receipt| receipt.tokens == Some(0))
+                .count(),
+            1
+        );
+        assert_eq!(result.task.certificates.len(), 1);
+        let certificate = &result.task.certificates[0];
+        assert_eq!(
+            fs::read_to_string(
+                state_root
+                    .join("deliveries")
+                    .join(result.task.id.to_string())
+                    .join(certificate.source.to_string())
+                    .join("add")
+            )
+            .unwrap(),
+            after
+        );
+        assert_eq!(served.await.unwrap().len(), 4);
+        return;
+    }
+    if questions {
+        assert_eq!(result.task.outcome, Some(Outcome::Blocked));
+        assert_eq!(result.task.usage.model_calls, 2);
+        assert!(result.task.certificates.is_empty());
+        assert!(
+            orvek_harness::completion::evaluate(&result.task, orvek_harness::store::now_ms())
+                .is_err()
+        );
+        let requests = served.await.unwrap();
+        assert!(requests[1]["input"].to_string().contains("research-ok"));
+        return;
+    }
     let user_edit = "#!/bin/sh\nprintf 'user is editing a different version\\n'\n";
     if resume {
         assert_eq!(result.task.outcome, Some(Outcome::Blocked));
@@ -1777,13 +1919,28 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
     assert_eq!(requests.len(), provider_requests as usize);
     if natural {
         assert!(
-            !requests[0]["tools"]
+            requests[0]["tools"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .any(|tool| tool["name"] == "write_file")
         );
-        assert!(requests[1]["input"].to_string().contains("not admitted"));
+        let early_results = requests[1]["input"].as_array().unwrap();
+        for call in ["call_early_write", "call_early_exec"] {
+            let result = early_results
+                .iter()
+                .find(|item| item["type"] == "function_call_output" && item["call_id"] == call)
+                .unwrap();
+            assert!(
+                !result["output"].as_str().unwrap().contains("\"error\""),
+                "{result}"
+            );
+        }
+        assert!(
+            requests[1]["input"]
+                .to_string()
+                .contains("early-workspace-ok")
+        );
         assert!(result.task.contract_admission.is_some());
         assert!(result.task.intake.is_some());
     }
@@ -1846,7 +2003,7 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         )
         .await
         .unwrap();
-        let report = wait_shell(&host, &artifacts, session.id, shell).await;
+        let report = wait_shell(&host, session.id, shell).await;
         assert!(report.adopted, "{report:?}");
         let changed = host.task(result.task.id).await.unwrap();
         assert_eq!(changed.outcome, Some(Outcome::Blocked));
@@ -1894,9 +2051,27 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
     }
 }
 
+async fn artifact_bytes(host: &Host, digest: Digest) -> Vec<u8> {
+    use base64::Engine;
+    let mut bytes = Vec::new();
+    loop {
+        let chunk = host
+            .read_artifact(digest, bytes.len(), 64 * 1024)
+            .await
+            .unwrap();
+        bytes.extend(
+            base64::engine::general_purpose::STANDARD
+                .decode(chunk["data"].as_str().unwrap())
+                .unwrap(),
+        );
+        if chunk["next"].is_null() {
+            return bytes;
+        }
+    }
+}
+
 async fn wait_shell(
     host: &Host,
-    artifacts: &orvek_harness::artifacts::ArtifactStore,
     session: orvek_harness::session::SessionId,
     request: uuid::Uuid,
 ) -> orvek_harness::manual::ShellReport {
@@ -1905,11 +2080,13 @@ async fn wait_shell(
             let submission = host.submission(session, request).await.unwrap();
             if !submission.status.pending() {
                 return serde_json::from_slice(
-                    &artifacts
-                        .read(submission.result.unwrap_or_else(|| {
+                    &artifact_bytes(
+                        host,
+                        submission.result.unwrap_or_else(|| {
                             panic!("shell has no report: {:?}", submission.status)
-                        }))
-                        .unwrap(),
+                        }),
+                    )
+                    .await,
                 )
                 .unwrap();
             }

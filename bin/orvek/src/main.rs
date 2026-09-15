@@ -7,7 +7,6 @@
 mod app;
 mod core;
 mod review;
-mod sessions;
 mod tui;
 
 use app::Cli;
@@ -19,7 +18,13 @@ pub(crate) fn install_tls_provider() {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<std::process::ExitCode> {
     install_tls_provider();
-    Cli::parse().run().await.map_err(Report::new)
+    match Cli::parse().run().await {
+        Ok(()) => Ok(std::process::ExitCode::SUCCESS),
+        Err(app::error::Error::TaskOutcome { outcome }) => {
+            Ok(std::process::ExitCode::from(outcome.exit_code()))
+        }
+        Err(error) => Err(Report::new(error)),
+    }
 }

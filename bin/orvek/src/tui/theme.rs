@@ -1,11 +1,11 @@
 //! Configurable terminal colors and light/dark mode selection.
 
 use crate::app::config::ReasoningEffort;
-use nanocodex::Model;
+use orvek_harness::inference::Model;
 use ratatui::style::Color;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
-use std::{fmt, str::FromStr};
-use tokio::{sync::mpsc, time::Duration};
+use std::{fmt, str::FromStr, sync::mpsc::TryRecvError, thread, time::Duration};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -23,27 +23,9 @@ pub(crate) enum ColorScheme {
     Dark,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum MotionMode {
-    #[default]
-    Full,
-    Reduced,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum GlyphMode {
-    #[default]
-    Unicode,
-    Ascii,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct Theme {
     mode: ThemeMode,
-    motion: MotionMode,
-    glyphs: GlyphMode,
     light: ThemePalette,
     dark: ThemePalette,
     #[serde(skip)]
@@ -72,8 +54,6 @@ struct ThemeColor(Color);
 #[serde(default, deny_unknown_fields)]
 struct ThemeFields {
     mode: ThemeMode,
-    motion: MotionMode,
-    glyphs: GlyphMode,
     light: PaletteFields,
     dark: PaletteFields,
     #[serde(flatten)]
@@ -107,8 +87,6 @@ impl Default for Theme {
     fn default() -> Self {
         Self {
             mode: ThemeMode::Auto,
-            motion: MotionMode::Full,
-            glyphs: GlyphMode::Unicode,
             light: ThemePalette::light(),
             dark: ThemePalette::dark(),
             system_scheme: ColorScheme::Dark,
@@ -117,24 +95,16 @@ impl Default for Theme {
 }
 
 impl Theme {
-    pub(crate) const fn scheme(&self) -> ColorScheme {
-        match self.mode {
-            ThemeMode::Light => ColorScheme::Light,
-            ThemeMode::Dark => ColorScheme::Dark,
-            ThemeMode::Auto => self.system_scheme,
-        }
-    }
-
-    pub(crate) const fn motion_enabled(&self) -> bool {
-        matches!(self.motion, MotionMode::Full)
-    }
-
-    pub(crate) const fn ascii_art(&self) -> bool {
-        matches!(self.glyphs, GlyphMode::Ascii)
-    }
-
     pub(crate) const fn mode(&self) -> ThemeMode {
         self.mode
+    }
+
+    pub(crate) const fn scheme(&self) -> ColorScheme {
+        match self.mode {
+            ThemeMode::Auto => self.system_scheme,
+            ThemeMode::Light => ColorScheme::Light,
+            ThemeMode::Dark => ColorScheme::Dark,
+        }
     }
 
     pub(crate) fn set_mode(&mut self, mode: ThemeMode) {
@@ -213,18 +183,15 @@ impl Theme {
             Model::Luna => Color::White,
             Model::Terra => Color::Green,
             Model::Sol => Color::Yellow,
-            _ => Color::Yellow,
+            Model::Glm => Color::Cyan,
+            Model::Spark => Color::LightMagenta,
         }
     }
 
     const fn palette(&self) -> &ThemePalette {
-        match self.mode {
-            ThemeMode::Light => &self.light,
-            ThemeMode::Dark => &self.dark,
-            ThemeMode::Auto => match self.system_scheme {
-                ColorScheme::Light => &self.light,
-                ColorScheme::Dark => &self.dark,
-            },
+        match self.scheme() {
+            ColorScheme::Light => &self.light,
+            ColorScheme::Dark => &self.dark,
         }
     }
 }
@@ -303,8 +270,6 @@ impl<'de> Deserialize<'de> for Theme {
         dark.apply(&fields.dark);
         Ok(Self {
             mode: fields.mode,
-            motion: fields.motion,
-            glyphs: fields.glyphs,
             light,
             dark,
             system_scheme: ColorScheme::Dark,
@@ -336,44 +301,66 @@ impl Serialize for ThemeColor {
     }
 }
 
-pub(crate) fn detect_system_scheme() -> Option<ColorScheme> {
-    match dark_light::detect().ok()? {
+fn color_scheme(mode: dark_light::Mode) -> Option<ColorScheme> {
+    match mode {
         dark_light::Mode::Light => Some(ColorScheme::Light),
         dark_light::Mode::Dark => Some(ColorScheme::Dark),
         dark_light::Mode::Unspecified => None,
     }
 }
 
-const SYSTEM_SCHEME_POLL_INTERVAL: Duration = Duration::from_millis(100);
+pub(crate) fn detect_system_scheme() -> Option<ColorScheme> {
+    dark_light::detect().ok().and_then(color_scheme)
+}
+
+const SYSTEM_SCHEME_WATCH_INTERVAL: Duration = Duration::from_millis(100);
+const SYSTEM_SCHEME_FALLBACK_INTERVAL: Duration = Duration::from_secs(1);
+
+fn publish_system_scheme(
+    updates: &watch::Sender<Option<ColorScheme>>,
+    scheme: ColorScheme,
+) -> bool {
+    if updates.is_closed() {
+        return false;
+    }
+    if *updates.borrow() == Some(scheme) {
+        return true;
+    }
+    updates.send(Some(scheme)).is_ok()
+}
 
 pub(crate) fn watch_system_scheme(
-    updates: mpsc::UnboundedSender<ColorScheme>,
+    updates: watch::Sender<Option<ColorScheme>>,
     shutdown: CancellationToken,
-) {
-    tokio::spawn(async move {
-        let mut last = None;
-        let mut interval = tokio::time::interval(SYSTEM_SCHEME_POLL_INTERVAL);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tokio::select! {
-                _ = shutdown.cancelled() => break,
-                _ = interval.tick() => {
-                    let detected = tokio::task::spawn_blocking(detect_system_scheme)
-                        .await
-                        .ok()
-                        .flatten();
-                    if let Some(scheme) = detected
-                        && last != Some(scheme)
-                    {
-                        last = Some(scheme);
-                        if updates.send(scheme).is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
+) -> tokio::task::JoinHandle<()> {
+    tokio::task::spawn_blocking(move || {
+        let mut watcher = dark_light::subscribe().ok();
+        if let Some(scheme) = detect_system_scheme()
+            && !publish_system_scheme(&updates, scheme)
+        {
+            return;
         }
-    });
+        loop {
+            if shutdown.is_cancelled() || updates.is_closed() {
+                return;
+            }
+            let (detected, interval) = match watcher.as_ref().map(dark_light::Watcher::try_recv) {
+                Some(Ok(mode)) => (color_scheme(mode), SYSTEM_SCHEME_WATCH_INTERVAL),
+                Some(Err(TryRecvError::Empty)) => (None, SYSTEM_SCHEME_WATCH_INTERVAL),
+                Some(Err(TryRecvError::Disconnected)) => {
+                    watcher = None;
+                    (detect_system_scheme(), SYSTEM_SCHEME_FALLBACK_INTERVAL)
+                }
+                None => (detect_system_scheme(), SYSTEM_SCHEME_FALLBACK_INTERVAL),
+            };
+            if let Some(scheme) = detected
+                && !publish_system_scheme(&updates, scheme)
+            {
+                return;
+            }
+            thread::sleep(interval);
+        }
+    })
 }
 
 struct ColorName(Color);
@@ -406,19 +393,10 @@ impl fmt::Display for ColorName {
 
 #[cfg(test)]
 mod tests {
-    use super::{ColorScheme, SYSTEM_SCHEME_POLL_INTERVAL, Theme, ThemeMode};
-
-    #[test]
-    fn render_preferences_preserve_palette_overrides_when_round_tripped() {
-        let theme: Theme =
-            toml::from_str("motion = 'reduced'\nglyphs = 'ascii'\naccent = '#123456'\n").unwrap();
-        assert!(!theme.motion_enabled());
-        assert!(theme.ascii_art());
-        assert_eq!(theme.accent(), ratatui::style::Color::Rgb(18, 52, 86));
-        let restored: Theme = toml::from_str(&toml::to_string(&theme).unwrap()).unwrap();
-        assert_eq!(restored, theme);
-    }
-    use nanocodex::Model;
+    use super::{
+        ColorScheme, SYSTEM_SCHEME_WATCH_INTERVAL, Theme, ThemeMode, publish_system_scheme,
+    };
+    use orvek_harness::inference::Model;
     use ratatui::style::Color;
 
     #[test]
@@ -433,8 +411,25 @@ mod tests {
     }
 
     #[test]
-    fn system_theme_polling_is_perceptually_immediate() {
-        assert!(SYSTEM_SCHEME_POLL_INTERVAL <= std::time::Duration::from_millis(100));
+    fn system_theme_subscription_is_perceptually_immediate() {
+        assert!(SYSTEM_SCHEME_WATCH_INTERVAL <= std::time::Duration::from_millis(100));
+    }
+
+    #[test]
+    fn system_theme_updates_keep_only_the_latest_distinct_scheme() {
+        let (updates, mut schemes) = tokio::sync::watch::channel(None);
+
+        assert!(publish_system_scheme(&updates, ColorScheme::Dark));
+        assert_eq!(*schemes.borrow_and_update(), Some(ColorScheme::Dark));
+        assert!(!schemes.has_changed().unwrap());
+
+        assert!(publish_system_scheme(&updates, ColorScheme::Dark));
+        assert!(!schemes.has_changed().unwrap());
+
+        assert!(publish_system_scheme(&updates, ColorScheme::Light));
+        assert_eq!(*schemes.borrow_and_update(), Some(ColorScheme::Light));
+        drop(schemes);
+        assert!(!publish_system_scheme(&updates, ColorScheme::Dark));
     }
 
     #[test]

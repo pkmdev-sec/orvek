@@ -5,11 +5,7 @@ use super::{
     node::{Component, ComponentUpdate, RenderRequest},
 };
 use crate::tui::{
-    context::{
-        CompactionDiagnostics, CompactionStatus, CompactionTrigger, ContextDiagnostics,
-        ContinuationMode,
-    },
-    format::wrap_display_lines,
+    context::{CompactionDiagnostics, CompactionTrigger, ContextDiagnostics},
     theme::Theme,
 };
 use chrono::{DateTime, Utc};
@@ -19,14 +15,10 @@ use ratatui::{
     layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Paragraph, Wrap},
 };
 
-const FOOTER: [(&str, &str); 3] = [
-    ("↑↓/pgup/pgdn", "scroll"),
-    ("r", "refresh"),
-    ("esc", "close"),
-];
+const FOOTER: [(&str, &str); 2] = [("r", "refresh"), ("esc", "close")];
 
 pub(super) enum ContextDiagnosticsEvent {
     Terminal(Event),
@@ -40,18 +32,18 @@ pub(super) enum ContextDiagnosticsEffect {
 
 pub(super) struct ContextDiagnosticsPanel {
     diagnostics: ContextDiagnostics,
-    scroll: usize,
-    max_scroll: usize,
     body: Rect,
+    scroll: u16,
+    max_scroll: u16,
 }
 
 impl ContextDiagnosticsPanel {
     pub(super) const fn new(diagnostics: ContextDiagnostics) -> Self {
         Self {
             diagnostics,
+            body: Rect::new(0, 0, 0, 0),
             scroll: 0,
             max_scroll: 0,
-            body: Rect::new(0, 0, 0, 0),
         }
     }
 
@@ -70,11 +62,11 @@ impl ContextDiagnosticsPanel {
         let current = usage.map(|usage| usage.total);
         lines.extend([
             fact(
-                " Policy / auto compact",
+                " Window / auto compact",
                 format!(
                     "{} / {}",
-                    format_count(self.diagnostics.model_window_tokens),
-                    format_count(self.diagnostics.auto_compact_token_limit)
+                    optional_count(self.diagnostics.model_window_tokens),
+                    optional_count(self.diagnostics.auto_compact_token_limit)
                 ),
                 label,
                 value,
@@ -87,8 +79,10 @@ impl ContextDiagnosticsPanel {
                         format!(
                             "{} / {}",
                             format_count(tokens),
-                            format_count(
-                                self.diagnostics.model_window_tokens.saturating_sub(tokens)
+                            optional_count(
+                                self.diagnostics
+                                    .model_window_tokens
+                                    .map(|window| window.saturating_sub(tokens))
                             )
                         )
                     },
@@ -98,15 +92,31 @@ impl ContextDiagnosticsPanel {
             ),
             fact(
                 " Until auto compact",
-                optional_count(current.map(|tokens| {
-                    self.diagnostics
-                        .auto_compact_token_limit
-                        .saturating_sub(tokens)
-                })),
+                optional_count(
+                    current
+                        .zip(self.diagnostics.auto_compact_token_limit)
+                        .map(|(tokens, limit)| limit.saturating_sub(tokens)),
+                ),
                 label,
                 value,
             ),
-            Line::styled(" Latest server usage", heading),
+            fact(
+                " Recorded billable tokens",
+                optional_count(self.diagnostics.billed_tokens),
+                label,
+                value,
+            ),
+            fact(
+                " Billing uncertainty",
+                if self.diagnostics.billing_uncertain {
+                    "unmeasured provider attempt".into()
+                } else {
+                    "none recorded".into()
+                },
+                label,
+                value,
+            ),
+            Line::styled(" Latest context measurement", heading),
             fact(
                 " Input (cached/uncached)",
                 usage.map_or_else(
@@ -145,16 +155,6 @@ impl ContextDiagnosticsPanel {
                 value,
             ),
             Line::styled(" Generation", heading),
-            fact(
-                " Continuation",
-                match self.diagnostics.continuation {
-                    Some(ContinuationMode::FullContext) => "full context".to_owned(),
-                    Some(ContinuationMode::PreviousResponse) => "previous response".to_owned(),
-                    None => "unavailable".to_owned(),
-                },
-                label,
-                value,
-            ),
             fact(
                 " Prompt cache",
                 optional_bool(self.diagnostics.prompt_cache),
@@ -205,14 +205,9 @@ impl ContextDiagnosticsPanel {
                     || "unavailable".to_owned(),
                     |item| {
                         format!(
-                            "{} / {}{}",
+                            "{} / {}",
                             optional_count(item.before_tokens),
-                            optional_count(item.after_tokens),
-                            if item.after_estimated {
-                                " estimated"
-                            } else {
-                                ""
-                            },
+                            optional_count(item.after_tokens)
                         )
                     },
                 ),
@@ -221,49 +216,6 @@ impl ContextDiagnosticsPanel {
             ),
         ]);
         lines
-    }
-    fn wrapped_lines(&self, width: u16, theme: &Theme) -> Vec<Line<'static>> {
-        let mut rows = Vec::new();
-        for line in self.lines(theme) {
-            if line.spans.len() == 2 {
-                let label = &line.spans[0];
-                let value = &line.spans[1];
-                let wide = width >= 54;
-                let inset = if wide {
-                    26
-                } else if width > 2 {
-                    2
-                } else {
-                    0
-                };
-                if !wide {
-                    rows.extend(
-                        wrap_display_lines(label.content.trim_end(), usize::from(width))
-                            .into_iter()
-                            .map(|text| Line::styled(text, label.style)),
-                    );
-                }
-                for (index, text) in
-                    wrap_display_lines(&value.content, usize::from(width.saturating_sub(inset)))
-                        .into_iter()
-                        .enumerate()
-                {
-                    let prefix = if wide && index == 0 {
-                        Span::styled(label.content.to_string(), label.style)
-                    } else {
-                        Span::raw(" ".repeat(usize::from(inset)))
-                    };
-                    rows.push(Line::from(vec![prefix, Span::styled(text, value.style)]));
-                }
-            } else {
-                rows.extend(
-                    wrap_display_lines(&line.to_string(), usize::from(width))
-                        .into_iter()
-                        .map(|text| Line::styled(text, line.style)),
-                );
-            }
-        }
-        rows
     }
 }
 
@@ -292,14 +244,10 @@ impl Component for ContextDiagnosticsPanel {
                     KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
                     KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
                     KeyCode::PageUp => {
-                        self.scroll = self
-                            .scroll
-                            .saturating_sub(usize::from(self.body.height).max(1))
+                        self.scroll = self.scroll.saturating_sub(self.body.height.max(1))
                     }
                     KeyCode::PageDown => {
-                        self.scroll = self
-                            .scroll
-                            .saturating_add(usize::from(self.body.height).max(1))
+                        self.scroll = self.scroll.saturating_add(self.body.height.max(1))
                     }
                     KeyCode::Home => self.scroll = 0,
                     KeyCode::End => self.scroll = self.max_scroll,
@@ -322,22 +270,16 @@ impl Component for ContextDiagnosticsPanel {
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        self.body = Floating::new("Context diagnostics", 78, 28, &FOOTER)
-            .render(frame, area, theme)
-            .body;
-        let lines = self.wrapped_lines(self.body.width, theme);
-        self.max_scroll = lines.len().saturating_sub(usize::from(self.body.height));
+        let layout =
+            Floating::new("Context diagnostics", 78, 28, &FOOTER).render(frame, area, theme);
+        self.body = layout.body;
+        let paragraph = Paragraph::new(self.lines(theme)).wrap(Wrap { trim: false });
+        self.max_scroll = paragraph
+            .line_count(self.body.width)
+            .saturating_sub(usize::from(self.body.height))
+            .min(usize::from(u16::MAX)) as u16;
         self.scroll = self.scroll.min(self.max_scroll);
-        frame.render_widget(
-            Paragraph::new(
-                lines
-                    .into_iter()
-                    .skip(self.scroll)
-                    .take(usize::from(self.body.height))
-                    .collect::<Vec<_>>(),
-            ),
-            self.body,
-        );
+        frame.render_widget(paragraph.scroll((self.scroll, 0)), self.body);
     }
 }
 
@@ -379,7 +321,6 @@ fn format_count(value: u64) -> String {
 fn format_compaction_time(compaction: CompactionDiagnostics) -> String {
     let trigger = match compaction.trigger {
         CompactionTrigger::Automatic => "automatic",
-        CompactionTrigger::Manual => "manual",
     };
     let timestamp = i64::try_from(compaction.started_at_unix_ms)
         .ok()
@@ -388,16 +329,11 @@ fn format_compaction_time(compaction: CompactionDiagnostics) -> String {
             || "unknown time".to_owned(),
             |time| time.format("%Y-%m-%d %H:%M:%SZ").to_string(),
         );
-    let duration = compaction.finished_at_unix_ms.map_or_else(
+    let duration = compaction.completed_at_unix_ms.map_or_else(
         || "ongoing".to_owned(),
         |completed| format_duration_millis(completed.saturating_sub(compaction.started_at_unix_ms)),
     );
-    let status = match compaction.status {
-        CompactionStatus::Running => "running",
-        CompactionStatus::Completed => "completed",
-        CompactionStatus::Failed => "failed",
-    };
-    format!("{trigger} / {timestamp} · {status} · {duration}")
+    format!("{trigger} / {timestamp} · {duration}")
 }
 
 fn format_duration_millis(milliseconds: u64) -> String {
@@ -411,26 +347,24 @@ fn format_duration_millis(milliseconds: u64) -> String {
 mod tests {
     use super::{Component, ContextDiagnosticsPanel, format_compaction_time};
     use crate::tui::{
-        context::{
-            CompactionDiagnostics, CompactionTrigger, ContextDiagnostics, ContinuationMode,
-            TokenUsage,
-        },
+        context::{CompactionDiagnostics, CompactionTrigger, ContextDiagnostics, TokenUsage},
         theme::Theme,
     };
     use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn panel_renders_counts_unavailable_metrics_and_cache_help() {
-        let mut diagnostics = ContextDiagnostics::default();
-        diagnostics.usage = Some(TokenUsage {
-            input: 100_000,
-            cached_input: 75_000,
-            uncached_input: 25_000,
-            output: 2_000,
-            total: 102_000,
-        });
-        diagnostics.continuation = Some(ContinuationMode::PreviousResponse);
-        diagnostics.prompt_cache = Some(true);
+        let diagnostics = ContextDiagnostics {
+            usage: Some(TokenUsage {
+                input: 100_000,
+                cached_input: 75_000,
+                uncached_input: 25_000,
+                output: 2_000,
+                total: 102_000,
+            }),
+            prompt_cache: Some(true),
+            ..ContextDiagnostics::default()
+        };
         let mut panel = ContextDiagnosticsPanel::new(diagnostics);
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal
@@ -448,7 +382,6 @@ mod tests {
         for expected in [
             "Context diagnostics",
             "100,000 (75,000/25,000)",
-            "previous response",
             "Context categories",
             "Pending shell",
             "count/bytes/tokens",
@@ -465,60 +398,83 @@ mod tests {
     #[test]
     fn compaction_time_is_readable_and_includes_duration() {
         let rendered = format_compaction_time(CompactionDiagnostics {
-            status: crate::tui::context::CompactionStatus::Completed,
             trigger: CompactionTrigger::Automatic,
             started_at_unix_ms: 0,
-            finished_at_unix_ms: Some(39_095),
+            completed_at_unix_ms: Some(39_095),
             before_tokens: None,
             after_tokens: None,
-            after_estimated: false,
         });
 
-        assert_eq!(
-            rendered,
-            "automatic / 1970-01-01 00:00:00Z · completed · 39.0s"
-        );
+        assert_eq!(rendered, "automatic / 1970-01-01 00:00:00Z · 39.0s");
     }
     #[test]
-    fn narrow_diagnostics_keep_unknowns_and_last_compaction_reachable() {
-        use super::{ContextDiagnosticsEffect, ContextDiagnosticsEvent};
-        use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    fn compact_diagnostics_wheel_reaches_final_metrics() {
+        use super::ContextDiagnosticsEvent;
+        use crossterm::event::{Event, MouseEvent, MouseEventKind};
         let mut panel = ContextDiagnosticsPanel::new(ContextDiagnostics::default());
-        let mut terminal = Terminal::new(TestBackend::new(32, 12)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        for _ in 0..80 {
+            terminal
+                .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+                .unwrap();
+            panel.update(ContextDiagnosticsEvent::Terminal(Event::Mouse(
+                MouseEvent {
+                    kind: MouseEventKind::ScrollDown,
+                    column: 20,
+                    row: 5,
+                    modifiers: crossterm::event::KeyModifiers::NONE,
+                },
+            )));
+        }
         terminal
             .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        assert!(panel.max_scroll > 0);
-        panel.update(ContextDiagnosticsEvent::Terminal(Event::Key(
-            KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Before / next input"), "{rendered}");
+    }
+    #[test]
+    fn wheel_outside_popup_does_not_scroll_and_resize_clamps_to_content() {
+        use crossterm::event::{
+            Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
+        };
+        let mut panel = ContextDiagnosticsPanel::new(ContextDiagnostics::default());
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let before = terminal.backend().buffer().clone();
+        panel.update(super::ContextDiagnosticsEvent::Terminal(Event::Mouse(
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            },
         )));
         terminal
             .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        let text = terminal
+        assert_eq!(terminal.backend().buffer(), &before);
+        panel.update(super::ContextDiagnosticsEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+        )));
+        let mut wide = Terminal::new(TestBackend::new(100, 40)).unwrap();
+        wide.draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let rendered = wide
             .backend()
             .buffer()
-            .content
+            .content()
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(text.contains("Before / next input"));
-        assert!(text.contains("unavailable"));
-        assert_eq!(
-            panel
-                .update(ContextDiagnosticsEvent::Terminal(Event::Key(
-                    KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)
-                )))
-                .effects,
-            [ContextDiagnosticsEffect::Refresh]
-        );
-        for width in 0..20 {
-            for height in 0..12 {
-                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-                terminal
-                    .draw(|frame| panel.render(frame, frame.area(), &Theme::default()))
-                    .unwrap();
-            }
-        }
+        assert!(rendered.contains("Context budget"));
+        assert!(rendered.contains("Before / next input"));
     }
 }

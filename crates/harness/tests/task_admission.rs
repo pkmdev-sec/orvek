@@ -1,14 +1,15 @@
-use std::collections::BTreeMap;
 use orvek_harness::{
     Digest, Store, StoreError,
     admission::{self, Proposal, ProposedCheck, RepositoryProfile},
+    artifacts::PublicArtifactRef,
     contract::*,
     inference::ModelSettings,
-    session::{SessionConfig, SessionId},
+    session::{SessionCommand, SessionConfig, SessionEvent, SessionId},
     state::{JobStatus, Phase},
     verification::{CheckProgram, ControlFailure, Expectation, Probe},
     workspace::{Snapshot, SnapshotPolicy},
 };
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 fn proposal() -> Proposal {
@@ -54,11 +55,11 @@ fn proposal() -> Proposal {
 
 #[test]
 fn queue_edits_reordering_and_promotion_are_atomic_and_distinct_from_normal_queueing() {
-    use serde_json::json;
     use orvek_harness::{
         input,
         submission::{Schedule, SubmissionStatus, WorkIntent},
     };
+    use serde_json::json;
     let root = tempfile::tempdir().unwrap();
     let mut store = Store::open(&root.path().join("state")).unwrap();
     let session = store
@@ -68,13 +69,14 @@ fn queue_edits_reordering_and_promotion_are_atomic_and_distinct_from_normal_queu
                 workspace: root.path().into(),
                 model: ModelSettings::default(),
                 instructions: String::new(),
+                context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
             },
             None,
         )
         .unwrap();
     let policy = store
-        .artifacts()
-        .put(
+        .public_artifacts()
+        .write(
             &serde_json::to_vec(&admission::RequestPolicy {
                 version: 1,
                 delivery: DeliveryKind::Source,
@@ -86,7 +88,8 @@ fn queue_edits_reordering_and_promotion_are_atomic_and_distinct_from_normal_queu
             })
             .unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .digest();
     let (_, task, _) = store
         .start_request(
             session.id,
@@ -100,13 +103,13 @@ fn queue_edits_reordering_and_promotion_are_atomic_and_distinct_from_normal_queu
     let second = Uuid::new_v4();
     let input = input::prepare(
         vec![json!({"type":"input_text","text":"also handle zero"})],
-        store.artifacts(),
+        store.public_artifacts(),
     )
     .unwrap()
     .artifact;
     let revised = input::prepare(
         vec![json!({"type":"input_text","text":"also handle negative operands"})],
-        store.artifacts(),
+        store.public_artifacts(),
     )
     .unwrap()
     .artifact;
@@ -201,13 +204,13 @@ fn queue_edits_reordering_and_promotion_are_atomic_and_distinct_from_normal_queu
 
 #[test]
 fn queued_followups_revoke_old_authority_and_keep_obligations_workspace_and_spend() {
-    use serde_json::json;
     use orvek_harness::{
         input,
         session::SessionCommand,
         state::{Candidate, Outcome, Usage},
         submission::{SubmissionStatus, WorkIntent},
     };
+    use serde_json::json;
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");
     std::fs::create_dir(&source).unwrap();
@@ -220,13 +223,14 @@ fn queued_followups_revoke_old_authority_and_keep_obligations_workspace_and_spen
                 workspace: source.clone(),
                 model: ModelSettings::default(),
                 instructions: String::new(),
+                context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
             },
             None,
         )
         .unwrap();
     let policy = store
-        .artifacts()
-        .put(
+        .public_artifacts()
+        .write(
             &serde_json::to_vec(&admission::RequestPolicy {
                 version: 1,
                 delivery: DeliveryKind::Source,
@@ -238,10 +242,11 @@ fn queued_followups_revoke_old_authority_and_keep_obligations_workspace_and_spen
             })
             .unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .digest();
     let initial = input::prepare(
         vec![json!({"type":"input_text","text":"Fix addition"})],
-        store.artifacts(),
+        store.public_artifacts(),
     )
     .unwrap();
     let request = Uuid::new_v4();
@@ -275,8 +280,9 @@ fn queued_followups_revoke_old_authority_and_keep_obligations_workspace_and_spen
         .start_prepared_request(session.id, request, initial, Limits::default(), policy)
         .unwrap();
     let baseline =
-        Snapshot::capture(&source, SnapshotPolicy::default(), store.artifacts()).unwrap();
-    let compiled = admission::compile(&task, proposal(), &baseline, store.artifacts()).unwrap();
+        Snapshot::capture(&source, SnapshotPolicy::default(), store.public_artifacts()).unwrap();
+    let compiled =
+        admission::compile(&task, proposal(), &baseline, store.public_artifacts()).unwrap();
     task = store
         .admit_contract(
             task.id,
@@ -286,8 +292,12 @@ fn queued_followups_revoke_old_authority_and_keep_obligations_workspace_and_spen
             compiled.receipt,
         )
         .unwrap();
-    let source_id = baseline.publish(store.artifacts()).unwrap();
-    let environment = store.artifacts().put(b"fixture environment").unwrap();
+    let source_id = baseline.publish(store.public_artifacts()).unwrap();
+    let environment = store
+        .public_artifacts()
+        .write(b"fixture environment")
+        .unwrap()
+        .digest();
     task = store
         .establish_baseline(
             task.id,
@@ -315,7 +325,7 @@ fn queued_followups_revoke_old_authority_and_keep_obligations_workspace_and_spen
     let followup = Uuid::new_v4();
     let input = input::prepare(
         vec![json!({"type":"input_text","text":"Also preserve zero addition"})],
-        store.artifacts(),
+        store.public_artifacts(),
     )
     .unwrap();
     let intent = WorkIntent::Continue {
@@ -413,7 +423,7 @@ fn queued_followups_revoke_old_authority_and_keep_obligations_workspace_and_spen
     let mut check = added.checks.remove("sum").unwrap();
     check.purpose = "observe zero identity".into();
     added.checks.insert("zero".into(), check);
-    let compiled = admission::compile(&task, added, &baseline, store.artifacts()).unwrap();
+    let compiled = admission::compile(&task, added, &baseline, store.public_artifacts()).unwrap();
     assert_eq!(compiled.contract.requirements.len(), 2);
     assert_eq!(
         compiled.contract.checks.get("sum"),
@@ -429,11 +439,11 @@ fn queued_followups_revoke_old_authority_and_keep_obligations_workspace_and_spen
 
 #[test]
 fn cancelled_and_interrupted_submissions_are_not_replayed_as_new_tasks() {
-    use serde_json::json;
     use orvek_harness::{
         input,
         submission::{SubmissionStatus, WorkIntent},
     };
+    use serde_json::json;
     let root = tempfile::tempdir().unwrap();
     let mut store = Store::open(&root.path().join("state")).unwrap();
     let session = store
@@ -443,13 +453,14 @@ fn cancelled_and_interrupted_submissions_are_not_replayed_as_new_tasks() {
                 workspace: root.path().into(),
                 model: ModelSettings::default(),
                 instructions: String::new(),
+                context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
             },
             None,
         )
         .unwrap();
     let policy = store
-        .artifacts()
-        .put(
+        .public_artifacts()
+        .write(
             &serde_json::to_vec(&admission::RequestPolicy {
                 version: 1,
                 delivery: DeliveryKind::Source,
@@ -461,10 +472,11 @@ fn cancelled_and_interrupted_submissions_are_not_replayed_as_new_tasks() {
             })
             .unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .digest();
     let input = input::prepare(
         vec![json!({"type":"input_text","text":"Fix addition"})],
-        store.artifacts(),
+        store.public_artifacts(),
     )
     .unwrap();
     let cancelled = Uuid::new_v4();
@@ -526,13 +538,14 @@ fn ordinary_fixture() -> (tempfile::TempDir, Store, SessionId, Digest) {
                 workspace: root.path().into(),
                 model: ModelSettings::default(),
                 instructions: String::new(),
+                context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
             },
             None,
         )
         .unwrap();
     let policy = store
-        .artifacts()
-        .put(
+        .public_artifacts()
+        .write(
             &serde_json::to_vec(&admission::RequestPolicy {
                 version: 1,
                 delivery: DeliveryKind::Source,
@@ -544,7 +557,8 @@ fn ordinary_fixture() -> (tempfile::TempDir, Store, SessionId, Digest) {
             })
             .unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .digest();
     (root, store, session.id, policy)
 }
 
@@ -554,16 +568,72 @@ fn ordinary_fixture() -> (tempfile::TempDir, Store, SessionId, Digest) {
 const DISPATCHED_MS: u64 = 1_700_000_000_000;
 
 #[test]
-fn ordinary_cancellation_before_classification_is_never_dispatched() {
-    use serde_json::json;
+fn failed_classification_settlement_preserves_its_error() {
     use orvek_harness::{
         input,
         submission::{Schedule, SubmissionStatus, WorkIntent},
     };
+    use serde_json::json;
     let (_root, mut store, session, policy) = ordinary_fixture();
     let input = input::prepare(
         vec![json!({"type":"input_text","text":"Fix addition"})],
-        store.artifacts(),
+        store.public_artifacts(),
+    )
+    .unwrap();
+    let request = Uuid::new_v4();
+    store
+        .submit(
+            session,
+            request,
+            input.artifact,
+            WorkIntent::Ordinary {
+                limits: Limits::default(),
+                policy,
+                schedule: Schedule::Queue,
+            },
+        )
+        .unwrap();
+    store
+        .set_submission_status(session, request, SubmissionStatus::Running)
+        .unwrap();
+    store.begin_classification(session, request).unwrap();
+
+    store
+        .settle_failed_classification(session, request, "classification rejected".into())
+        .unwrap();
+
+    let settled = store
+        .journal_page(0, 100)
+        .unwrap()
+        .into_iter()
+        .filter_map(|record| serde_json::from_value::<SessionEvent>(record.event).ok())
+        .find_map(|event| match event {
+            SessionEvent::Command {
+                command:
+                    SessionCommand::TurnSettled {
+                        request: settled,
+                        error,
+                        ..
+                    },
+                ..
+            } if settled == request => error,
+            _ => None,
+        });
+    assert_eq!(settled.as_deref(), Some("classification rejected"));
+    assert_eq!(store.load_session(session).unwrap().active_request, None);
+}
+
+#[test]
+fn ordinary_cancellation_before_classification_is_never_dispatched() {
+    use orvek_harness::{
+        input,
+        submission::{Schedule, SubmissionStatus, WorkIntent},
+    };
+    use serde_json::json;
+    let (_root, mut store, session, policy) = ordinary_fixture();
+    let input = input::prepare(
+        vec![json!({"type":"input_text","text":"Fix addition"})],
+        store.public_artifacts(),
     )
     .unwrap();
     let while_queued = Uuid::new_v4();
@@ -614,16 +684,16 @@ fn ordinary_cancellation_before_classification_is_never_dispatched() {
 
 #[test]
 fn ordinary_classification_interrupted_before_observation_keeps_the_pending_call() {
-    use serde_json::json;
     use orvek_harness::{
         auxiliary::AuxiliaryRecord,
         input,
         submission::{Schedule, SubmissionStatus, WorkIntent},
     };
+    use serde_json::json;
     let (root, mut store, session, policy) = ordinary_fixture();
     let input = input::prepare(
         vec![json!({"type":"input_text","text":"Fix addition"})],
-        store.artifacts(),
+        store.public_artifacts(),
     )
     .unwrap();
     let request = Uuid::new_v4();
@@ -644,7 +714,7 @@ fn ordinary_classification_interrupted_before_observation_keeps_the_pending_call
         .unwrap();
     store.begin_classification(session, request).unwrap();
     let call = Uuid::new_v4();
-    let invocation = store.artifacts().put(b"{}").unwrap();
+    let invocation = store.public_artifacts().write(b"{}").unwrap().digest();
     store
         .record_auxiliary(
             session,
@@ -671,8 +741,13 @@ fn ordinary_classification_interrupted_before_observation_keeps_the_pending_call
         "a dispatched classifier is parked for reconciliation, never silently requeued"
     );
     assert_eq!(submission.records.len(), 1);
-    let record: AuxiliaryRecord =
-        serde_json::from_slice(&store.artifacts().read(submission.records[0]).unwrap()).unwrap();
+    let record: AuxiliaryRecord = serde_json::from_slice(
+        &store
+            .public_artifacts()
+            .resolve(PublicArtifactRef::from_digest(submission.records[0]))
+            .unwrap(),
+    )
+    .unwrap();
     assert!(
         matches!(
             record,
@@ -703,17 +778,17 @@ fn ordinary_classification_interrupted_before_observation_keeps_the_pending_call
 
 #[test]
 fn late_classification_receipt_after_cancellation_is_kept_but_cannot_admit_a_task() {
-    use serde_json::json;
     use orvek_harness::{
         auxiliary::AuxiliaryRecord,
         input,
         state::{ModelCallReceipt, ModelCallStatus},
         submission::{Schedule, SubmissionStatus, WorkIntent},
     };
+    use serde_json::json;
     let (_root, mut store, session, policy) = ordinary_fixture();
     let input = input::prepare(
         vec![json!({"type":"input_text","text":"Fix addition"})],
-        store.artifacts(),
+        store.public_artifacts(),
     )
     .unwrap();
     let request = Uuid::new_v4();
@@ -734,7 +809,7 @@ fn late_classification_receipt_after_cancellation_is_kept_but_cannot_admit_a_tas
         .unwrap();
     store.begin_classification(session, request).unwrap();
     let call = Uuid::new_v4();
-    let invocation = store.artifacts().put(b"{}").unwrap();
+    let invocation = store.public_artifacts().write(b"{}").unwrap().digest();
     store
         .record_auxiliary(
             session,
@@ -759,7 +834,7 @@ fn late_classification_receipt_after_cancellation_is_kept_but_cannot_admit_a_tas
     // The classifier answers late, successfully, after the request is gone.
     // Recording it is REQUIRED: billing that was really incurred must never be
     // silently dropped. What must not happen is it becoming actionable.
-    let report = store.artifacts().put(b"{}").unwrap();
+    let report = store.public_artifacts().write(b"{}").unwrap().digest();
     store
         .record_auxiliary(
             session,
@@ -784,7 +859,7 @@ fn late_classification_receipt_after_cancellation_is_kept_but_cannot_admit_a_tas
 
     let prepared = input::prepare(
         vec![json!({"type":"input_text","text":"Fix addition"})],
-        store.artifacts(),
+        store.public_artifacts(),
     )
     .unwrap();
     assert!(matches!(
@@ -812,17 +887,17 @@ fn late_classification_receipt_after_cancellation_is_kept_but_cannot_admit_a_tas
 
 #[test]
 fn ordinary_action_crash_between_classification_and_adoption_forges_no_task() {
-    use serde_json::json;
     use orvek_harness::{
         auxiliary::AuxiliaryRecord,
         input,
         state::{ModelCallReceipt, ModelCallStatus},
         submission::{Schedule, SubmissionStatus, WorkIntent},
     };
+    use serde_json::json;
     let (root, mut store, session, policy) = ordinary_fixture();
     let input = input::prepare(
         vec![json!({"type":"input_text","text":"Fix addition"})],
-        store.artifacts(),
+        store.public_artifacts(),
     )
     .unwrap();
     let request = Uuid::new_v4();
@@ -843,7 +918,7 @@ fn ordinary_action_crash_between_classification_and_adoption_forges_no_task() {
         .unwrap();
     store.begin_classification(session, request).unwrap();
     let call = Uuid::new_v4();
-    let invocation = store.artifacts().put(b"{}").unwrap();
+    let invocation = store.public_artifacts().write(b"{}").unwrap().digest();
     store
         .record_auxiliary(
             session,
@@ -856,7 +931,7 @@ fn ordinary_action_crash_between_classification_and_adoption_forges_no_task() {
             },
         )
         .unwrap();
-    let report = store.artifacts().put(b"{}").unwrap();
+    let report = store.public_artifacts().write(b"{}").unwrap().digest();
     store
         .record_auxiliary(
             session,
@@ -884,8 +959,13 @@ fn ordinary_action_crash_between_classification_and_adoption_forges_no_task() {
     let submission = store.submission(session, request).unwrap();
     assert_eq!(submission.status, SubmissionStatus::Interrupted);
     assert_eq!(submission.records.len(), 2);
-    let observed: AuxiliaryRecord =
-        serde_json::from_slice(&store.artifacts().read(submission.records[1]).unwrap()).unwrap();
+    let observed: AuxiliaryRecord = serde_json::from_slice(
+        &store
+            .public_artifacts()
+            .resolve(PublicArtifactRef::from_digest(submission.records[1]))
+            .unwrap(),
+    )
+    .unwrap();
     match observed {
         AuxiliaryRecord::ClassificationObserved { receipt, kind, .. } => {
             assert_eq!(kind, "action");
@@ -912,7 +992,7 @@ fn ordinary_action_crash_between_classification_and_adoption_forges_no_task() {
     // The already-decided `action` cannot be picked up later to finish admission.
     let prepared = input::prepare(
         vec![json!({"type":"input_text","text":"Fix addition"})],
-        store.artifacts(),
+        store.public_artifacts(),
     )
     .unwrap();
     assert!(matches!(
@@ -940,6 +1020,7 @@ fn request_is_durable_but_cannot_write_or_complete_before_contract_admission() {
                 workspace: source.clone(),
                 model: ModelSettings::default(),
                 instructions: String::new(),
+                context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
             },
             None,
         )
@@ -968,8 +1049,8 @@ fn request_is_durable_but_cannot_write_or_complete_before_contract_admission() {
         )]),
     };
     let intake = store
-        .artifacts()
-        .put(
+        .public_artifacts()
+        .write(
             &serde_json::to_vec(&admission::RequestPolicy {
                 version: 1,
                 profile,
@@ -977,7 +1058,8 @@ fn request_is_durable_but_cannot_write_or_complete_before_contract_admission() {
             })
             .unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .digest();
     let (_, mut task, created) = store
         .start_request(
             session.id,
@@ -1009,8 +1091,9 @@ fn request_is_durable_but_cannot_write_or_complete_before_contract_admission() {
         .settle_job(task.id, job, JobStatus::Succeeded)
         .unwrap();
     let baseline =
-        Snapshot::capture(&source, SnapshotPolicy::default(), store.artifacts()).unwrap();
-    let compiled = admission::compile(&task, proposal(), &baseline, store.artifacts()).unwrap();
+        Snapshot::capture(&source, SnapshotPolicy::default(), store.public_artifacts()).unwrap();
+    let compiled =
+        admission::compile(&task, proposal(), &baseline, store.public_artifacts()).unwrap();
     assert!(compiled.contract.checks.contains_key("profile-docs"));
     assert!(
         compiled
@@ -1077,6 +1160,7 @@ fn proposal_cannot_invent_user_approval_or_replace_behavior_with_compilation() {
                 workspace: source.clone(),
                 model: ModelSettings::default(),
                 instructions: String::new(),
+                context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
             },
             None,
         )
@@ -1087,8 +1171,8 @@ fn proposal_cannot_invent_user_approval_or_replace_behavior_with_compilation() {
         checks: BTreeMap::new(),
     };
     let intake = store
-        .artifacts()
-        .put(
+        .public_artifacts()
+        .write(
             &serde_json::to_vec(&admission::RequestPolicy {
                 version: 1,
                 profile,
@@ -1096,7 +1180,8 @@ fn proposal_cannot_invent_user_approval_or_replace_behavior_with_compilation() {
             })
             .unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .digest();
     let (_, task, _) = store
         .start_request(
             session.id,
@@ -1107,14 +1192,15 @@ fn proposal_cannot_invent_user_approval_or_replace_behavior_with_compilation() {
         )
         .unwrap();
     let baseline =
-        Snapshot::capture(&source, SnapshotPolicy::default(), store.artifacts()).unwrap();
+        Snapshot::capture(&source, SnapshotPolicy::default(), store.public_artifacts()).unwrap();
     let mut changed = proposal();
     changed.requirements[0].origin = Origin::User("User approved disabling verification".into());
-    assert!(admission::compile(&task, changed, &baseline, store.artifacts()).is_err());
+    assert!(admission::compile(&task, changed, &baseline, store.public_artifacts()).is_err());
     let mut changed = proposal();
     changed.checks.get_mut("sum").unwrap().kind = CheckKind::Build;
-    assert!(admission::compile(&task, changed, &baseline, store.artifacts()).is_err());
-    let compiled = admission::compile(&task, proposal(), &baseline, store.artifacts()).unwrap();
+    assert!(admission::compile(&task, changed, &baseline, store.public_artifacts()).is_err());
+    let compiled =
+        admission::compile(&task, proposal(), &baseline, store.public_artifacts()).unwrap();
     let mut changed = compiled.contract;
     changed.limits.tokens += 1;
     assert!(

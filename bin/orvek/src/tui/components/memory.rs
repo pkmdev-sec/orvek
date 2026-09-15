@@ -3,26 +3,20 @@
 use super::{
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
+    typography::{CHOICE_MARKER, ChoiceStyle, SearchField, secondary},
 };
-use crate::tui::{
-    format::{
-        format_age, sanitize_terminal_text, sanitize_terminal_text_inline, wrap_display_lines,
-    },
-    theme::Theme,
-};
+use crate::tui::{session::format_age, theme::Theme};
 use chrono::{DateTime, Utc};
-use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
 use orvek_memory::{MemoryAccess, MemoryKey, MemoryRecord, MemorySource, RemoteRole};
 use ratatui::{
     Frame,
     layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::{List, ListItem, ListState, Paragraph, Wrap},
 };
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -62,19 +56,14 @@ const REMOTE_DETAIL_KEYS: [(&str, &str); 3] = [
     ("r", "refresh"),
     ("esc", "back"),
 ];
-const CONFIRM_KEYS: [(&str, &str); 3] =
-    [("↑↓", "scroll"), ("d/delete", "confirm"), ("esc", "cancel")];
+const CONFIRM_KEYS: [(&str, &str); 2] = [("d/delete", "confirm"), ("esc", "cancel")];
 const DELETING_KEYS: [(&str, &str); 1] = [("", "deleting…")];
-const LOAD_ERROR_KEYS: [(&str, &str); 3] = [("↑↓", "scroll"), ("r", "retry"), ("esc", "close")];
-const DELETE_ERROR_KEYS: [(&str, &str); 4] = [
-    ("↑↓", "scroll"),
-    ("d/delete", "retry"),
-    ("r", "refresh"),
-    ("esc", "back"),
-];
+const LOAD_ERROR_KEYS: [(&str, &str); 2] = [("r", "retry"), ("esc", "close")];
+const DELETE_ERROR_KEYS: [(&str, &str); 3] =
+    [("d/delete", "retry"), ("r", "refresh"), ("esc", "back")];
 const LOADING_KEYS: [(&str, &str); 2] = [("r", "retry"), ("esc", "close")];
-const FILTER_LABEL: &str = " Filter: ";
 const MAX_PREVIEW_GRAPHEMES: usize = 160;
+const MAX_ERROR_WIDTH: usize = 240;
 
 pub(super) enum MemoryBrowserEvent {
     Terminal(Event),
@@ -113,12 +102,8 @@ pub(super) struct MemoryBrowser {
     sort: SortMode,
     namespace_scope: NamespaceScope,
     state: BrowserState,
-    overlay_scroll: u16,
-    max_scroll: u16,
     body: Rect,
-    list_area: Rect,
-    offset: usize,
-    last_click: Option<(MemoryKey, Instant)>,
+    max_scroll: u16,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -219,6 +204,13 @@ enum ReturnView {
     Detail { scroll: u16 },
 }
 
+struct DetailView {
+    key: MemoryKey,
+    scroll: u16,
+    status: Option<String>,
+    update_scroll: bool,
+}
+
 impl MemoryBrowser {
     pub(super) const fn new() -> Self {
         Self {
@@ -231,12 +223,8 @@ impl MemoryBrowser {
             sort: SortMode::MostUseful,
             namespace_scope: NamespaceScope::All,
             state: BrowserState::Loading,
-            overlay_scroll: 0,
-            max_scroll: 0,
             body: Rect::new(0, 0, 0, 0),
-            list_area: Rect::new(0, 0, 0, 0),
-            offset: 0,
-            last_click: None,
+            max_scroll: 0,
         }
     }
 
@@ -245,29 +233,6 @@ impl MemoryBrowser {
             return ComponentUpdate::none();
         }
 
-        self.last_click = None;
-        if matches!(
-            self.state,
-            BrowserState::ConfirmDelete { .. } | BrowserState::Error(_)
-        ) {
-            let scroll = match key.code {
-                KeyCode::Up => Some(self.overlay_scroll.saturating_sub(1)),
-                KeyCode::Down => Some(self.overlay_scroll.saturating_add(1)),
-                KeyCode::PageUp => {
-                    Some(self.overlay_scroll.saturating_sub(self.body.height.max(1)))
-                }
-                KeyCode::PageDown => {
-                    Some(self.overlay_scroll.saturating_add(self.body.height.max(1)))
-                }
-                KeyCode::Home => Some(0),
-                KeyCode::End => Some(self.max_scroll),
-                _ => None,
-            };
-            if let Some(scroll) = scroll {
-                self.overlay_scroll = scroll.min(self.max_scroll);
-                return ComponentUpdate::render(RenderRequest::Immediate);
-            }
-        }
         match self.state.clone() {
             BrowserState::Loading => self.update_loading(key),
             BrowserState::Error(error) => self.update_error(key, error.action),
@@ -362,16 +327,17 @@ impl MemoryBrowser {
         let next_scroll = match key.code {
             KeyCode::Up => Some(scroll.saturating_sub(1)),
             KeyCode::Down => Some(scroll.saturating_add(1)),
-            KeyCode::PageUp => Some(scroll.saturating_sub(10)),
-            KeyCode::PageDown => Some(scroll.saturating_add(10)),
+            KeyCode::PageUp => Some(scroll.saturating_sub(self.body.height.max(1))),
+            KeyCode::PageDown => Some(scroll.saturating_add(self.body.height.max(1))),
             KeyCode::Home => Some(0),
             KeyCode::End => Some(self.max_scroll),
             _ => None,
         };
         if let Some(scroll) = next_scroll {
+            let scroll = scroll.min(self.max_scroll);
             self.state = BrowserState::Detail {
                 key: memory_key,
-                scroll: scroll.min(self.max_scroll),
+                scroll,
             };
             return ComponentUpdate::render(RenderRequest::Immediate);
         }
@@ -386,7 +352,6 @@ impl MemoryBrowser {
                 if !self.can_delete(&memory_key) {
                     return ComponentUpdate::none();
                 }
-                self.overlay_scroll = 0;
                 self.state = BrowserState::ConfirmDelete {
                     key: memory_key,
                     return_to: ReturnView::Detail { scroll },
@@ -426,8 +391,6 @@ impl MemoryBrowser {
     }
 
     fn refresh(&mut self) -> ComponentUpdate<MemoryBrowserEffect> {
-        self.overlay_scroll = 0;
-        self.list_area = Rect::default();
         self.state = BrowserState::Loading;
         Self::effect(MemoryBrowserEffect::Refresh)
     }
@@ -447,7 +410,6 @@ impl MemoryBrowser {
         if !self.can_delete(&key) {
             return ComponentUpdate::none();
         }
-        self.overlay_scroll = 0;
         self.state = BrowserState::ConfirmDelete { key, return_to };
         ComponentUpdate::render(RenderRequest::Immediate)
     }
@@ -457,9 +419,6 @@ impl MemoryBrowser {
         key: MemoryKey,
         return_to: ReturnView,
     ) -> ComponentUpdate<MemoryBrowserEffect> {
-        if !self.can_delete(&key) {
-            return ComponentUpdate::none();
-        }
         let Some(record) = self.records.iter().find(|record| record.key == key) else {
             self.state = BrowserState::List;
             self.refresh_matches();
@@ -524,8 +483,6 @@ impl MemoryBrowser {
     }
 
     fn rebuild_matches(&mut self, fallback: usize) {
-        self.list_area = Rect::default();
-        self.last_click = None;
         let query = self.query.to_lowercase();
         self.matches = self
             .records
@@ -557,7 +514,6 @@ impl MemoryBrowser {
     }
 
     fn move_selection(&mut self, down: bool) -> ComponentUpdate<MemoryBrowserEffect> {
-        self.last_click = None;
         if self.matches.is_empty() {
             return ComponentUpdate::none();
         }
@@ -627,10 +583,7 @@ impl MemoryBrowser {
                 source: MemorySource::Remote,
                 namespace: Some(namespace),
                 ..
-            }) => format!(
-                "Remote memory · {}",
-                sanitize_terminal_text_inline(namespace)
-            ),
+            }) => format!("Remote memory · {namespace}"),
             Some(MemoryAccess {
                 source: MemorySource::Remote,
                 ..
@@ -663,171 +616,68 @@ impl MemoryBrowser {
         }
     }
 
-    fn update_mouse(
-        &mut self,
-        mouse: MouseEvent,
-        now: Instant,
-    ) -> ComponentUpdate<MemoryBrowserEffect> {
-        let point = Position::new(mouse.column, mouse.row);
-        if matches!(self.state, BrowserState::List) && self.list_area.contains(point) {
-            match mouse.kind {
-                MouseEventKind::ScrollUp => return self.move_selection(false),
-                MouseEventKind::ScrollDown => return self.move_selection(true),
-                MouseEventKind::Down(MouseButton::Left) => {
-                    let index = self.offset + usize::from((mouse.row - self.list_area.y) / 2);
-                    let Some(record) = self.matches.get(index).map(|index| &self.records[*index])
-                    else {
-                        return ComponentUpdate::none();
-                    };
-                    let key = record.key.clone();
-                    let inspect = self.last_click.as_ref().is_some_and(|(previous, at)| {
-                        *previous == key
-                            && now.saturating_duration_since(*at) <= Duration::from_millis(500)
-                    });
-                    self.selected_key = Some(key.clone());
-                    self.last_click = Some((key, now));
-                    if inspect {
-                        self.last_click = None;
-                        return self.inspect_selected();
-                    }
-                    return ComponentUpdate::render(RenderRequest::Immediate);
-                }
-                _ => return ComponentUpdate::none(),
-            }
-        }
-        if self.body.contains(point) {
-            let code = match mouse.kind {
-                MouseEventKind::ScrollUp => KeyCode::Up,
-                MouseEventKind::ScrollDown => KeyCode::Down,
-                _ => return ComponentUpdate::none(),
-            };
-            return self.update_key(KeyEvent::new(code, KeyModifiers::NONE));
-        }
-        ComponentUpdate::none()
-    }
-
-    fn render_list(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+    fn render_list(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        theme: &Theme,
+        status: Option<String>,
+    ) {
         if area.is_empty() {
             return;
         }
-        self.render_filter(frame, Rect { height: 1, ..area }, theme);
-        let mut metadata = vec![
-            if self.is_remote() {
-                let role = match self.access.as_ref().and_then(|access| access.role) {
-                    Some(RemoteRole::Reader) => "reader",
-                    Some(RemoteRole::Writer) => "writer",
-                    None => "unknown",
-                };
-                let namespace = self
-                    .access
-                    .as_ref()
-                    .and_then(|access| access.namespace.as_deref())
-                    .unwrap_or("unknown namespace");
-                format!(
-                    " Access: {role} · {}",
-                    sanitize_terminal_text_inline(namespace)
-                )
-            } else {
-                " Shared across sessions".to_owned()
-            },
-            format!(" Sort: {}", self.sort.label()),
-        ];
-        if let Some(scope) = self.namespace_scope_label() {
-            metadata.push(format!(" Namespaces: {scope}"));
-        }
-        let metadata = metadata
-            .into_iter()
-            .flat_map(|text| wrap_display_lines(&text, usize::from(area.width)))
-            .collect::<Vec<_>>();
-        let context_height = (metadata.len() as u16).min(area.height.saturating_sub(4));
-        frame.render_widget(
-            Paragraph::new(
-                metadata
-                    .into_iter()
-                    .take(usize::from(context_height))
-                    .map(Line::from)
-                    .collect::<Vec<_>>(),
-            )
-            .style(Style::default().fg(theme.muted())),
-            Rect::new(area.x, area.y + 1, area.width, context_height),
-        );
-        let header_height = (context_height + 1 + u16::from(context_height > 0)).min(area.height);
-        let detail_height = 2.min(area.height.saturating_sub(header_height + 2));
-        let list = Rect::new(
-            area.x,
-            area.y + header_height,
-            area.width,
-            area.height.saturating_sub(header_height + detail_height),
-        );
-        self.render_records(frame, list, theme);
-        if detail_height > 0 {
-            let identity = self.selected_key.as_ref().map_or_else(
-                || format!(" Loaded: {}", self.records.len()),
-                |key| {
-                    format!(
-                        " Selected: {}#{} · v{}",
-                        key.namespace.as_deref().unwrap_or("local"),
-                        key.id,
-                        key.version
-                    )
-                },
-            );
-            let permission = self.selected_key.as_ref().map_or("", |key| {
-                if self.can_delete(key) {
-                    " Removal needs confirmation."
-                } else {
-                    " Read-only record."
-                }
-            });
+        let filter = Rect { height: 1, ..area };
+        self.render_filter(frame, filter, theme);
+
+        let mut list = Rect {
+            y: area.y.saturating_add(1),
+            height: area.height.saturating_sub(1),
+            ..area
+        };
+        if let Some(status) = status {
+            if list.is_empty() {
+                return;
+            }
+            let status_area = Rect { height: 1, ..list };
             frame.render_widget(
-                Paragraph::new(vec![
-                    Line::from(fit_width(
-                        &sanitize_terminal_text_inline(&identity),
-                        usize::from(area.width),
-                    )),
-                    Line::from(permission),
-                ])
-                .style(Style::default().fg(theme.muted())),
-                Rect::new(
-                    area.x,
-                    area.bottom() - detail_height,
-                    area.width,
-                    detail_height,
-                ),
+                Paragraph::new(fit_width(&status, usize::from(status_area.width)))
+                    .style(Style::default().fg(theme.accent())),
+                status_area,
             );
+            list.y = list.y.saturating_add(1);
+            list.height = list.height.saturating_sub(1);
         }
+        self.render_records(frame, list, theme);
     }
 
     fn render_filter(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        let width = usize::from(area.width).saturating_sub(FILTER_LABEL.width());
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(FILTER_LABEL, Style::default().fg(theme.muted())),
-                Span::styled(
-                    visible_tail(&self.query, width),
-                    Style::default().fg(theme.text()),
-                ),
-            ])),
-            area,
-        );
+        if area.is_empty() {
+            return;
+        }
+        let scope = self
+            .namespace_scope_label()
+            .map_or_else(String::new, |scope| format!("  Namespaces: {scope}"));
+        let sort = format!("  Sort: {}", self.sort.label());
+        let suffix = vec![
+            Span::styled(scope, secondary(theme)),
+            Span::styled(sort, secondary(theme)),
+        ];
+        let line = SearchField::with_prefix(&self.query, "  Filter: ")
+            .line_with_suffix(area.width, suffix, theme);
+        frame.render_widget(Paragraph::new(line), area);
     }
 
-    fn render_records(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        self.list_area = Rect {
-            height: area.height / 2 * 2,
-            ..area
-        };
+    fn render_records(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         if area.is_empty() {
             return;
         }
         if self.records.is_empty() {
             frame.render_widget(
                 Paragraph::new(format!(
-                    " {} is empty. Press Ctrl+R to refresh.",
+                    " {} is empty. Press r to refresh.",
                     self.context_label()
                 ))
-                .style(Style::default().fg(theme.muted()))
-                .wrap(Wrap { trim: false }),
+                .style(Style::default().fg(theme.muted())),
                 area,
             );
             return;
@@ -842,177 +692,101 @@ impl MemoryBrowser {
                 format!(" No memories match “{}”.", self.query)
             };
             frame.render_widget(
-                Paragraph::new(fit_width(
-                    &sanitize_terminal_text_inline(&message),
-                    usize::from(area.width),
-                ))
-                .style(Style::default().fg(theme.muted())),
+                Paragraph::new(fit_width(&message, usize::from(area.width)))
+                    .style(Style::default().fg(theme.muted())),
                 area,
             );
             return;
         }
-        let capacity = usize::from(self.list_area.height / 2);
-        if capacity == 0 {
-            return;
-        }
-        let selected = self.selected_match_index().unwrap_or(0);
-        self.offset = self
-            .offset
-            .min(self.matches.len().saturating_sub(capacity))
-            .min(selected);
-        if selected >= self.offset + capacity {
-            self.offset = selected + 1 - capacity;
-        }
-        let width = usize::from(area.width).saturating_sub(2);
-        for (row, index) in self
-            .matches
-            .iter()
-            .skip(self.offset)
-            .take(capacity)
-            .enumerate()
-        {
-            let record = &self.records[*index];
-            let active = self.offset + row == selected;
-            let style = Style::default()
-                .fg(if active { theme.accent() } else { theme.text() })
-                .add_modifier(Modifier::BOLD);
-            frame.render_widget(
-                Paragraph::new(vec![
-                    Line::from(vec![
-                        Span::styled(if active { "› " } else { "  " }, style),
-                        Span::styled(bounded_preview(&record.content, width), style),
-                    ]),
-                    Line::styled(
-                        format!(
-                            "  {}",
-                            fit_width(
-                                &sanitize_terminal_text_inline(&list_metadata(record)),
-                                width
-                            )
-                        ),
-                        Style::default().fg(theme.muted()),
-                    ),
-                ]),
-                Rect::new(area.x, area.y + row as u16 * 2, area.width, 2),
-            );
-        }
-    }
 
-    fn render_document(
-        &mut self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-        lines: Vec<Line<'static>>,
-        scroll: u16,
-    ) -> u16 {
-        let rows = lines
-            .into_iter()
-            .flat_map(|line| {
-                line.spans
-                    .into_iter()
-                    .flat_map(|span| {
-                        wrap_display_lines(&span.content, usize::from(area.width))
-                            .into_iter()
-                            .map(move |text| Line::from(vec![Span::styled(text, span.style)]))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        self.max_scroll = rows
-            .len()
-            .saturating_sub(usize::from(area.height))
-            .min(usize::from(u16::MAX)) as u16;
-        let scroll = scroll.min(self.max_scroll);
-        frame.render_widget(Paragraph::new(rows).scroll((scroll, 0)), area);
-        scroll
+        let width = usize::from(area.width).saturating_sub(2);
+        let selected = self.selected_match_index();
+        let items = self.matches.iter().enumerate().map(|(position, index)| {
+            let record = &self.records[*index];
+            let preview = bounded_preview(&record.content, width);
+            let metadata = fit_width(&list_metadata(record), width);
+            let typography = ChoiceStyle::new(Some(position) == selected, true);
+            ListItem::new(vec![
+                Line::from(Span::styled(preview, typography.primary(theme))),
+                Line::from(Span::styled(metadata, typography.detail(theme))),
+            ])
+        });
+        let list = List::new(items)
+            .highlight_symbol(CHOICE_MARKER)
+            .highlight_style(ChoiceStyle::new(true, true).highlight(theme));
+        let mut state = ListState::default().with_selected(selected);
+        frame.render_stateful_widget(list, area, &mut state);
     }
 
     fn render_detail(
         &mut self,
         frame: &mut Frame<'_>,
-        area: Rect,
+        mut area: Rect,
         theme: &Theme,
-        key: MemoryKey,
-        scroll: u16,
+        view: DetailView,
     ) {
+        let DetailView {
+            key,
+            scroll: requested_scroll,
+            status,
+            update_scroll,
+        } = view;
+        if area.is_empty() {
+            return;
+        }
+        if let Some(status) = status {
+            let status_area = Rect { height: 1, ..area };
+            frame.render_widget(
+                Paragraph::new(fit_width(&status, usize::from(status_area.width)))
+                    .style(Style::default().fg(theme.accent())),
+                status_area,
+            );
+            area.y = area.y.saturating_add(1);
+            area.height = area.height.saturating_sub(1);
+        }
+        if area.is_empty() {
+            return;
+        }
+
         let Some(record) = self.records.iter().find(|record| record.key == key) else {
             self.state = BrowserState::List;
-            self.render_list(frame, area, theme);
+            self.render_list(frame, area, theme, None);
             return;
         };
         let lines = detail_lines(record, theme);
-        let scroll = self.render_document(frame, area, lines, scroll);
-        self.state = BrowserState::Detail { key, scroll };
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+        let max_scroll = paragraph
+            .line_count(area.width)
+            .saturating_sub(usize::from(area.height))
+            .min(usize::from(u16::MAX)) as u16;
+        let scroll = requested_scroll.min(max_scroll);
+        if update_scroll {
+            self.max_scroll = max_scroll;
+            self.state = BrowserState::Detail { key, scroll };
+        }
+        frame.render_widget(paragraph.scroll((scroll, 0)), area);
     }
 
-    fn render_confirmation(
-        &mut self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-        theme: &Theme,
-        key: &MemoryKey,
-        deleting: bool,
-    ) {
-        let mut lines = vec![
-            Line::styled(
-                if deleting {
-                    "Deletion requested…"
-                } else {
-                    "Delete this stored memory?"
-                },
-                Style::default().fg(theme.accent()),
-            ),
-            Line::default(),
-        ];
-        lines.extend(identity_lines(key, theme));
-        lines.push(Line::default());
-        if let Some(record) = self.records.iter().find(|record| record.key == *key) {
-            lines.extend(
-                sanitize_detail(&record.content)
-                    .split('\n')
-                    .map(|line| Line::styled(line.to_owned(), Style::default().fg(theme.text()))),
-            );
+    fn render_error(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme, error: &BrowserError) {
+        if area.is_empty() {
+            return;
         }
-        self.overlay_scroll = self.render_document(frame, area, lines, self.overlay_scroll);
-    }
-
-    fn render_error(
-        &mut self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-        theme: &Theme,
-        error: &BrowserError,
-    ) {
-        let mut lines = vec![
-            Line::styled(
-                match error.action {
-                    ErrorAction::Load => "Could not load memories.",
-                    ErrorAction::Delete { .. } => "Deletion was not confirmed.",
-                },
-                Style::default().fg(theme.accent()),
+        let message = sanitize_single_line(&error.message, MAX_ERROR_WIDTH);
+        let text = match error.action {
+            ErrorAction::Load => {
+                format!("Could not load memories: {message}\n\nPress r to retry or Esc to close.")
+            }
+            ErrorAction::Delete { ref key, .. } => format!(
+                "Could not delete {}: {message}\n\nPress d/Delete to retry, r to reload, or Esc to return.",
+                memory_label(key)
             ),
-            Line::from(
-                error
-                    .message
-                    .split('\n')
-                    .map(|line| {
-                        Span::styled(
-                            sanitize_terminal_text(line).into_owned(),
-                            Style::default().fg(theme.text()),
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-            Line::default(),
-            Line::styled(
-                format!("Source: {}", self.context_label()),
-                Style::default().fg(theme.muted()),
-            ),
-        ];
-        if let ErrorAction::Delete { key, .. } = &error.action {
-            lines.extend(identity_lines(key, theme));
-        }
-        self.overlay_scroll = self.render_document(frame, area, lines, self.overlay_scroll);
+        };
+        frame.render_widget(
+            Paragraph::new(text)
+                .style(Style::default().fg(theme.text()))
+                .wrap(Wrap { trim: false }),
+            area,
+        );
     }
 }
 
@@ -1023,10 +797,28 @@ impl Component for MemoryBrowser {
     fn update(&mut self, event: Self::Event) -> ComponentUpdate<Self::Effect> {
         match event {
             MemoryBrowserEvent::Terminal(Event::Key(key)) => self.update_key(key),
-            MemoryBrowserEvent::Terminal(Event::Mouse(mouse)) => {
-                self.update_mouse(mouse, Instant::now())
-            }
             MemoryBrowserEvent::Terminal(Event::Paste(text)) => self.insert_paste(&text),
+            MemoryBrowserEvent::Terminal(Event::Mouse(mouse))
+                if self.body.contains(Position::new(mouse.column, mouse.row)) =>
+            {
+                let down = match mouse.kind {
+                    MouseEventKind::ScrollUp => false,
+                    MouseEventKind::ScrollDown => true,
+                    _ => return ComponentUpdate::none(),
+                };
+                match &mut self.state {
+                    BrowserState::List => self.move_selection(down),
+                    BrowserState::Detail { scroll, .. } => {
+                        *scroll = if down {
+                            scroll.saturating_add(1).min(self.max_scroll)
+                        } else {
+                            scroll.saturating_sub(1)
+                        };
+                        ComponentUpdate::render(RenderRequest::Immediate)
+                    }
+                    _ => ComponentUpdate::none(),
+                }
+            }
             MemoryBrowserEvent::Terminal(_) => ComponentUpdate::none(),
             MemoryBrowserEvent::Loaded { access, records } => {
                 self.replace_records(access, records);
@@ -1039,7 +831,6 @@ impl Component for MemoryBrowser {
             } => {
                 self.source = source;
                 self.access = access;
-                self.overlay_scroll = 0;
                 self.state = BrowserState::Error(BrowserError {
                     message: error,
                     action: ErrorAction::Load,
@@ -1057,7 +848,6 @@ impl Component for MemoryBrowser {
                 if conflict {
                     return self.refresh();
                 }
-                self.overlay_scroll = 0;
                 self.state = BrowserState::Error(BrowserError {
                     message: error,
                     action: ErrorAction::Delete { key, return_to },
@@ -1068,17 +858,15 @@ impl Component for MemoryBrowser {
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        self.list_area = Rect::default();
+        let state = self.state.clone();
         let title = self.context_label();
-        self.body = Floating::new(&title, 88, 28, self.footer())
-            .render(frame, area, theme)
-            .body;
-        let body = self.body;
-        if body.is_empty() {
-            self.max_scroll = 0;
+        let layout = Floating::new(&title, 88, 28, self.footer()).render(frame, area, theme);
+        self.body = layout.body;
+        if layout.body.is_empty() {
             return;
         }
-        match self.state.clone() {
+
+        match state {
             BrowserState::Loading => frame.render_widget(
                 Paragraph::new(format!(
                     "Loading {}…\n\nPress r to retry or Esc to close.",
@@ -1086,18 +874,65 @@ impl Component for MemoryBrowser {
                 ))
                 .style(Style::default().fg(theme.muted()))
                 .wrap(Wrap { trim: false }),
-                body,
+                layout.body,
             ),
-            BrowserState::Error(error) => self.render_error(frame, body, theme, &error),
-            BrowserState::List => self.render_list(frame, body, theme),
+            BrowserState::Error(error) => {
+                self.render_error(frame, layout.body, theme, &error);
+            }
+            BrowserState::List => self.render_list(frame, layout.body, theme, None),
             BrowserState::Detail { key, scroll } => {
-                self.render_detail(frame, body, theme, key, scroll)
+                self.render_detail(
+                    frame,
+                    layout.body,
+                    theme,
+                    DetailView {
+                        key,
+                        scroll,
+                        status: None,
+                        update_scroll: true,
+                    },
+                );
             }
-            BrowserState::ConfirmDelete { key, .. } => {
-                self.render_confirmation(frame, body, theme, &key, false)
+            BrowserState::ConfirmDelete { key, return_to } => {
+                let status = format!(
+                    " Delete {}? Press d/Delete again to confirm.",
+                    memory_label(&key)
+                );
+                match return_to {
+                    ReturnView::List => {
+                        self.render_list(frame, layout.body, theme, Some(status));
+                    }
+                    ReturnView::Detail { scroll } => self.render_detail(
+                        frame,
+                        layout.body,
+                        theme,
+                        DetailView {
+                            key,
+                            scroll,
+                            status: Some(status),
+                            update_scroll: false,
+                        },
+                    ),
+                }
             }
-            BrowserState::Deleting { key, .. } => {
-                self.render_confirmation(frame, body, theme, &key, true)
+            BrowserState::Deleting { key, return_to } => {
+                let status = format!(" Deleting {}…", memory_label(&key));
+                match return_to {
+                    ReturnView::List => {
+                        self.render_list(frame, layout.body, theme, Some(status));
+                    }
+                    ReturnView::Detail { scroll } => self.render_detail(
+                        frame,
+                        layout.body,
+                        theme,
+                        DetailView {
+                            key,
+                            scroll,
+                            status: Some(status),
+                            update_scroll: false,
+                        },
+                    ),
+                }
             }
         }
     }
@@ -1114,18 +949,11 @@ fn record_matches(record: &MemoryRecord, query: &str) -> bool {
         || record.content.to_lowercase().contains(query)
 }
 
-fn identity_lines(key: &MemoryKey, theme: &Theme) -> Vec<Line<'static>> {
-    [
-        format!(
-            "Namespace: {}",
-            sanitize_terminal_text_inline(key.namespace.as_deref().unwrap_or("local"))
-        ),
-        format!("ID: {}", key.id),
-        format!("Version: {}", key.version),
-    ]
-    .into_iter()
-    .map(|line| Line::styled(line, Style::default().fg(theme.text())))
-    .collect()
+fn memory_label(key: &MemoryKey) -> String {
+    key.namespace.as_ref().map_or_else(
+        || format!("memory #{}", key.id),
+        |namespace| format!("memory #{}, shared by `{namespace}`", key.id),
+    )
 }
 
 fn compare_newest(left: &MemoryRecord, right: &MemoryRecord) -> std::cmp::Ordering {
@@ -1164,7 +992,7 @@ fn detail_lines(record: &MemoryRecord, theme: &Theme) -> Vec<Line<'static>> {
     let heading = Style::default()
         .fg(theme.accent())
         .add_modifier(Modifier::BOLD);
-    let mut metadata = vec![
+    let mut lines = vec![
         Line::styled(" Memory metadata", heading),
         fact(" ID", record.key.id.to_string(), label, value),
         fact(
@@ -1216,13 +1044,14 @@ fn detail_lines(record: &MemoryRecord, theme: &Theme) -> Vec<Line<'static>> {
             label,
             value,
         ),
+        Line::default(),
+        Line::styled(" Content", heading),
     ];
-    let mut lines = sanitize_detail(&record.content)
-        .split('\n')
-        .map(|line| Line::styled(line.to_owned(), value))
-        .collect::<Vec<_>>();
-    lines.push(Line::default());
-    lines.append(&mut metadata);
+    lines.extend(
+        sanitize_detail(&record.content)
+            .split('\n')
+            .map(|line| Line::styled(line.to_owned(), value)),
+    );
     lines
 }
 
@@ -1303,6 +1132,21 @@ fn sanitize_detail(content: &str) -> String {
     sanitized
 }
 
+fn sanitize_single_line(text: &str, width: usize) -> String {
+    let sanitized = text
+        .chars()
+        .map(|character| {
+            if character.is_control() || character.is_whitespace() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let collapsed = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
+    fit_width(&collapsed, width)
+}
+
 fn fit_width(text: &str, width: usize) -> String {
     if text.width() <= width {
         return text.to_owned();
@@ -1324,17 +1168,6 @@ fn fit_width(text: &str, width: usize) -> String {
     }
     result.push('…');
     result
-}
-
-fn visible_tail(query: &str, width: usize) -> &str {
-    let mut used: usize = 0;
-    for (index, grapheme) in query.grapheme_indices(true).rev() {
-        used += grapheme.width();
-        if used > width {
-            return &query[index + grapheme.len()..];
-        }
-    }
-    query
 }
 
 #[cfg(test)]
@@ -1702,25 +1535,7 @@ mod tests {
 
         let rendered = render(&mut browser, 80, 16);
         assert!(rendered.contains("Remote memory · alice"));
-        assert!(rendered.contains("Could not load memories."));
-        assert!(rendered.contains("unavailable"));
-    }
-
-    #[test]
-    fn load_errors_preserve_embedded_newlines() {
-        let mut browser = MemoryBrowser::new();
-        browser.update(MemoryBrowserEvent::LoadFailed {
-            source: MemorySource::Local,
-            access: None,
-            error: "first\nsecond\u{1b}third\nlast".to_owned(),
-        });
-
-        let rendered = render(&mut browser, 80, 16);
-
-        assert!(rendered.contains("first"));
-        assert!(rendered.contains("second�third"));
-        assert!(rendered.contains("last"));
-        assert!(!rendered.contains("firstsecond"));
+        assert!(rendered.contains("Could not load memories: unavailable"));
     }
 
     #[test]
@@ -1745,106 +1560,30 @@ mod tests {
         assert!(rendered.contains("second line"));
     }
     #[test]
-    fn regression_empty_list_advertises_the_actual_refresh_key() {
-        let mut browser = loaded(vec![]);
-        assert!(render(&mut browser, 88, 28).contains("Press Ctrl+R to refresh."));
-    }
-    #[test]
-    fn confirmation_exposes_the_exact_version_and_enter_never_deletes() {
-        let mut browser = loaded_with_access(
-            remote_access("alice", RemoteRole::Writer),
-            vec![remote_record("alice", 7, "first line\nsecond line")],
-        );
-        browser.update(key(KeyCode::Delete));
-        let text = render(&mut browser, 40, 15);
-        assert!(text.contains("Namespace: alice"));
-        assert!(text.contains("ID: 7"));
-        assert!(text.contains("Version: 1"));
-        assert!(browser.update(key(KeyCode::Enter)).effects.is_empty());
-        assert!(
-            browser
-                .update(repeat_key(KeyCode::Char('d')))
-                .effects
-                .is_empty()
-        );
-        let expected = browser.selected_key.clone().unwrap();
-        assert_eq!(
-            browser.update(key(KeyCode::Char('d'))).effects,
-            [MemoryBrowserEffect::Delete(expected)]
-        );
-    }
-
-    #[test]
-    fn filter_has_its_own_row_and_content_precedes_all_metadata() {
-        let mut browser = loaded_with_access(
-            remote_access("long-authenticated-namespace", RemoteRole::Reader),
-            vec![remote_record(
-                "another-namespace",
-                9,
-                "abcdefghijklmno full content",
-            )],
-        );
-        browser.update(MemoryBrowserEvent::Terminal(Event::Paste(
-            "abcdefghijklmno".into(),
-        )));
-        let text = render(&mut browser, 40, 20);
-        let rows = text
-            .chars()
-            .collect::<Vec<_>>()
-            .chunks(40)
-            .map(|row| row.iter().collect::<String>())
-            .collect::<Vec<_>>();
-        let filter = rows.iter().find(|line| line.contains("Filter:")).unwrap();
-        assert!(filter.contains("abcdefghijklmno"));
-        assert!(!filter.contains("Sort:"));
+    fn detail_wheel_is_bounded_and_reaches_last_line() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+        let content = (0..40)
+            .map(|i| format!("memory line {i}\n"))
+            .collect::<String>();
+        let mut browser = loaded(vec![record(1, 1, &content)]);
         browser.update(key(KeyCode::Enter));
-        let text = render(&mut browser, 88, 28);
-        assert!(
-            text.find("abcdefghijklmno full content").unwrap()
-                < text.find("Memory metadata").unwrap()
-        );
-        assert!(browser.update(key(KeyCode::Char('d'))).effects.is_empty());
-    }
-
-    #[test]
-    fn full_error_text_is_scrollable_and_all_states_fit_tiny_areas() {
-        let mut browser = MemoryBrowser::new();
-        browser.update(MemoryBrowserEvent::LoadFailed {
-            source: MemorySource::Local,
-            access: None,
-            error: format!("{} error-tail", "long ".repeat(200)),
-        });
-        render(&mut browser, 32, 12);
-        browser.update(key(KeyCode::End));
-        assert!(render(&mut browser, 32, 12).contains("error-tail"));
-        for width in 0..20 {
-            for height in 0..12 {
-                render(&mut browser, width, height);
-            }
+        for _ in 0..100 {
+            render(&mut browser, 60, 14);
+            browser.update(MemoryBrowserEvent::Terminal(Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 25,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            })));
         }
-        let mut browser = loaded(vec![record(1, 1, "漢字\nfull body")]);
-        for code in [KeyCode::Enter, KeyCode::Char('d')] {
-            browser.update(key(code));
-            for width in 0..20 {
-                for height in 0..12 {
-                    render(&mut browser, width, height);
-                }
-            }
-        }
-    }
-    #[test]
-    fn remote_access_role_and_namespace_are_sanitized_display_only() {
-        let namespace = "alice\x1b[31m";
-        let mut browser = loaded_with_access(
-            remote_access(namespace, RemoteRole::Reader),
-            vec![remote_record(namespace, 1, "content")],
-        );
-        let text = render(&mut browser, 88, 28);
-        assert!(text.contains("Access: reader"));
-        assert!(!text.contains('\x1b'));
-        assert_eq!(
-            browser.selected_key.as_ref().unwrap().namespace.as_deref(),
-            Some(namespace)
-        );
+        assert!(render(&mut browser, 60, 14).contains("memory line 39"));
+        let before = render(&mut browser, 60, 14);
+        browser.update(MemoryBrowserEvent::Terminal(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })));
+        assert_eq!(render(&mut browser, 60, 14), before);
     }
 }

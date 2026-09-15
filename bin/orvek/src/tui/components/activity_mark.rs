@@ -1,5 +1,6 @@
 //! A small state-driven mark with a bounded transition and no idle clock.
 
+use super::activity::{ActivityState, ActivityVisual};
 use crate::tui::theme::Theme;
 use ratatui::{
     Frame,
@@ -10,107 +11,6 @@ use std::time::{Duration, Instant};
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(90);
 const TRANSITION: Duration = Duration::from_millis(180);
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) enum ActivityState {
-    #[default]
-    Idle,
-    Thinking,
-    Working,
-    Compacting,
-    Complete,
-    Error,
-    Cancelled,
-}
-
-impl ActivityState {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Idle => "Ready",
-            Self::Thinking => "Thinking",
-            Self::Working => "Working",
-            Self::Compacting => "Compacting",
-            Self::Complete => "Complete",
-            Self::Error => "Error",
-            Self::Cancelled => "Cancelled",
-        }
-    }
-    const fn active(self) -> bool {
-        matches!(self, Self::Thinking | Self::Working | Self::Compacting)
-    }
-    const fn compact(self, ascii: bool) -> &'static str {
-        match (self, ascii) {
-            (Self::Idle, false) => "○",
-            (Self::Thinking, false) => "◌",
-            (Self::Working, false) => "›",
-            (Self::Compacting, false) => "↔",
-            (Self::Complete, false) => "✓",
-            (Self::Error, false) => "×",
-            (Self::Cancelled, false) => "−",
-            (Self::Idle, true) => "O",
-            (Self::Thinking, true) => "*",
-            (Self::Working, true) => ">",
-            (Self::Compacting, true) => "=",
-            (Self::Complete, true) => "+",
-            (Self::Error, true) => "!",
-            (Self::Cancelled, true) => "-",
-        }
-    }
-    fn pixels(self, frame: usize, motion: bool) -> [[bool; 5]; 4] {
-        let rows = match self {
-            Self::Idle => [14, 17, 17, 14],
-            Self::Thinking => [14, 16, 17, 14],
-            Self::Working => [8, 4, 4, 8],
-            Self::Compacting => [27, 17, 17, 27],
-            Self::Complete => [1, 2, 20, 8],
-            Self::Error => [17, 10, 10, 17],
-            Self::Cancelled => [0, 31, 0, 0],
-        };
-        let mut pixels =
-            std::array::from_fn(|y| std::array::from_fn(|x| rows[y] & (1 << (4 - x)) != 0));
-        if !motion {
-            return pixels;
-        }
-        match self {
-            Self::Thinking => {
-                let ring = [
-                    (1, 0),
-                    (2, 0),
-                    (3, 0),
-                    (4, 1),
-                    (4, 2),
-                    (3, 3),
-                    (2, 3),
-                    (1, 3),
-                    (0, 2),
-                    (0, 1),
-                ];
-                pixels = [[false; 5]; 4];
-                let head = frame / 3 % ring.len();
-                for (index, (x, y)) in ring.into_iter().enumerate() {
-                    pixels[y][x] = (index + 10 - head) % 10 >= 2;
-                }
-            }
-            Self::Working => {
-                pixels = [[false; 5]; 4];
-                let position = frame / 3 % 6;
-                for (y, row) in pixels.iter_mut().enumerate() {
-                    let x = position + usize::from(y == 1 || y == 2);
-                    if x < 5 {
-                        row[x] = true;
-                    }
-                }
-            }
-            Self::Compacting => {
-                let edge = [0, 1, 2, 2, 1, 0][frame / 3 % 6];
-                pixels =
-                    std::array::from_fn(|_| std::array::from_fn(|x| x == edge || x == 4 - edge));
-            }
-            _ => {}
-        }
-        pixels
-    }
-}
 
 pub(crate) struct ActivityMark {
     state: ActivityState,
@@ -158,8 +58,8 @@ impl ActivityMark {
         self.next_frame = (self.motion && !self.ascii).then_some(now + FRAME_INTERVAL);
         true
     }
-    pub(crate) const fn state(&self) -> ActivityState {
-        self.state
+    pub(crate) const fn visual(&self) -> ActivityVisual {
+        ActivityVisual::new(self.state, self.frame, self.next_frame.is_some())
     }
     pub(crate) const fn deadline(&self) -> Option<Instant> {
         self.next_frame
@@ -183,13 +83,8 @@ impl ActivityMark {
         if area.is_empty() {
             return;
         }
-        let color = match self.state {
-            ActivityState::Idle | ActivityState::Cancelled => theme.muted(),
-            ActivityState::Thinking => theme.thinking_medium(),
-            ActivityState::Working | ActivityState::Complete => theme.accent(),
-            ActivityState::Compacting => theme.thinking_high(),
-            ActivityState::Error => theme.thinking_xhigh(),
-        };
+        let visual = self.visual();
+        let color = visual.color(theme);
         if area.width < Self::WIDTH || area.height < 2 || self.ascii {
             frame.buffer_mut().set_string(
                 area.x,
@@ -241,11 +136,10 @@ mod tests {
         collections::HashSet,
         time::{Duration, Instant},
     };
-    const STATES: [ActivityState; 7] = [
+    const STATES: [ActivityState; 6] = [
         ActivityState::Idle,
         ActivityState::Thinking,
         ActivityState::Working,
-        ActivityState::Compacting,
         ActivityState::Complete,
         ActivityState::Error,
         ActivityState::Cancelled,

@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
 use orvek_harness::{Digest, Store, StoreError, contract::*, state::*};
+use std::collections::BTreeMap;
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -23,9 +23,10 @@ fn provider_attempts_cannot_disappear_across_restart_or_erase_spend() {
     ));
     let report = f
         .store
-        .artifacts()
-        .put(b"response interrupted after dispatch")
+        .public_artifacts()
+        .write(b"response interrupted after dispatch")
         .unwrap();
+    let report = report.digest();
     f.task = f
         .store
         .record_model_call(
@@ -52,9 +53,10 @@ fn provider_attempts_cannot_disappear_across_restart_or_erase_spend() {
         tokens: Some(123),
         report: f
             .store
-            .artifacts()
-            .put(b"provider reconciled charge:123")
-            .unwrap(),
+            .public_artifacts()
+            .write(b"provider reconciled charge:123")
+            .unwrap()
+            .digest(),
     };
     f.task = f
         .store
@@ -155,9 +157,10 @@ impl Fixture {
         let directory = tempfile::tempdir().unwrap();
         let mut store = Store::open(directory.path()).unwrap();
         let verifier = store
-            .artifacts()
-            .put(b"protected acceptance runner version 1")
-            .unwrap();
+            .public_artifacts()
+            .write(b"protected acceptance runner version 1")
+            .unwrap()
+            .digest();
         let contract = Contract {
             request: "Fix uploads that lose bytes after restart".into(),
             outcome: "Interrupted uploads resume with identical bytes".into(),
@@ -216,12 +219,13 @@ impl Fixture {
     }
 
     fn candidate(&mut self, bytes: &[u8]) {
-        let source = self.store.artifacts().put(bytes).unwrap();
+        let source = self.store.public_artifacts().write(bytes).unwrap().digest();
         let environment = self
             .store
-            .artifacts()
-            .put(b"test image, toolchain and fixtures v1")
-            .unwrap();
+            .public_artifacts()
+            .write(b"test image, toolchain and fixtures v1")
+            .unwrap()
+            .digest();
         let artifact = source;
         self.task = self
             .store
@@ -242,14 +246,16 @@ impl Fixture {
     fn observation(&self, status: CheckStatus) -> Observation {
         let report = self
             .store
-            .artifacts()
-            .put(b"protected runner observed recovered content bytes")
-            .unwrap();
+            .public_artifacts()
+            .write(b"protected runner observed recovered content bytes")
+            .unwrap()
+            .digest();
         let control = self
             .store
-            .artifacts()
-            .put(b"baseline lost bytes after restart, before patch")
-            .unwrap();
+            .public_artifacts()
+            .write(b"baseline lost bytes after restart, before patch")
+            .unwrap()
+            .digest();
         Observation {
             status,
             report,
@@ -287,9 +293,10 @@ impl Fixture {
         let candidate = self.task.candidate.as_ref().unwrap();
         let receipt = self
             .store
-            .artifacts()
-            .put(b"verified patch delivered against the named base")
-            .unwrap();
+            .public_artifacts()
+            .write(b"verified patch delivered against the named base")
+            .unwrap()
+            .digest();
         self.task = self
             .store
             .record_delivery(
@@ -329,8 +336,8 @@ fn h02_workspace_report_without_runner_lease_is_not_evidence() {
     let mut f = Fixture::new();
     f.candidate(b"candidate");
     f.store
-        .artifacts()
-        .put(br#"{"status":"passed","outcome":"complete"}"#)
+        .public_artifacts()
+        .write(br#"{"status":"passed","outcome":"complete"}"#)
         .unwrap();
     f.deliver();
     assert!(matches!(f.complete(), Err(StoreError::Incomplete(_))));
@@ -532,9 +539,10 @@ fn h09_late_result_cannot_certify_a_new_generation() {
     );
     let receipt = f
         .store
-        .artifacts()
-        .put(b"trusted test runner fenced the previous execution unit")
-        .unwrap();
+        .public_artifacts()
+        .write(b"trusted test runner fenced the previous execution unit")
+        .unwrap()
+        .digest();
     f.task = f.store.fence_job(f.task.id, job, receipt).unwrap();
     f.pass();
     f.deliver();
@@ -550,7 +558,12 @@ fn h11_concurrent_revision_and_live_writer_prevent_freeze() {
         .start_job(f.task.id, f.task.revision, true, 60_000)
         .unwrap();
     f.task = state;
-    let digest = f.store.artifacts().put(b"candidate").unwrap();
+    let digest = f
+        .store
+        .public_artifacts()
+        .write(b"candidate")
+        .unwrap()
+        .digest();
     let candidate = Candidate {
         provenance: None,
         source: digest,
@@ -631,7 +644,14 @@ fn h14_corrupted_evidence_cannot_keep_a_passing_result() {
     f.pass();
     f.deliver();
     let report = f.task.evidence[0].observation.report;
-    std::fs::write(f.store.artifacts().path(report), b"tampered").unwrap();
+    std::fs::write(
+        f.directory
+            .path()
+            .join("artifacts")
+            .join(report.to_string()),
+        b"tampered",
+    )
+    .unwrap();
     assert!(matches!(f.complete(), Err(StoreError::Artifact(_))));
     assert_eq!(f.store.load(f.task.id).unwrap().outcome, None);
 }
@@ -705,7 +725,12 @@ fn artifact_limit_is_cumulative_across_blobs_and_abandoned_candidates() {
             "user sets storage budget".into(),
         )
         .unwrap();
-    let first = f.store.artifacts().put(&[1; 600]).unwrap();
+    let first = f
+        .store
+        .public_artifacts()
+        .write(&[1; 600])
+        .unwrap()
+        .digest();
     f.task = f
         .store
         .select_candidate(
@@ -720,7 +745,12 @@ fn artifact_limit_is_cumulative_across_blobs_and_abandoned_candidates() {
             },
         )
         .unwrap();
-    let second = f.store.artifacts().put(&[2; 600]).unwrap();
+    let second = f
+        .store
+        .public_artifacts()
+        .write(&[2; 600])
+        .unwrap()
+        .digest();
     assert!(matches!(
         f.store.select_candidate(
             f.task.id,
@@ -828,7 +858,13 @@ fn loss_of_evidence_after_certification_revokes_current_eligibility() {
     f.deliver();
     let completed = f.complete().unwrap();
     let report = completed.evidence[0].observation.report;
-    std::fs::remove_file(f.store.artifacts().path(report)).unwrap();
+    std::fs::remove_file(
+        f.directory
+            .path()
+            .join("artifacts")
+            .join(report.to_string()),
+    )
+    .unwrap();
     let audited = f.store.audit_evidence(f.task.id).unwrap();
     assert_eq!(audited.outcome, Some(Outcome::Blocked));
     assert_eq!(audited.certificates, completed.certificates);

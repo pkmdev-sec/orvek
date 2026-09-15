@@ -1,9 +1,8 @@
-use std::{collections::BTreeMap, fs};
 use orvek_harness::{
-    Digest,
-    artifacts::ArtifactStore,
+    Digest, Store,
     workspace::{Entry, Snapshot, SnapshotPolicy, WorkspaceError},
 };
+use std::{collections::BTreeMap, fs};
 
 #[test]
 fn snapshot_preserves_bytes_modes_empty_directories_and_declared_exclusions() {
@@ -18,7 +17,10 @@ fn snapshot_preserves_bytes_modes_empty_directories_and_declared_exclusions() {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(source.join("program"), fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let artifacts = ArtifactStore::open(&root.path().join("artifacts"), 1024 * 1024).unwrap();
+    let artifacts = Store::open_with_artifact_limit(root.path(), 1024 * 1024)
+        .unwrap()
+        .public_artifacts()
+        .clone();
     let snapshot = Snapshot::capture(&source, SnapshotPolicy::default(), &artifacts).unwrap();
     assert!(!snapshot.entries.keys().any(|p| p.starts_with(".git")));
     assert!(snapshot.matches(&source).unwrap());
@@ -40,13 +42,43 @@ fn snapshot_preserves_bytes_modes_empty_directories_and_declared_exclusions() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn default_exclusions_skip_nested_virtual_environments() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let virtual_environment = source.join("evals/.venv/bin");
+    fs::create_dir_all(&virtual_environment).unwrap();
+    let outside = root.path().join("python");
+    fs::write(&outside, "generated interpreter").unwrap();
+    symlink(&outside, virtual_environment.join("python")).unwrap();
+    let artifacts = Store::open_with_artifact_limit(root.path(), 1024)
+        .unwrap()
+        .public_artifacts()
+        .clone();
+
+    let snapshot = Snapshot::capture(&source, SnapshotPolicy::default(), &artifacts).unwrap();
+
+    assert!(snapshot.entries.contains_key("evals"));
+    assert!(
+        !snapshot
+            .entries
+            .keys()
+            .any(|path| path.starts_with("evals/.venv"))
+    );
+}
+
 #[test]
 fn snapshot_limits_and_existing_destinations_are_enforced() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");
     fs::create_dir(&source).unwrap();
     fs::write(source.join("data"), vec![0; 100]).unwrap();
-    let artifacts = ArtifactStore::open(&root.path().join("artifacts"), 1024).unwrap();
+    let artifacts = Store::open_with_artifact_limit(root.path(), 1024)
+        .unwrap()
+        .public_artifacts()
+        .clone();
     let policy = SnapshotPolicy {
         max_bytes: 99,
         ..SnapshotPolicy::default()
@@ -68,7 +100,10 @@ fn exact_delivery_verification_detects_additions_in_normally_excluded_paths() {
     let source = root.path().join("source");
     fs::create_dir(&source).unwrap();
     fs::write(source.join("code"), b"expected").unwrap();
-    let artifacts = ArtifactStore::open(&root.path().join("artifacts"), 1024).unwrap();
+    let artifacts = Store::open_with_artifact_limit(root.path(), 1024)
+        .unwrap()
+        .public_artifacts()
+        .clone();
     let snapshot = Snapshot::capture(&source, SnapshotPolicy::default(), &artifacts).unwrap();
     assert!(snapshot.matches_exact(&source).unwrap());
     fs::write(source.join(".env"), b"unexpected runtime configuration").unwrap();
@@ -79,7 +114,10 @@ fn exact_delivery_verification_detects_additions_in_normally_excluded_paths() {
 #[test]
 fn manifest_cannot_write_outside_destination_or_through_symlink_parent() {
     let root = tempfile::tempdir().unwrap();
-    let artifacts = ArtifactStore::open(&root.path().join("artifacts"), 1024).unwrap();
+    let artifacts = Store::open_with_artifact_limit(root.path(), 1024)
+        .unwrap()
+        .public_artifacts()
+        .clone();
     let content = Digest::of(b"owned");
     for name in ["../escape", "/escape", "link/data"] {
         let snapshot = Snapshot {
@@ -112,7 +150,10 @@ fn relative_symlinks_are_preserved_but_escape_and_chain_are_rejected() {
     fs::create_dir(&source).unwrap();
     fs::write(source.join("file"), "data").unwrap();
     symlink("file", source.join("alias")).unwrap();
-    let artifacts = ArtifactStore::open(&root.path().join("artifacts"), 1024).unwrap();
+    let artifacts = Store::open_with_artifact_limit(root.path(), 1024)
+        .unwrap()
+        .public_artifacts()
+        .clone();
     let snapshot = Snapshot::capture(&source, SnapshotPolicy::default(), &artifacts).unwrap();
     let target = root.path().join("candidate");
     snapshot.materialize(&target, &artifacts, false).unwrap();
@@ -146,7 +187,11 @@ fn raced_symlink_never_copies_outside_bytes() {
     let secret = b"outside-secret-never-an-input";
     fs::write(root.path().join("secret"), secret).unwrap();
     fs::write(source.join("file"), b"inside").unwrap();
-    let artifacts = ArtifactStore::open(&root.path().join("artifacts"), 1024).unwrap();
+    let artifacts_root = root.path().join("artifacts");
+    let artifacts = Store::open_with_artifact_limit(root.path(), 1024)
+        .unwrap()
+        .public_artifacts()
+        .clone();
     let active = Arc::new(AtomicBool::new(true));
     let runner_active = active.clone();
     let runner_source = source.clone();
@@ -165,5 +210,5 @@ fn raced_symlink_never_copies_outside_bytes() {
     }
     active.store(false, Ordering::Relaxed);
     writer.join().unwrap();
-    assert!(!artifacts.path(Digest::of(secret)).exists());
+    assert!(!artifacts_root.join(Digest::of(secret).to_string()).exists());
 }

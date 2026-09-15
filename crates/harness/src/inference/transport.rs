@@ -1,6 +1,6 @@
 use super::{
     auth::{Auth, AuthError},
-    protocol::{Decoder, Delta, InferenceRequest, ProviderResponse},
+    protocol::{Decoder, Delta, InferenceRequest, Model, ProviderResponse},
 };
 use futures_util::{SinkExt, StreamExt};
 use reqwest::{
@@ -9,7 +9,7 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{fmt, time::Duration};
+use std::{collections::HashMap, fmt, sync::Arc, time::Duration};
 use tokio::time::{Instant, timeout};
 use tokio_tungstenite::{
     connect_async_with_config,
@@ -195,6 +195,22 @@ impl CallOutcome {
     pub fn billing_uncertain(&self) -> bool {
         self.attempts.iter().any(|a| a.billing_uncertain)
     }
+
+    /// A rate-limit rejection can be admitted again without duplicating a billed generation.
+    pub fn rate_limited(&self) -> bool {
+        self.failure.as_ref().is_some_and(|failure| {
+            failure.kind == FailureKind::Rejected && failure.http_status == Some(429)
+        }) && self.response.is_none()
+            && self.response_id.is_none()
+            && self.partial_text.is_empty()
+            && self.partial_items.is_empty()
+            && !self.attempts.is_empty()
+            && self.attempts.iter().all(|attempt| {
+                attempt.status == AttemptStatus::Rejected
+                    && attempt.http_status == Some(429)
+                    && !attempt.billing_uncertain
+            })
+    }
 }
 
 /// No conversation, execution, or completion state is retained here. A new socket
@@ -205,6 +221,15 @@ pub struct ResponsesClient {
     auth: Auth,
     route: Route,
     limits: Limits,
+    model_routes: HashMap<Model, ModelRoute>,
+}
+
+/// Per-model credentials and endpoint for setups that mix providers, such as
+/// GLM through a local bridge alongside a direct OpenAI model.
+#[derive(Clone, Debug)]
+struct ModelRoute {
+    auth: Arc<Auth>,
+    route: Route,
 }
 
 impl fmt::Debug for ResponsesClient {
@@ -243,11 +268,29 @@ impl ResponsesClient {
             auth,
             route,
             limits,
+            model_routes: HashMap::new(),
         })
     }
 
     pub fn limits(&self) -> &Limits {
         &self.limits
+    }
+
+    /// Routes one model through its own credentials and endpoint instead of
+    /// the client-wide defaults.
+    pub fn with_model_route(mut self, model: Model, auth: Auth, route: Route) -> Self {
+        self.model_routes.insert(
+            model,
+            ModelRoute {
+                auth: Arc::new(auth),
+                route,
+            },
+        );
+        self
+    }
+
+    fn effective(&self, model: Model) -> Option<&ModelRoute> {
+        self.model_routes.get(&model)
     }
 
     pub async fn respond(
@@ -302,14 +345,21 @@ impl ResponsesClient {
         state: &mut CallState,
         emit: &mut impl FnMut(Delta),
     ) -> Result<(), FailureKind> {
-        let body = serde_json::to_vec(&request.wire(self.route.transport))
+        let override_route = self.effective(request.settings().model);
+        let route = override_route
+            .map(|model_route| &model_route.route)
+            .unwrap_or(&self.route);
+        let auth = override_route
+            .map(|model_route| model_route.auth.as_ref())
+            .unwrap_or(&self.auth);
+        let body = serde_json::to_vec(&request.wire(route.transport))
             .map_err(|_| FailureKind::InvalidRequest)?;
         if body.len() > self.limits.max_request_bytes {
             return Err(FailureKind::SizeLimit);
         }
         let mut recovered = false;
         for number in 1..=self.limits.max_attempts {
-            let (mut headers, generation) = self.auth.headers().await.map_err(|error| {
+            let (mut headers, generation) = auth.headers().await.map_err(|error| {
                 state.auth_error = Some(error);
                 FailureKind::Authentication
             })?;
@@ -342,9 +392,15 @@ impl ResponsesClient {
                 billing_uncertain: false,
                 elapsed_ms: 0,
             });
-            let result = match self.route.transport {
-                Transport::Http => self.http(&body, headers, state, emit).await,
-                Transport::WebSocket => self.websocket(&body, headers, state, emit).await,
+            let result = match route.transport {
+                Transport::Http => {
+                    self.http(&route.endpoint, &body, headers, state, emit)
+                        .await
+                }
+                Transport::WebSocket => {
+                    self.websocket(&route.endpoint, &body, headers, state, emit)
+                        .await
+                }
             };
             if cancel.is_cancelled() {
                 return Err(FailureKind::Cancelled);
@@ -386,8 +442,7 @@ impl ResponsesClient {
                         && !recovered
                         && number < self.limits.max_attempts
                     {
-                        self.auth
-                            .recover_unauthorized(generation)
+                        auth.recover_unauthorized(generation)
                             .await
                             .map_err(|error| {
                                 state.auth_error = Some(error);
@@ -399,7 +454,8 @@ impl ResponsesClient {
                     // Only explicit pre-stream rejections are retried. A broken stream may
                     // already have generated/billed output and is returned for host policy.
                     if number == self.limits.max_attempts
-                        || !matches!(rejection.status, Some(408 | 429 | 502 | 503 | 504))
+                        || record.billing_uncertain
+                        || rejection.status != Some(429)
                         || state.decoder.observed
                     {
                         return Err(rejection.kind);
@@ -417,6 +473,7 @@ impl ResponsesClient {
 
     async fn http(
         &self,
+        endpoint: &Url,
         body: &[u8],
         headers: reqwest::header::HeaderMap,
         state: &mut CallState,
@@ -426,7 +483,7 @@ impl ResponsesClient {
         let response = timeout(
             self.limits.connect_timeout,
             self.client
-                .post(self.route.endpoint.clone())
+                .post(endpoint.clone())
                 .headers(headers)
                 .header(CONTENT_TYPE, "application/json")
                 .header("accept", "text/event-stream")
@@ -491,14 +548,13 @@ impl ResponsesClient {
 
     async fn websocket(
         &self,
+        endpoint: &Url,
         body: &[u8],
         headers: reqwest::header::HeaderMap,
         state: &mut CallState,
         emit: &mut impl FnMut(Delta),
     ) -> Result<(), AttemptFailure> {
-        let mut handshake = self
-            .route
-            .endpoint
+        let mut handshake = endpoint
             .as_str()
             .into_client_request()
             .map_err(|_| FailureKind::InvalidEndpoint)?;

@@ -1,11 +1,11 @@
-use std::{fs, time::Duration};
 use orvek_harness::runtime::{DockerExecutor, ExecutionRequest, ExecutionStatus};
+use std::{fs, time::Duration};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 fn workspace_tempdir() -> tempfile::TempDir {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/docker-test-workspaces");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.orvek/docker-test-workspaces");
     fs::create_dir_all(&root).unwrap();
     tempfile::tempdir_in(root).unwrap()
 }
@@ -343,4 +343,61 @@ async fn code_has_no_capabilities_and_cannot_create_a_new_user_mount_namespace()
     assert!(!text.starts_with("0\n"));
     assert!(text.contains("CapEff:\t0000000000000000"));
     assert!(text.ends_with("namespace-denied"));
+}
+
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn workspace_network_and_user_tools_do_not_change_protected_verification() {
+    use orvek_harness::runtime::ExecutionPolicy;
+
+    let root = workspace_tempdir();
+    let executor = DockerExecutor::connect("debian:bookworm-slim")
+        .await
+        .unwrap();
+    assert_eq!(executor.environment().network, "none");
+    assert_eq!(
+        executor.environment().writable_mount_options,
+        "rw,exec,nosuid,nodev"
+    );
+    assert_eq!(
+        executor.environment_for(ExecutionPolicy::Workspace).network,
+        "bridge"
+    );
+    let install = request(
+        root.path(),
+        r#"
+        test "$(id -u)" != 0 &&
+        test ! -e /var/run/docker.sock &&
+        awk '$2 == "00000000" { found=1 } END { exit !found }' /proc/net/route &&
+        mkdir -p .deps/bin &&
+        printf '#!/bin/sh\nprintf installed-tool-ok' > .deps/bin/example &&
+        chmod +x .deps/bin/example &&
+        touch /cache/ephemeral-marker &&
+        ! touch /usr/local/bin/orvek-must-not-write
+    "#,
+    );
+    let output = executor
+        .run_with_policy(
+            &install,
+            ExecutionPolicy::Workspace,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(output.status, ExecutionStatus::Exited(0), "{output:?}");
+    let verify = request(
+        root.path(),
+        r#"
+        awk '$2 == "00000000" { found=1 } END { exit found }' /proc/net/route &&
+        test ! -e /cache/ephemeral-marker &&
+        test ! -e /usr/local/bin/orvek-must-not-write &&
+        .deps/bin/example
+    "#,
+    );
+    let output = executor
+        .run(&verify, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(output.status, ExecutionStatus::Exited(0), "{output:?}");
+    assert_eq!(output.stdout, b"installed-tool-ok");
 }

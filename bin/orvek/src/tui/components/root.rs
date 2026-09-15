@@ -2,21 +2,20 @@
 
 use super::{
     actions::{Action, ActionAvailability, ActionsEffect, ActionsEvent, ActionsMenu},
-    activity_mark::{ActivityMark, ActivityState},
+    activity::ActivityState,
+    activity_mark::ActivityMark,
     composer::{Composer, ComposerChromeTarget, ComposerDraft, ComposerEffect, ComposerEvent},
     context_diagnostics::{
         ContextDiagnosticsEffect, ContextDiagnosticsEvent, ContextDiagnosticsPanel,
     },
     effort::{EffortEffect, EffortEvent, EffortSelector},
     file_finder::{FileFinder, FileFinderEffect, FileFinderEvent},
+    floating::Floating,
     keybindings::{KeybindingsEffect, KeybindingsEvent, KeybindingsHelp},
     memory::{MemoryBrowser, MemoryBrowserEffect, MemoryBrowserEvent},
     model_selector::{ModelSelector, ModelSelectorEffect, ModelSelectorEvent},
     node::{Component, ComponentUpdate, Node, RenderRequest},
-    notification::{
-        Notification, NotificationDetails, NotificationDetailsEffect, NotificationDetailsEvent,
-    },
-    queue::{MessageQueue, QueueEffect, QueueEvent, QueueId},
+    queue::{MessageQueue, QueueEffect, QueueEvent, QueueId, QueuedInput},
     recent_prompt_picker::{RecentPromptPicker, RecentPromptPickerEffect, RecentPromptPickerEvent},
     review_confirmation::{
         ReviewConfirmationEffect, ReviewConfirmationEvent, ReviewDownloadConfirmation,
@@ -31,37 +30,36 @@ use super::{
 use crate::{
     app::config::{ReasoningEffort, ReasoningMode},
     core::extensions::Skill,
-    sessions::{
-        checkpoint::{RecentPrompt, SessionSummary},
-        record::TranscriptRecord,
-    },
     tui::{
+        children::{ChildUpdate, MessageOrigin},
         context::ContextDiagnostics,
+        format::sanitize_terminal_text,
         prompt::Submission,
+        session::{MAX_RECENT_PROMPTS, RecentPrompt, SessionSummary},
         theme::{Theme, ThemeMode},
+        transcript::TranscriptRecord,
     },
 };
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
-use nanocodex::Model;
+use orvek_harness::inference::Model;
 use orvek_memory::{MemoryAccess, MemoryKey, MemoryRecord, MemorySource};
-use orvek_subagents::{AgentId, AgentStatus, AgentUpdate, MessageSender};
 use ratatui::{
     Frame,
     layout::{Position, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph},
+    text::{Line, Span, Text},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 use semver::Version;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
-use tokio_util::sync::CancellationToken;
 
 const KEY_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(2);
 const SELECTION_SCROLL_INTERVAL: Duration = Duration::from_millis(60);
+const BREADCRUMB_DURATION: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ConfirmationAction {
@@ -101,21 +99,75 @@ struct KeyConfirmation {
     deadline: Instant,
 }
 
+struct Notification {
+    message: Text<'static>,
+    color: Color,
+    deadline: Instant,
+}
+
 struct SelectionAutoScroll {
     direction: isize,
     position: Position,
     deadline: Instant,
 }
 
+impl Notification {
+    fn plain(message: String, color: Color) -> Self {
+        Self {
+            message: Text::from(
+                sanitize_terminal_text(&message)
+                    .split('\n')
+                    .map(|line| {
+                        Line::styled(
+                            line.to_owned(),
+                            Style::default().fg(color).add_modifier(Modifier::BOLD),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            color,
+            deadline: Instant::now() + BREADCRUMB_DURATION,
+        }
+    }
+
+    fn update_available(version: Version) -> Self {
+        let green = Style::default().fg(Color::Green);
+        Self {
+            message: Text::from(Line::from(vec![
+                Span::styled("Update available · ", green),
+                Span::styled(format!("v{version}"), green.add_modifier(Modifier::BOLD)),
+                Span::styled(" · run ", green),
+                Span::styled("`orvek update`", Style::default().fg(Color::Reset)),
+            ])),
+            color: Color::Green,
+            deadline: Instant::now() + BREADCRUMB_DURATION,
+        }
+    }
+}
+
 pub(crate) enum RootEvent {
-    CompactionFinished(Option<String>),
+    SettingsConfirmed {
+        model: orvek_harness::inference::ModelSettings,
+        preferred: ReasoningMode,
+    },
+    QueueEditReady {
+        id: QueueId,
+        expected_input: orvek_harness::Digest,
+        prompt: Submission,
+    },
+    QueueChanged(Vec<QueuedInput>),
+    SubmissionAcknowledged(Submission),
+    SubmissionFailed {
+        uncertain: bool,
+        error: String,
+    },
     Terminal(Event),
     PasteImage(String),
     #[cfg(test)]
     ContextTokens(u64),
     Transcript(Arc<TranscriptRecord>),
-    AgentStreamClosed,
-    Subagent(AgentUpdate),
+    ViewDisconnected,
+    Subagent(ChildUpdate),
     ReplaceDraft(String),
     HandoffFinished(String),
     HandoffCancelled,
@@ -123,29 +175,21 @@ pub(crate) enum RootEvent {
     ReviewStarted,
     ReviewReady(String),
     ReviewCancelled,
-    ReviewFinished(String),
-    ReviewFailed(String),
-    WorkerTurnFinished {
-        terminal_expected: bool,
+    ReviewFinished {
+        markdown: String,
+        feedback: Option<orvek_harness::Digest>,
     },
+    ReviewFailed(String),
     ShellFinished,
     TurnsCancelled,
     ForkReady,
     NewSessionFailed(String),
     SessionsLoaded(Vec<SessionSummary>),
-    FilesLoaded {
-        request: u64,
-        result: Result<Vec<String>, String>,
-    },
     RecentPromptsLoaded {
-        request: u64,
         session_id: String,
         prompts: Vec<RecentPrompt>,
     },
-    RecentPromptLoadFailed {
-        request: u64,
-        error: String,
-    },
+    RecentPromptLoadFailed(String),
     SessionLoadFailed(String),
     MemoriesLoaded {
         access: MemoryAccess,
@@ -163,24 +207,10 @@ pub(crate) enum RootEvent {
         error: String,
         conflict: bool,
     },
-    SessionRestored {
-        projection: Box<RestoredSessionProjection>,
-        effort: ReasoningEffort,
-        reasoning_mode: ReasoningMode,
-        preferred_reasoning_mode: ReasoningMode,
-        fast_mode: bool,
-        model: Model,
-        skills: Arc<[Skill]>,
-    },
     NotifyError(String),
     NotifySuccess(String),
     ConfirmReviewDownload,
     UpdateAvailable(Version),
-    SteerAdmitted(QueueId),
-    SteerPromoted(QueueId),
-    SteerFailed {
-        id: QueueId,
-    },
     AnimationFrame(Instant),
 }
 
@@ -205,32 +235,42 @@ pub(crate) enum SessionListKind {
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum RootEffect {
-    Compact,
-    CancelCompaction,
     Submit(Submission),
+    RetrySubmission,
     Reflect(Submission),
     RunShell(String),
-    ContinueSubagent(Submission),
     OpenDraftEditor,
     OpenConfigEditor,
     OpenLink(String),
+    OpenFile(PathBuf),
     ReloadConfig,
     NewSession(Model),
     LoadSessions(SessionListKind),
-    DiscoverFiles(u64),
-    LoadRecentPrompts {
-        request: u64,
-        current_prompts: Vec<RecentPromptDraft>,
-    },
-    CancelRecentPrompts(u64),
+    LoadRecentPrompts(Vec<RecentPromptDraft>),
     LoadMemories,
     DeleteMemory(MemoryKey),
     ResumeSession(String),
     Steer {
         id: QueueId,
+        expected_input: orvek_harness::Digest,
+    },
+    EditQueued {
+        id: QueueId,
+        expected_input: orvek_harness::Digest,
+    },
+    ReplaceQueued {
+        id: QueueId,
+        expected_input: orvek_harness::Digest,
         prompt: Submission,
     },
-    PersistSteer(String),
+    RemoveQueued {
+        id: QueueId,
+    },
+    MoveQueued {
+        id: QueueId,
+        expected_input: orvek_harness::Digest,
+        before: Option<QueueId>,
+    },
     Copy(String),
     Handoff,
     Review {
@@ -264,13 +304,11 @@ enum Overlay {
     RecentPrompts(Node<RecentPromptPicker>),
     Sessions(Node<SessionPicker>),
     ReviewDownload(Node<ReviewDownloadConfirmation>),
-    NotificationDetails(Node<NotificationDetails>),
     Subagents(SubagentOverlay),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BlockingTask {
-    Compaction,
     Handoff,
     Review,
 }
@@ -278,14 +316,6 @@ enum BlockingTask {
 struct FileMention {
     finder: Node<FileFinder>,
     start: usize,
-    request: u64,
-    cancellation: CancellationToken,
-}
-
-impl Drop for FileMention {
-    fn drop(&mut self) {
-        self.cancellation.cancel();
-    }
 }
 
 struct SkillMention {
@@ -295,6 +325,7 @@ struct SkillMention {
 
 struct QueueEdit {
     id: QueueId,
+    expected_input: orvek_harness::Digest,
     original_draft: Option<ComposerDraft>,
     original_input_mode: Option<String>,
 }
@@ -313,8 +344,6 @@ pub(crate) enum DraftReset {
 
 /// Owns layout and routing so future screen components do not widen the event loop.
 pub(crate) struct RootNode {
-    activity: ActivityMark,
-    activity_outcome: ActivityState,
     transcript: Node<Transcript>,
     composer: Node<Composer>,
     queue: Node<MessageQueue>,
@@ -323,7 +352,6 @@ pub(crate) struct RootNode {
     thread: ThreadState,
     key_confirmation: Option<KeyConfirmation>,
     notification: Option<Notification>,
-    notification_hit_area: Option<Rect>,
     discarded_draft: Option<ComposerDraft>,
     queue_edit: Option<QueueEdit>,
     selection: Selection,
@@ -333,26 +361,25 @@ pub(crate) struct RootNode {
     composer_content_area: Rect,
     queue_area: Rect,
     in_flight_turns: usize,
-    unmatched_worker_turns: usize,
-    unmatched_agent_turns: usize,
+    pending_submission: Option<Submission>,
+    pending_reflection: bool,
+    submission_uncertain: bool,
     in_flight_shells: usize,
     blocking_task: Option<BlockingTask>,
+    activity: ActivityMark,
+    activity_outcome: ActivityState,
+    transcript_activity: Option<ActivityState>,
     review_url: Option<String>,
     fork_available: bool,
     skills: Arc<[Skill]>,
     memory_enabled: bool,
     interactive: bool,
     theme_mode: ThemeMode,
-    motion_enabled: bool,
-    ascii_art: bool,
     preferred_reasoning_mode: ReasoningMode,
     subagents: SubagentTree,
     context_diagnostics: ContextDiagnostics,
     recent_prompts: Vec<RecentPromptDraft>,
     pending_session_mention: Option<usize>,
-    next_file_request: u64,
-    next_recent_request: u64,
-    pending_recent_request: Option<u64>,
     reflection_input: bool,
 }
 
@@ -363,8 +390,6 @@ impl RootNode {
         let mut subagents = SubagentTree::new(thinking);
         subagents.set_workspace(workspace);
         Self {
-            activity: ActivityMark::new(Instant::now()),
-            activity_outcome: ActivityState::Idle,
             transcript: Node::new(transcript),
             composer: Node::new(Composer::new(workspace, thinking)),
             queue: Node::new(MessageQueue::default()),
@@ -373,7 +398,6 @@ impl RootNode {
             thread: ThreadState::New,
             key_confirmation: None,
             notification: None,
-            notification_hit_area: None,
             discarded_draft: None,
             queue_edit: None,
             selection: Selection::default(),
@@ -383,26 +407,25 @@ impl RootNode {
             composer_content_area: Rect::default(),
             queue_area: Rect::default(),
             in_flight_turns: 0,
-            unmatched_worker_turns: 0,
-            unmatched_agent_turns: 0,
+            pending_submission: None,
+            pending_reflection: false,
+            submission_uncertain: false,
             in_flight_shells: 0,
             blocking_task: None,
+            activity: ActivityMark::new(Instant::now()),
+            activity_outcome: ActivityState::Idle,
+            transcript_activity: None,
             review_url: None,
             fork_available: true,
             skills: Arc::from([]),
             memory_enabled: false,
             interactive: true,
             theme_mode: ThemeMode::Auto,
-            motion_enabled: true,
-            ascii_art: false,
             preferred_reasoning_mode: ReasoningMode::Standard,
             subagents,
             context_diagnostics: ContextDiagnostics::default(),
             recent_prompts: Vec::new(),
             pending_session_mention: None,
-            next_file_request: 0,
-            next_recent_request: 0,
-            pending_recent_request: None,
             reflection_input: false,
         }
     }
@@ -427,13 +450,10 @@ impl RootNode {
         root.set_skills(Arc::clone(&self.skills));
         root.memory_enabled = self.memory_enabled;
         root.theme_mode = self.theme_mode;
-        root.set_render_preferences(self.motion_enabled, self.ascii_art);
         root.context_diagnostics = self.context_diagnostics.clone();
-        root.composer
-            .component_mut()
-            .update(ComposerEvent::ContextLimit(
-                root.context_diagnostics.model_window_tokens,
-            ));
+        if let Some(window_tokens) = root.context_diagnostics.model_window_tokens {
+            root.set_context_window_tokens(window_tokens);
+        }
         root.interactive = false;
         root.composer
             .component_mut()
@@ -442,7 +462,6 @@ impl RootNode {
                 status: Some("Forking session…".to_owned()),
                 now: Instant::now(),
             });
-        root.refresh_activity(Instant::now());
         root
     }
 
@@ -461,10 +480,6 @@ impl RootNode {
         }
     }
 
-    pub(crate) const fn set_context_window(&mut self, tokens: u64) {
-        self.context_diagnostics.set_window(tokens);
-    }
-
     pub(crate) fn set_memory_enabled(&mut self, enabled: bool) {
         self.memory_enabled = enabled;
         if !enabled && matches!(&self.overlay, Some(Overlay::Memory(_))) {
@@ -474,23 +489,6 @@ impl RootNode {
 
     pub(crate) fn set_theme_mode(&mut self, mode: ThemeMode) {
         self.theme_mode = mode;
-    }
-
-    pub(crate) fn set_render_preferences(&mut self, motion: bool, ascii: bool) {
-        self.motion_enabled = motion;
-        self.ascii_art = ascii;
-        self.activity.set_preferences(motion, ascii);
-        self.composer.component_mut().set_motion_enabled(motion);
-        self.queue.component_mut().set_motion_enabled(motion);
-        self.transcript
-            .component_mut()
-            .set_render_preferences(motion, ascii);
-        self.subagents.set_render_preferences(motion, ascii);
-        match &mut self.overlay {
-            Some(Overlay::Model(selector)) => selector.component_mut().set_motion_enabled(motion),
-            Some(Overlay::Effort(selector)) => selector.component_mut().set_motion_enabled(motion),
-            _ => {}
-        }
     }
 
     pub(crate) fn set_fast_mode(&mut self, enabled: bool) {
@@ -546,21 +544,14 @@ impl RootNode {
         let fork_available = self.fork_available;
         let memory_enabled = self.memory_enabled;
         let theme_mode = self.theme_mode;
-        let motion_enabled = self.motion_enabled;
-        let ascii_art = self.ascii_art;
         let max_subagents = self.subagents.max_subagents();
-        let next_file_request = self.next_file_request;
-        let next_recent_request = self.next_recent_request;
         *self = Self::new(workspace, thinking);
         self.set_reasoning_modes(reasoning_mode, preferred_reasoning_mode);
         self.discarded_draft = discarded_draft;
         self.fork_available = fork_available;
         self.memory_enabled = memory_enabled;
         self.theme_mode = theme_mode;
-        self.set_render_preferences(motion_enabled, ascii_art);
         self.set_max_subagents(max_subagents);
-        self.next_file_request = next_file_request;
-        self.next_recent_request = next_recent_request;
         if let Some(draft) = preserved_draft {
             self.composer.component_mut().restore_draft(draft);
         }
@@ -600,7 +591,7 @@ impl RootNode {
         let mut recent_prompts = Vec::new();
         for record in records {
             if let Some(prompt) = recent_prompt(&record) {
-                recent_prompts.push(prompt);
+                remember_recent_prompt(&mut recent_prompts, prompt);
             }
             let observation = context_diagnostics.observe(&record);
             if observation.completed_tokens.is_some() {
@@ -626,6 +617,7 @@ impl RootNode {
         fast_mode: bool,
         mut projection: RestoredSessionProjection,
     ) {
+        let context_window_tokens = self.context_diagnostics.model_window_tokens;
         self.reset_session(
             workspace,
             thinking,
@@ -636,16 +628,11 @@ impl RootNode {
         self.set_fast_mode(fast_mode);
         projection.transcript.set_workspace(workspace);
         self.transcript = Node::new(projection.transcript);
-        self.transcript
-            .component_mut()
-            .set_render_preferences(self.motion_enabled, self.ascii_art);
         self.context_diagnostics = projection.context_diagnostics;
-        self.composer
-            .component_mut()
-            .update(ComposerEvent::ContextLimit(
-                self.context_diagnostics.model_window_tokens,
-            ));
         self.recent_prompts = projection.recent_prompts;
+        if let Some(window_tokens) = context_window_tokens {
+            self.set_context_window_tokens(window_tokens);
+        }
         if let Some(tokens) = projection.context_tokens {
             let _ = self
                 .composer
@@ -655,17 +642,18 @@ impl RootNode {
         self.thread = ThreadState::Started;
     }
 
-    pub(crate) const fn composer(&self) -> &Composer {
-        self.composer.component()
+    pub(crate) fn set_context_window_tokens(&mut self, window_tokens: u64) {
+        self.context_diagnostics.model_window_tokens = Some(window_tokens);
+        self.context_diagnostics.auto_compact_token_limit = Some(
+            orvek_harness::context::automatic_projection_token_limit(window_tokens),
+        );
+        self.composer
+            .component_mut()
+            .update(ComposerEvent::ContextWindowTokens(window_tokens));
     }
 
-    pub(crate) fn file_request_token(&self, request: u64) -> Option<CancellationToken> {
-        match &self.overlay {
-            Some(Overlay::FileFinder(mention)) if mention.request == request => {
-                Some(mention.cancellation.clone())
-            }
-            _ => None,
-        }
+    pub(crate) const fn composer(&self) -> &Composer {
+        self.composer.component()
     }
 
     pub(crate) fn render_focused(
@@ -687,31 +675,17 @@ impl RootNode {
         [
             selector,
             self.activity.deadline(),
-            self.overlay
-                .is_none()
-                .then(|| self.transcript.component().animation_deadline())
-                .flatten(),
-            self.overlay
-                .is_none()
-                .then(|| self.composer.component().animation_deadline())
-                .flatten(),
-            self.overlay
-                .is_none()
-                .then(|| self.queue.component().animation_deadline())
-                .flatten(),
+            self.transcript.component().animation_deadline(),
+            self.composer.component().animation_deadline(),
+            self.queue.component().animation_deadline(),
             self.key_confirmation
                 .as_ref()
                 .map(|confirmation| confirmation.deadline),
-            self.notification
-                .as_ref()
-                .and_then(Notification::expires_at),
+            self.notification.as_ref().map(|notice| notice.deadline),
             self.selection_auto_scroll
                 .as_ref()
                 .map(|scroll| scroll.deadline),
-            match &self.overlay {
-                Some(Overlay::Subagents(view)) => self.subagents.animation_deadline(*view),
-                _ => None,
-            },
+            self.subagents.animation_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -719,22 +693,15 @@ impl RootNode {
     }
 
     fn render_root(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme, focused: bool) {
-        if area.is_empty() {
-            return;
-        }
-        let header_height = if area.height >= 16 && !self.ascii_art {
-            2
-        } else {
-            1
-        };
+        let header_height = if area.height >= 16 { 2 } else { 1 };
         let mark_width = if header_height == 2 {
             ActivityMark::WIDTH
         } else {
             1
         }
         .min(area.width);
-        self.activity
-            .set_preferences(self.motion_enabled && header_height == 2, self.ascii_art);
+        self.activity.set_preferences(header_height == 2, false);
+        let activity = self.activity.visual();
         self.activity.render(
             frame,
             Rect::new(area.x, area.y, mark_width, header_height),
@@ -745,54 +712,68 @@ impl RootNode {
             frame.buffer_mut().set_stringn(
                 label_x,
                 area.y,
-                self.activity.state().label(),
+                activity.state().label(),
                 usize::from(area.right() - label_x),
-                Style::default().fg(theme.code_text()),
+                activity.label_style(theme),
             );
         }
-        let area = Rect {
+        let body = Rect {
             y: area.y + header_height,
-            height: area.height - header_height,
+            height: area.height.saturating_sub(header_height),
             ..area
         };
         let height = self
             .composer
             .component_mut()
-            .desired_height(area.width)
-            .min(area.height);
+            .desired_height(body.width)
+            .min(body.height);
         let composer_area = Rect {
-            y: area.bottom().saturating_sub(height),
+            y: body.bottom().saturating_sub(height),
             height,
-            ..area
+            ..body
         };
         self.composer_area = composer_area;
         let queue_height = self
             .queue
             .component()
             .desired_height()
-            .min(area.height.saturating_sub(height));
-        let queue_width = area.width.saturating_mul(95) / 100;
+            .min((body.height / 3).max(3))
+            .min(body.height.saturating_sub(height));
+        let queue_width = body.width.saturating_mul(95) / 100;
         let queue_area = Rect {
-            x: area.x + area.width.saturating_sub(queue_width) / 2,
+            x: body.x + body.width.saturating_sub(queue_width) / 2,
             y: composer_area.y.saturating_sub(queue_height),
             width: queue_width,
             height: queue_height,
         };
         self.queue_area = queue_area;
         let transcript_area = Rect {
-            height: area
+            height: body
                 .height
                 .saturating_sub(height)
                 .saturating_sub(queue_height),
-            ..area
+            ..body
         };
         self.transcript_area = transcript_area;
-        self.composer_content_area = self.composer.component_mut().editor_area(composer_area);
+        self.composer_content_area = if composer_area.width >= 2 && composer_area.height >= 3 {
+            Rect::new(
+                composer_area.x + 1,
+                composer_area.y + 1,
+                composer_area.width - 2,
+                composer_area.height - 2,
+            )
+        } else {
+            Rect {
+                height: composer_area.height.min(1),
+                ..composer_area
+            }
+        };
         self.transcript.render(frame, transcript_area, theme);
         self.queue.render(frame, queue_area, theme);
         let composer_selection = (self.selection.surface() == Some(Surface::Composer))
             .then(|| self.selection.range())
             .flatten();
+        self.composer.component_mut().set_activity(activity);
         self.composer.component_mut().render_focused_with_selection(
             frame,
             composer_area,
@@ -826,7 +807,6 @@ impl RootNode {
                 Overlay::Memory(browser) => browser.render(frame, area, theme),
                 Overlay::RecentPrompts(picker) => picker.render(frame, area, theme),
                 Overlay::Sessions(picker) => picker.render(frame, area, theme),
-                Overlay::NotificationDetails(details) => details.render(frame, area, theme),
                 Overlay::ReviewDownload(confirmation) => {
                     confirmation.render(frame, area, theme);
                 }
@@ -838,21 +818,14 @@ impl RootNode {
                 }
             }
         }
-        let now = Instant::now();
-        if self
-            .notification
-            .as_ref()
-            .is_some_and(|notice| notice.expired(now))
-        {
-            self.notification = None;
-        }
-        self.notification_hit_area = None;
-        if let Some(notification) = &mut self.notification {
-            if self.overlay.is_none() && !self.selection.is_active() && self.interactive {
-                self.notification_hit_area =
-                    notification.render(frame, self.transcript_area, theme);
-            }
-            notification.visibility(self.notification_hit_area.is_some(), now);
+        if let Some(notification) = &self.notification {
+            render_notification(
+                frame,
+                area,
+                theme,
+                &notification.message,
+                notification.color,
+            );
         }
         if let Some(confirmation) = &self.key_confirmation {
             render_key_confirmation(frame, area, composer_area, theme, confirmation.action);
@@ -868,52 +841,15 @@ impl RootNode {
         if is_confirmation_key_repeat(&event) {
             return ComponentUpdate::none();
         }
-        if let Some(request) = self.pending_recent_request {
-            if is_control_c(&event) {
-                return self.update_key_confirmation(ConfirmationAction::Exit, Instant::now());
-            }
-            if is_escape(&event) {
-                self.pending_recent_request = None;
-                self.interactive = true;
-                self.key_confirmation = None;
-                let mut update = self.update_composer(
-                    ComposerEvent::Activity {
-                        active: false,
-                        status: None,
-                        now: Instant::now(),
-                    },
-                    RenderRequest::Immediate,
-                );
-                update
-                    .effects
-                    .push(RootEffect::CancelRecentPrompts(request));
-                return update;
-            }
-            return ComponentUpdate::none();
-        }
         if self.reflection_input && is_escape(&event) {
             return self.cancel_reflection();
         }
         if self.blocking_task.is_some() && is_control_c(&event) {
             return self.update_key_confirmation(ConfirmationAction::Exit, Instant::now());
         }
-        if let Some(update) = self.update_notice_input(&event) {
-            return update;
-        }
         match self.blocking_task {
             Some(BlockingTask::Review) => return self.update_review_input(event),
             Some(BlockingTask::Handoff) => return self.update_handoff_input(event),
-            Some(BlockingTask::Compaction) => {
-                return ComponentUpdate {
-                    effects: if is_escape(&event) {
-                        self.activity_outcome = ActivityState::Cancelled;
-                        vec![RootEffect::CancelCompaction]
-                    } else {
-                        Vec::new()
-                    },
-                    render: RenderRequest::Immediate,
-                };
-            }
             None => {}
         }
         if is_control_c(&event) {
@@ -1019,13 +955,51 @@ impl RootNode {
         if self.transcript.component().updates_banner_clicked(&event) {
             return self.update_transcript(TranscriptEvent::FollowTail);
         }
+        if let Event::Mouse(mouse) = &event
+            && matches!(
+                mouse.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            )
+            && !mouse.modifiers.contains(KeyModifiers::SHIFT)
+        {
+            let position = Position::new(mouse.column, mouse.row);
+            if self.composer_area.contains(position) {
+                let rows = if mouse.kind == MouseEventKind::ScrollUp {
+                    -3
+                } else {
+                    3
+                };
+                let changed = self
+                    .composer
+                    .component_mut()
+                    .scroll_selection(rows, self.composer_content_area);
+                return ComponentUpdate::render(if changed {
+                    RenderRequest::Immediate
+                } else {
+                    RenderRequest::None
+                });
+            }
+            if self.queue_area.contains(position) {
+                return self.update_queue(event);
+            }
+            if self.transcript_area.contains(position)
+                && let Some(command) = self.transcript.component().scroll_command(&event)
+            {
+                return self.update_transcript(TranscriptEvent::Scroll(command));
+            }
+            return ComponentUpdate::none();
+        }
         if let Some(update) = self.update_selection_mouse(&mut event) {
             return update;
         }
         if let Some(destination) = self.transcript.component().link_destination(&event) {
             self.focus_composer();
+            let effect = match workspace_file(&destination, &self.workspace) {
+                Some(path) => RootEffect::OpenFile(path),
+                None => RootEffect::OpenLink(destination.to_string()),
+            };
             return ComponentUpdate {
-                effects: vec![RootEffect::OpenLink(destination.to_string())],
+                effects: vec![effect],
                 render: RenderRequest::Immediate,
             };
         }
@@ -1061,21 +1035,6 @@ impl RootNode {
                 .update(TranscriptEvent::BlurExpandables);
             return ComponentUpdate::render(RenderRequest::Immediate);
         }
-        if let Event::Mouse(mouse) = &event
-            && matches!(
-                mouse.kind,
-                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-            )
-            && self
-                .queue_area
-                .contains(Position::new(mouse.column, mouse.row))
-            && self
-                .queue
-                .component_mut()
-                .mouse_scroll(mouse.kind == MouseEventKind::ScrollUp)
-        {
-            return ComponentUpdate::render(RenderRequest::Immediate);
-        }
         if is_left_click_in(&event, self.composer_area) {
             self.focus_composer();
             return ComponentUpdate::render(RenderRequest::Immediate);
@@ -1094,7 +1053,7 @@ impl RootNode {
         if self.in_flight_turns > 0
             && self.composer.component().draft().is_empty()
             && !self.queue.component().is_empty()
-            && !self.queue.component().has_pending_steer()
+            && !self.queue.component().has_pending_action()
             && is_plain_enter(&event)
         {
             return self.update_queue(event);
@@ -1116,30 +1075,25 @@ impl RootNode {
         if is_file_finder_trigger(&event) && self.composer.component().cursor_is_at_token_boundary()
         {
             let start = self.composer.component().cursor();
-            let mut update =
+            let update =
                 self.update_composer(ComposerEvent::Terminal(event), RenderRequest::Immediate);
-            let request = self.next_file_request;
-            self.next_file_request = self.next_file_request.saturating_add(1);
             self.overlay = Some(Overlay::FileFinder(FileMention {
-                finder: Node::new(FileFinder::loading()),
+                finder: Node::new(FileFinder::new(&self.workspace)),
                 start,
-                request,
-                cancellation: CancellationToken::new(),
             }));
-            update.effects.push(RootEffect::DiscoverFiles(request));
             return update;
         }
         if !self.reflection_input
             && self.composer.component().draft().is_empty()
             && is_actions_trigger(&event)
         {
-            let new_session_enabled = self.in_flight_turns == 0
+            let new_session_enabled = self.pending_submission.is_none()
+                && self.in_flight_turns == 0
                 && self.in_flight_shells == 0
                 && self.blocking_task.is_none()
                 && self.queue.component().is_empty();
             self.overlay = Some(Overlay::Actions(Node::new(ActionsMenu::new(
                 ActionAvailability {
-                    compact: new_session_enabled && self.thread != ThreadState::New,
                     new_session: new_session_enabled,
                     fork: self.can_fork(),
                     fast_mode: self.composer.component().fast_mode(),
@@ -1199,79 +1153,6 @@ impl RootNode {
         })
     }
 
-    fn update_notice_input(&mut self, event: &Event) -> Option<ComponentUpdate<RootEffect>> {
-        if let Some(Overlay::NotificationDetails(_)) = &self.overlay {
-            return Some(self.update_notification_details(event.clone()));
-        }
-        if self.overlay.is_some() {
-            return None;
-        }
-
-        let open_with_key = matches!(
-            &event,
-            Event::Key(key)
-                if key.code == KeyCode::F(2)
-                    && matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
-                    && key.modifiers.is_empty()
-        );
-        let click = match &event {
-            Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
-                Some(Position::new(mouse.column, mouse.row))
-            }
-            _ if open_with_key => None,
-            _ => return None,
-        };
-        let click_hits_notice = click.is_some_and(|position| {
-            self.notification_hit_area
-                .is_some_and(|area| area.contains(position))
-        });
-        if open_with_key || click_hits_notice {
-            return Some(self.open_notification_details());
-        }
-        None
-    }
-
-    fn open_notification_details(&mut self) -> ComponentUpdate<RootEffect> {
-        let now = Instant::now();
-        let can_open = self
-            .notification
-            .as_ref()
-            .is_some_and(|notice| self.notification_hit_area.is_some() && !notice.expired(now));
-        if !can_open {
-            return ComponentUpdate::none();
-        }
-        let details = NotificationDetails::new(
-            self.notification
-                .as_ref()
-                .expect("notice availability was checked before constructing its detail snapshot"),
-        );
-        self.key_confirmation = None;
-        self.overlay = Some(Overlay::NotificationDetails(Node::new(details)));
-        ComponentUpdate::render(RenderRequest::Immediate)
-    }
-
-    fn update_notification_details(&mut self, event: Event) -> ComponentUpdate<RootEffect> {
-        let Some(Overlay::NotificationDetails(details)) = &mut self.overlay else {
-            return ComponentUpdate::none();
-        };
-        let update = details.update(NotificationDetailsEvent::Terminal(event));
-        let effect = update.effects.into_iter().next();
-        match effect {
-            Some(NotificationDetailsEffect::Dismiss) => self.overlay = None,
-            Some(NotificationDetailsEffect::Copy(text)) => {
-                return ComponentUpdate {
-                    effects: vec![RootEffect::Copy(text)],
-                    render: update.render,
-                };
-            }
-            None => {}
-        }
-        ComponentUpdate {
-            effects: Vec::new(),
-            render: update.render,
-        }
-    }
-
     fn update_handoff_input(&mut self, event: Event) -> ComponentUpdate<RootEffect> {
         if is_escape(&event) {
             self.key_confirmation = None;
@@ -1309,34 +1190,6 @@ impl RootNode {
                 self.selection.drag(span);
                 self.begin_selection_auto_scroll(surface, position);
                 Some(ComponentUpdate::render(RenderRequest::Immediate))
-            }
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-                if self.selection.is_active() || self.selection.is_pending() =>
-            {
-                let rows = if mouse.kind == MouseEventKind::ScrollUp {
-                    -3
-                } else {
-                    3
-                };
-                let render = match self.selection.surface()? {
-                    Surface::Transcript => {
-                        self.transcript
-                            .update(TranscriptEvent::Scroll(ScrollCommand::Rows(rows)));
-                        RenderRequest::Immediate
-                    }
-                    Surface::Composer => {
-                        let changed = self
-                            .composer
-                            .component_mut()
-                            .scroll_selection(rows as isize, self.composer_content_area);
-                        if changed {
-                            RenderRequest::Immediate
-                        } else {
-                            RenderRequest::None
-                        }
-                    }
-                };
-                Some(ComponentUpdate::render(render))
             }
             MouseEventKind::Up(MouseButton::Left)
                 if self.selection.is_active() || self.selection.is_pending() =>
@@ -1472,7 +1325,6 @@ impl RootNode {
             Some(Overlay::RecentPrompts(_)) => self.update_recent_prompt_picker(event),
             Some(Overlay::Sessions(_)) => self.update_session_picker(event),
             Some(Overlay::ReviewDownload(_)) => self.update_review_confirmation(event),
-            Some(Overlay::NotificationDetails(_)) => self.update_notification_details(event),
             Some(Overlay::Subagents(SubagentOverlay::Tree)) => {
                 let effect = self.subagents.update_tree(event);
                 self.apply_subagent_effect(effect)
@@ -1559,7 +1411,7 @@ impl RootNode {
             return update;
         }
 
-        if !is_picker_navigation(&event) && !matches!(event, Event::Mouse(_)) {
+        if !is_picker_navigation(&event) {
             self.overlay = None;
             if is_escape(&event) {
                 return ComponentUpdate::render(RenderRequest::Immediate);
@@ -1623,7 +1475,7 @@ impl RootNode {
             return update;
         }
 
-        if !is_picker_navigation(&event) && !matches!(event, Event::Mouse(_)) {
+        if !is_picker_navigation(&event) {
             self.overlay = None;
             if is_escape(&event) {
                 return ComponentUpdate::render(RenderRequest::Immediate);
@@ -1673,20 +1525,6 @@ impl RootNode {
         };
         let update = actions.update(ActionsEvent::Terminal(event));
         match update.effects.into_iter().next() {
-            Some(ActionsEffect::Trigger(Action::Compact)) => {
-                self.overlay = None;
-                self.blocking_task = Some(BlockingTask::Compaction);
-                let mut update = self.update_composer(
-                    ComposerEvent::ReviewWaiting {
-                        waiting: true,
-                        status: Some("Compacting context · Esc cancels".to_owned()),
-                        now: Instant::now(),
-                    },
-                    RenderRequest::Immediate,
-                );
-                update.effects.push(RootEffect::Compact);
-                return update;
-            }
             Some(ActionsEffect::Dismiss) => self.overlay = None,
             Some(ActionsEffect::Trigger(Action::Subagents)) => {
                 self.subagents.open_tree();
@@ -1702,6 +1540,7 @@ impl RootNode {
                 self.overlay = None;
                 let enabled = !self.composer.component().fast_mode();
                 self.set_fast_mode(enabled);
+                self.begin_settings_successor();
                 return ComponentUpdate {
                     effects: vec![RootEffect::SetFastMode(enabled)],
                     render: RenderRequest::Immediate,
@@ -1775,7 +1614,7 @@ impl RootNode {
             }
             Some(ActionsEffect::Trigger(Action::Handoff)) => {
                 self.overlay = None;
-                self.blocking_task = Some(BlockingTask::Handoff);
+                self.start_blocking_task(BlockingTask::Handoff);
                 let waiting = self.update_composer(
                     ComposerEvent::ReviewWaiting {
                         waiting: true,
@@ -1871,12 +1710,10 @@ impl RootNode {
     }
 
     fn open_effort(&mut self) -> ComponentUpdate<RootEffect> {
-        let mut selector = EffortSelector::new(
+        self.overlay = Some(Overlay::Effort(Node::new(EffortSelector::new(
             self.composer.component().effort(),
             self.preferred_reasoning_mode == ReasoningMode::Pro,
-        );
-        selector.set_motion_enabled(self.motion_enabled);
-        self.overlay = Some(Overlay::Effort(Node::new(selector)));
+        ))));
         ComponentUpdate::render(RenderRequest::Immediate)
     }
 
@@ -1884,9 +1721,9 @@ impl RootNode {
         if self.thread != ThreadState::New {
             return ComponentUpdate::none();
         }
-        let mut selector = ModelSelector::new(self.composer.component().model());
-        selector.set_motion_enabled(self.motion_enabled);
-        self.overlay = Some(Overlay::Model(Node::new(selector)));
+        self.overlay = Some(Overlay::Model(Node::new(ModelSelector::new(
+            self.composer.component().model(),
+        ))));
         ComponentUpdate::render(RenderRequest::Immediate)
     }
 
@@ -1927,7 +1764,8 @@ impl RootNode {
     }
 
     fn open_new_session(&mut self) -> ComponentUpdate<RootEffect> {
-        if self.in_flight_turns > 0
+        if self.pending_submission.is_some()
+            || self.in_flight_turns > 0
             || self.in_flight_shells > 0
             || !self.queue.component().is_empty()
         {
@@ -1947,6 +1785,18 @@ impl RootNode {
             effects: vec![RootEffect::NewSession(self.composer.component().model())],
             render: RenderRequest::Immediate,
         }
+    }
+
+    fn begin_settings_successor(&mut self) {
+        self.interactive = false;
+        let _ = self
+            .composer
+            .component_mut()
+            .update(ComposerEvent::Activity {
+                active: true,
+                status: Some("Starting a new session with these settings…".to_owned()),
+                now: Instant::now(),
+            });
     }
 
     pub(super) fn load_sessions(&mut self) -> ComponentUpdate<RootEffect> {
@@ -1987,9 +1837,6 @@ impl RootNode {
 
     fn load_recent_prompts(&mut self) -> ComponentUpdate<RootEffect> {
         self.overlay = None;
-        let request = self.next_recent_request;
-        self.next_recent_request = self.next_recent_request.saturating_add(1);
-        self.pending_recent_request = Some(request);
         self.interactive = false;
         let _ = self
             .composer
@@ -2000,24 +1847,16 @@ impl RootNode {
                 now: Instant::now(),
             });
         ComponentUpdate {
-            effects: vec![RootEffect::LoadRecentPrompts {
-                request,
-                current_prompts: self.recent_prompts.clone(),
-            }],
+            effects: vec![RootEffect::LoadRecentPrompts(self.recent_prompts.clone())],
             render: RenderRequest::Immediate,
         }
     }
 
     fn recent_prompts_loaded(
         &mut self,
-        request: u64,
         session_id: String,
         prompts: Vec<RecentPrompt>,
     ) -> ComponentUpdate<RootEffect> {
-        if self.pending_recent_request != Some(request) {
-            return ComponentUpdate::none();
-        }
-        self.pending_recent_request = None;
         self.interactive = true;
         let _ = self
             .composer
@@ -2027,9 +1866,9 @@ impl RootNode {
                 status: None,
                 now: Instant::now(),
             });
-        let mut picker = RecentPromptPicker::new(prompts, session_id);
-        picker.set_has_draft_images(self.composer.component().has_images());
-        self.overlay = Some(Overlay::RecentPrompts(Node::new(picker)));
+        self.overlay = Some(Overlay::RecentPrompts(Node::new(RecentPromptPicker::new(
+            prompts, session_id,
+        ))));
         ComponentUpdate::render(RenderRequest::Immediate)
     }
 
@@ -2057,15 +1896,7 @@ impl RootNode {
         }
     }
 
-    fn recent_prompt_load_failed(
-        &mut self,
-        request: u64,
-        message: String,
-    ) -> ComponentUpdate<RootEffect> {
-        if self.pending_recent_request != Some(request) {
-            return ComponentUpdate::none();
-        }
-        self.pending_recent_request = None;
+    fn recent_prompt_load_failed(&mut self, message: String) -> ComponentUpdate<RootEffect> {
         self.interactive = true;
         self.notification = Some(Notification::plain(message, Color::Red));
         self.update_composer(
@@ -2242,6 +2073,7 @@ impl RootNode {
                     .composer
                     .component_mut()
                     .update(ComposerEvent::SetEffort(effort));
+                self.begin_settings_successor();
                 ComponentUpdate {
                     effects: vec![RootEffect::SetEffort {
                         effort,
@@ -2311,31 +2143,44 @@ impl RootNode {
     fn update_queue(&mut self, event: Event) -> ComponentUpdate<RootEffect> {
         let update = self.queue.update(QueueEvent::Terminal(event));
         let mut effects = Vec::new();
-        let mut render = update.render;
+        let render = update.render;
         for effect in update.effects {
             match effect {
                 QueueEffect::Blur => {}
-                QueueEffect::Edit { id, prompt } => {
-                    let edit = self.begin_queue_edit(id, prompt);
-                    effects.extend(edit.effects);
-                    render = render.max(edit.render);
+                QueueEffect::Edit {
+                    id, expected_input, ..
+                } => effects.push(RootEffect::EditQueued { id, expected_input }),
+                QueueEffect::Steer { id, expected_input } => {
+                    effects.push(RootEffect::Steer { id, expected_input })
                 }
-                QueueEffect::Steer { id, prompt } => {
-                    effects.push(RootEffect::Steer { id, prompt });
-                }
+                QueueEffect::Remove { id } => effects.push(RootEffect::RemoveQueued { id }),
+                QueueEffect::Move {
+                    id,
+                    expected_input,
+                    before,
+                } => effects.push(RootEffect::MoveQueued {
+                    id,
+                    expected_input,
+                    before,
+                }),
             }
         }
         ComponentUpdate { effects, render }
     }
 
-    fn begin_queue_edit(&mut self, id: QueueId, prompt: Submission) -> ComponentUpdate<RootEffect> {
+    fn begin_queue_edit(
+        &mut self,
+        id: QueueId,
+        expected_input: orvek_harness::Digest,
+        prompt: Submission,
+    ) -> ComponentUpdate<RootEffect> {
         let original_input_mode = self
             .composer
             .component()
             .input_mode()
             .map(ToOwned::to_owned);
         let original_draft = self.composer.component_mut().take_draft();
-        self.composer.component_mut().replace_submission(prompt);
+        self.composer.component_mut().replace_submission(&prompt);
         let _ = self
             .composer
             .component_mut()
@@ -2344,6 +2189,7 @@ impl RootNode {
             )));
         self.queue_edit = Some(QueueEdit {
             id,
+            expected_input,
             original_draft,
             original_input_mode,
         });
@@ -2364,7 +2210,7 @@ impl RootNode {
         let Some(edit) = self.queue_edit.take() else {
             return ComponentUpdate::none();
         };
-        let prompt = save.then(|| self.composer.component_mut().take_submission());
+        let prompt = self.composer.component().submission();
         self.composer.component_mut().replace_draft(String::new());
         if let Some(draft) = edit.original_draft {
             self.composer.component_mut().restore_draft(draft);
@@ -2374,17 +2220,23 @@ impl RootNode {
             .component_mut()
             .update(ComposerEvent::InputMode(edit.original_input_mode));
 
-        let restored = match prompt {
-            Some(prompt) => self
-                .queue
-                .component_mut()
-                .finish_edit(edit.id, prompt.unwrap_or_else(|| String::new().into())),
-            None => self.queue.component_mut().cancel_edit(edit.id),
+        self.queue.component_mut().cancel_edit(edit.id);
+        let effects = if save {
+            match prompt {
+                Some(prompt) => vec![RootEffect::ReplaceQueued {
+                    id: edit.id,
+                    expected_input: edit.expected_input,
+                    prompt,
+                }],
+                None => vec![RootEffect::RemoveQueued { id: edit.id }],
+            }
+        } else {
+            Vec::new()
         };
-        if !restored {
-            return ComponentUpdate::render(RenderRequest::Immediate);
+        ComponentUpdate {
+            effects,
+            render: RenderRequest::Immediate,
         }
-        self.submit_next_queued()
     }
 
     fn update_composer(
@@ -2392,6 +2244,20 @@ impl RootNode {
         event: ComposerEvent,
         priority: RenderRequest,
     ) -> ComponentUpdate<RootEffect> {
+        if matches!(&event,ComposerEvent::Terminal(event) if is_plain_enter(event))
+            && self.pending_submission.is_some()
+        {
+            let retry = self.submission_uncertain;
+            self.submission_uncertain = false;
+            return ComponentUpdate {
+                effects: if retry {
+                    vec![RootEffect::RetrySubmission]
+                } else {
+                    Vec::new()
+                },
+                render: RenderRequest::Immediate,
+            };
+        }
         let update = self.composer.component_mut().update(event);
         let submitted = matches!(&update.effect, Some(ComposerEffect::Submit(_)));
         if submitted {
@@ -2406,18 +2272,15 @@ impl RootNode {
             render = render.max(self.update_transcript(TranscriptEvent::FollowTail).render);
         }
         let effects = match update.effect {
-            Some(ComposerEffect::Submit(prompt))
-                if self.in_flight_turns > 0 || self.queue.component().has_pending_steer() =>
-            {
-                self.queue.component_mut().push(prompt);
-                Vec::new()
-            }
             Some(ComposerEffect::Submit(prompt)) => {
-                self.in_flight_turns = self.in_flight_turns.saturating_add(1);
+                self.pending_reflection = false;
+                self.pending_submission = Some(prompt.clone());
+                self.submission_uncertain = false;
                 vec![RootEffect::Submit(prompt)]
             }
             Some(ComposerEffect::RunShell(command)) => {
                 self.in_flight_shells = self.in_flight_shells.saturating_add(1);
+                self.refresh_activity(Instant::now());
                 vec![RootEffect::RunShell(command)]
             }
             Some(ComposerEffect::OpenDraftEditor) => vec![RootEffect::OpenDraftEditor],
@@ -2430,13 +2293,15 @@ impl RootNode {
     fn submit_reflection(&mut self) -> ComponentUpdate<RootEffect> {
         let instructions = self
             .composer
-            .component_mut()
-            .take_submission()
+            .component()
+            .submission()
             .unwrap_or_else(|| Submission::text(String::new()));
         self.reflection_input = false;
         let mode = self.update_composer(ComposerEvent::InputMode(None), RenderRequest::Immediate);
         self.thread = ThreadState::Started;
-        self.in_flight_turns = self.in_flight_turns.saturating_add(1);
+        self.pending_submission = Some(instructions.clone());
+        self.pending_reflection = true;
+        self.submission_uncertain = false;
         let transcript = self.update_transcript(TranscriptEvent::FollowTail);
         ComponentUpdate {
             effects: vec![RootEffect::Reflect(instructions)],
@@ -2481,95 +2346,40 @@ impl RootNode {
         ));
     }
 
-    fn turn_finished(&mut self) -> ComponentUpdate<RootEffect> {
-        self.in_flight_turns = self.in_flight_turns.saturating_sub(1);
-        self.submit_next_queued()
-    }
-
-    fn worker_turn_finished(&mut self, terminal_expected: bool) -> ComponentUpdate<RootEffect> {
-        if !terminal_expected {
-            return self.turn_finished();
-        }
-        if self.unmatched_agent_turns > 0 {
-            self.unmatched_agent_turns -= 1;
-            return self.turn_finished();
-        }
-        self.unmatched_worker_turns = self.unmatched_worker_turns.saturating_add(1);
-        ComponentUpdate::none()
-    }
-
     fn agent_turn_finished(&mut self) -> ComponentUpdate<RootEffect> {
-        if self.unmatched_worker_turns > 0 {
-            self.unmatched_worker_turns -= 1;
-            return self.turn_finished();
+        self.in_flight_turns = self.in_flight_turns.saturating_sub(1);
+        if self.in_flight_turns == 0 {
+            self.activity_outcome = ActivityState::Complete;
+            self.refresh_activity(Instant::now());
         }
-        self.unmatched_agent_turns = self.unmatched_agent_turns.saturating_add(1);
-        ComponentUpdate::none()
+        ComponentUpdate::render(RenderRequest::Immediate)
     }
 
     fn turns_cancelled(&mut self) -> ComponentUpdate<RootEffect> {
-        self.queue.component_mut().cancel_steers();
+        self.in_flight_turns = 0;
+        self.transcript_activity = None;
+        self.activity_outcome = ActivityState::Cancelled;
+        self.composer
+            .component_mut()
+            .update(ComposerEvent::TurnsCleared);
+        self.refresh_activity(Instant::now());
         ComponentUpdate::render(RenderRequest::Immediate)
-    }
-
-    fn steer_admitted(&mut self, id: QueueId) -> ComponentUpdate<RootEffect> {
-        let applied = self.queue.component_mut().steer_admitted(id);
-        self.finish_applied_steer(applied)
-    }
-
-    fn steer_promoted(&mut self, id: QueueId) -> ComponentUpdate<RootEffect> {
-        let _ = self.queue.component_mut().steer_promoted(id);
-        self.in_flight_turns = self.in_flight_turns.saturating_add(1);
-        ComponentUpdate::render(RenderRequest::Immediate)
-    }
-
-    fn steer_failed(&mut self, id: QueueId) -> ComponentUpdate<RootEffect> {
-        self.queue.component_mut().steer_failed(id);
-        self.submit_next_queued()
-    }
-
-    fn steer_applied(&mut self) -> ComponentUpdate<RootEffect> {
-        let applied = self.queue.component_mut().steer_applied();
-        self.finish_applied_steer(applied)
-    }
-
-    fn finish_applied_steer(&mut self, applied: Option<Submission>) -> ComponentUpdate<RootEffect> {
-        let mut update = self.submit_next_queued();
-        if let Some(prompt) = applied {
-            update.effects.insert(
-                0,
-                RootEffect::PersistSteer(prompt.display_text().to_owned()),
-            );
-        }
-        update
-    }
-
-    fn submit_next_queued(&mut self) -> ComponentUpdate<RootEffect> {
-        if self.in_flight_turns > 0 || self.queue.component().has_pending_steer() {
-            return ComponentUpdate::render(RenderRequest::Immediate);
-        }
-        let prompts = self.queue.component_mut().drain_ready();
-        if prompts.is_empty() {
-            return ComponentUpdate::render(RenderRequest::Immediate);
-        }
-        self.in_flight_turns = 1;
-        ComponentUpdate {
-            effects: vec![RootEffect::Submit(Submission::join(prompts))],
-            render: RenderRequest::Immediate,
-        }
     }
 
     fn update_transcript(&mut self, event: TranscriptEvent) -> ComponentUpdate<RootEffect> {
         let update = self.transcript.update(event);
         let mut render = update.render;
         for effect in update.effects {
+            let now = Instant::now();
+            self.transcript_activity = effect.state;
+            self.refresh_activity(now);
             let composer = self
                 .composer
                 .component_mut()
                 .update(ComposerEvent::Activity {
                     active: effect.active,
                     status: effect.status,
-                    now: Instant::now(),
+                    now,
                 });
             if composer.changed {
                 render = render.max(RenderRequest::Streaming);
@@ -2581,31 +2391,8 @@ impl RootNode {
         }
     }
 
-    fn refresh_activity(&mut self, now: Instant) -> bool {
-        let cancelled = self.activity_outcome == ActivityState::Cancelled
-            && self.in_flight_turns == 0
-            && self.in_flight_shells == 0
-            && self.blocking_task.is_none();
-        let projected = self.transcript.component().visual_activity();
-        let state = if cancelled {
-            ActivityState::Cancelled
-        } else if self.blocking_task == Some(BlockingTask::Compaction)
-            || projected == Some(ActivityState::Compacting)
-        {
-            ActivityState::Compacting
-        } else if self.in_flight_shells > 0 || self.subagents.active_count() > 0 {
-            ActivityState::Working
-        } else if let Some(state) = projected {
-            state
-        } else if self.blocking_task.is_some() || self.in_flight_turns > 0 || !self.interactive {
-            ActivityState::Thinking
-        } else {
-            self.activity_outcome
-        };
-        self.activity.set_state(state, now)
-    }
-
     fn update_animation(&mut self, now: Instant) -> ComponentUpdate<RootEffect> {
+        self.refresh_activity(now);
         let activity = if self.activity.advance(now) {
             RenderRequest::Streaming
         } else {
@@ -2623,28 +2410,12 @@ impl RootNode {
         };
         let effort = self.update_effort(EffortEvent::AnimationFrame(now));
         let model = self.update_model(ModelSelectorEvent::AnimationFrame(now));
-        let visible = self.overlay.is_none();
-        let transcript = if visible {
-            self.update_transcript(TranscriptEvent::AnimationFrame(now))
-        } else {
-            ComponentUpdate::none()
-        };
-        let composer = if visible {
-            self.update_composer(ComposerEvent::AnimationFrame(now), RenderRequest::Streaming)
-        } else {
-            ComponentUpdate::none()
-        };
-        let queue = if visible {
-            self.queue.update(QueueEvent::AnimationFrame(now))
-        } else {
-            ComponentUpdate::none()
-        };
+        let transcript = self.update_transcript(TranscriptEvent::AnimationFrame(now));
+        let composer =
+            self.update_composer(ComposerEvent::AnimationFrame(now), RenderRequest::Streaming);
+        let queue = self.queue.update(QueueEvent::AnimationFrame(now));
         debug_assert!(queue.effects.is_empty());
-        let subagents_changed = match &self.overlay {
-            Some(Overlay::Subagents(view)) => self.subagents.advance(now, *view),
-            _ => false,
-        };
-        let subagents = if subagents_changed {
+        let subagents = if self.subagents.advance(now) {
             RenderRequest::Streaming
         } else {
             RenderRequest::None
@@ -2653,7 +2424,7 @@ impl RootNode {
         let notification = if self
             .notification
             .as_ref()
-            .is_some_and(|notice| notice.expired(now))
+            .is_some_and(|notice| now >= notice.deadline)
         {
             self.notification = None;
             RenderRequest::Immediate
@@ -2675,10 +2446,38 @@ impl RootNode {
                 .max(queue.render)
                 .max(subagents)
                 .max(selection)
+                .max(activity)
                 .max(confirmation)
-                .max(notification)
-                .max(activity),
+                .max(notification),
         }
+    }
+
+    fn start_blocking_task(&mut self, task: BlockingTask) {
+        self.blocking_task = Some(task);
+        self.activity_outcome = ActivityState::Idle;
+        self.refresh_activity(Instant::now());
+    }
+
+    fn finish_blocking_task(&mut self, outcome: ActivityState) {
+        self.blocking_task = None;
+        self.activity_outcome = outcome;
+        self.refresh_activity(Instant::now());
+    }
+
+    /// Projects turn, shell, and overlay activity into the header mark. The
+    /// outcome state persists after a turn settles so the mark lands on
+    /// Complete, Error, or Cancelled instead of snapping straight to Idle.
+    fn refresh_activity(&mut self, now: Instant) {
+        let state = if self.in_flight_shells > 0 || self.subagents.active_count() > 0 {
+            ActivityState::Working
+        } else if let Some(state) = self.transcript_activity {
+            state
+        } else if self.in_flight_turns > 0 || self.blocking_task.is_some() {
+            ActivityState::Thinking
+        } else {
+            self.activity_outcome
+        };
+        self.activity.set_state(state, now);
     }
 
     fn update_selection_auto_scroll(&mut self, now: Instant) -> RenderRequest {
@@ -2704,20 +2503,13 @@ impl RootNode {
         RenderRequest::Immediate
     }
 
-    fn apply_subagent_update(&mut self, update: AgentUpdate) -> ComponentUpdate<RootEffect> {
+    fn apply_subagent_update(&mut self, update: ChildUpdate) -> ComponentUpdate<RootEffect> {
         let previous_active = self.subagents.active_count();
-        let completion = match &update {
-            AgentUpdate::Status {
-                id,
-                status: AgentStatus::Completed { .. },
-            } => Some(*id),
-            _ => None,
-        };
         let root_message = match &update {
-            AgentUpdate::Message(update)
+            ChildUpdate::Message(update)
                 if update.thread.messages.iter().any(|message| {
                     message.id == update.message_id
-                        && matches!(message.from, MessageSender::Agent { .. })
+                        && matches!(message.from, MessageOrigin::Child { .. })
                 }) =>
             {
                 Some(update.clone())
@@ -2727,7 +2519,7 @@ impl RootNode {
         let subagents_changed = self.subagents.apply(update);
         let mut result = root_message.map_or_else(ComponentUpdate::none, |update| {
             self.update_transcript(TranscriptEvent::DirectedMessage {
-                perspective: MessageSender::Root,
+                perspective: MessageOrigin::Root,
                 update,
             })
         });
@@ -2741,43 +2533,18 @@ impl RootNode {
         }
         let active = self.subagents.active_count();
         if active != previous_active {
+            let now = Instant::now();
+            self.refresh_activity(now);
             let _ = self
                 .composer
                 .component_mut()
-                .update(ComposerEvent::ActiveSubagents {
-                    count: active,
-                    now: Instant::now(),
-                });
+                .update(ComposerEvent::ActiveSubagents { count: active, now });
         }
         if subagents_changed {
             result.render = result.render.max(RenderRequest::Immediate);
         }
-        if let Some(id) = completion
-            && subagents_changed
-            && self.subagents.is_direct_child(id)
-            && self.in_flight_turns == 0
-            && self.blocking_task.is_none()
-            && self.interactive
-        {
-            self.thread = ThreadState::Started;
-            self.in_flight_turns = 1;
-            result
-                .effects
-                .push(RootEffect::ContinueSubagent(subagent_completion_prompt(id)));
-        }
         result
     }
-}
-
-fn subagent_completion_prompt(id: AgentId) -> Submission {
-    Submission::text(format!(
-        "A subagent completed after the previous turn ended. Continue the current task by \
-         inspecting its structured result. In code mode, include completed agents when calling \
-         list_agents, find agent {id}, and expose only the result fields needed for the next step. \
-         Integrate or verify them as appropriate, perform any remaining work, and then respond to \
-         the user. Do not merely repeat the raw result.\n\n\
-         <subagent_completion agent_id=\"{id}\" />"
-    ))
 }
 
 impl Component for RootNode {
@@ -2785,28 +2552,60 @@ impl Component for RootNode {
     type Effect = RootEffect;
 
     fn update(&mut self, event: Self::Event) -> ComponentUpdate<Self::Effect> {
-        if let Some(outcome) = activity_outcome(&event) {
-            let cancelled_completion = self.activity_outcome == ActivityState::Cancelled
-                && (matches!(&event, RootEvent::CompactionFinished(_))
-                    || matches!(&event, RootEvent::Transcript(record) if matches!(record.kind(), "run.failed" | "shell.finished")));
-            if !cancelled_completion {
-                self.activity_outcome = outcome;
+        match event {
+            RootEvent::SettingsConfirmed { model, preferred } => {
+                self.composer
+                    .component_mut()
+                    .update(ComposerEvent::SetEffort(model.thinking.into()));
+                self.set_fast_mode(model.fast_mode);
+                self.set_model(model.model);
+                self.set_reasoning_modes(model.reasoning_mode.into(), preferred);
+                ComponentUpdate::render(RenderRequest::Immediate)
             }
-        }
-        let mut update = match event {
-            RootEvent::CompactionFinished(error) => {
-                self.blocking_task = None;
-                if let Some(error) = error {
-                    self.notification = Some(Notification::plain(error, Color::Yellow));
+            RootEvent::QueueEditReady {
+                id,
+                expected_input,
+                prompt,
+            } => self.begin_queue_edit(id, expected_input, prompt),
+            RootEvent::QueueChanged(inputs) => {
+                self.queue.component_mut().replace(inputs);
+                ComponentUpdate::render(RenderRequest::Immediate)
+            }
+            RootEvent::SubmissionAcknowledged(prompt) => {
+                if self.pending_submission.as_ref() == Some(&prompt) {
+                    self.pending_submission = None;
+                    self.submission_uncertain = false;
+                    if self.pending_reflection {
+                        if self.composer.component().submission().as_ref() == Some(&prompt) {
+                            self.composer.component_mut().replace_draft(String::new());
+                        }
+                    } else {
+                        self.composer
+                            .component_mut()
+                            .acknowledge_submission(&prompt);
+                    }
+                    self.pending_reflection = false;
                 }
-                self.update_composer(
-                    ComposerEvent::ReviewWaiting {
-                        waiting: false,
-                        status: None,
-                        now: Instant::now(),
-                    },
-                    RenderRequest::Immediate,
-                )
+                ComponentUpdate::render(RenderRequest::Immediate)
+            }
+            RootEvent::SubmissionFailed { uncertain, error } => {
+                self.submission_uncertain = uncertain;
+                self.activity_outcome = ActivityState::Error;
+                self.refresh_activity(Instant::now());
+                if !uncertain {
+                    self.pending_submission = None;
+                    if self.pending_reflection {
+                        self.reflection_input = true;
+                        self.composer
+                            .component_mut()
+                            .update(ComposerEvent::InputMode(Some(
+                                "Reflection instructions · enter retry · esc cancel".into(),
+                            )));
+                    }
+                    self.pending_reflection = false;
+                }
+                self.notification = Some(Notification::plain(error, Color::Red));
+                ComponentUpdate::render(RenderRequest::Immediate)
             }
             RootEvent::Terminal(event) => self.update_terminal(event),
             RootEvent::PasteImage(data_url) => {
@@ -2828,21 +2627,37 @@ impl Component for RootNode {
                 RenderRequest::Streaming,
             ),
             RootEvent::Transcript(record) => {
-                if let Some(prompt) = recent_prompt(&record) {
-                    self.recent_prompts.push(prompt);
+                if let Some(crate::tui::host_projection::ViewChange::RequestStarted { .. }) =
+                    record.host()
+                {
+                    self.in_flight_turns = 1;
+                    self.activity_outcome = ActivityState::Thinking;
+                    self.refresh_activity(Instant::now());
+                    self.thread = ThreadState::Started;
                 }
-                let steer_applied = record.kind() == "run.steered";
-                let turn_finished = matches!(record.kind(), "run.completed" | "run.failed");
-                let turn_timer = turn_timer_event(&record);
-                let previous_limit = self.context_diagnostics.model_window_tokens;
-                let observation = self.context_diagnostics.observe(&record);
-                if previous_limit != self.context_diagnostics.model_window_tokens {
+                if let Some(crate::tui::host_projection::ViewChange::Settings(settings)) =
+                    record.host()
+                {
                     self.composer
                         .component_mut()
-                        .update(ComposerEvent::ContextLimit(
-                            self.context_diagnostics.model_window_tokens,
-                        ));
+                        .update(ComposerEvent::SetEffort(settings.thinking.into()));
+                    self.set_fast_mode(settings.fast_mode);
+                    self.set_model(settings.model);
+                    self.set_reasoning_modes(
+                        settings.reasoning_mode.into(),
+                        self.preferred_reasoning_mode,
+                    );
                 }
+
+                if let Some(prompt) = recent_prompt(&record) {
+                    remember_recent_prompt(&mut self.recent_prompts, prompt);
+                }
+                let turn_finished = matches!(
+                    record.host(),
+                    Some(crate::tui::host_projection::ViewChange::RequestSettled { .. })
+                );
+                let turn_timer = turn_timer_event(&record);
+                let observation = self.context_diagnostics.observe(&record);
                 if let Some(Overlay::ContextDiagnostics(panel)) = &mut self.overlay {
                     panel
                         .component_mut()
@@ -2862,11 +2677,6 @@ impl Component for RootNode {
                     update.effects.extend(context.effects);
                     update.render = update.render.max(context.render);
                 }
-                if steer_applied {
-                    let applied = self.steer_applied();
-                    update.effects.extend(applied.effects);
-                    update.render = update.render.max(applied.render);
-                }
                 if turn_finished {
                     let finished = self.agent_turn_finished();
                     update.effects.extend(finished.effects);
@@ -2874,12 +2684,16 @@ impl Component for RootNode {
                 }
                 update
             }
-            RootEvent::AgentStreamClosed => {
+            RootEvent::ViewDisconnected => {
+                self.in_flight_turns = 0;
+                self.activity_outcome = ActivityState::Error;
                 let mut update = self.update_transcript(TranscriptEvent::AgentStreamClosed);
+                self.transcript_activity = None;
                 let timer =
                     self.update_composer(ComposerEvent::TurnsCleared, RenderRequest::Immediate);
                 update.effects.extend(timer.effects);
                 update.render = update.render.max(timer.render);
+                self.refresh_activity(Instant::now());
                 update
             }
             RootEvent::Subagent(update) => self.apply_subagent_update(update),
@@ -2887,7 +2701,7 @@ impl Component for RootNode {
                 self.update_composer(ComposerEvent::ReplaceDraft(draft), RenderRequest::Immediate)
             }
             RootEvent::HandoffFinished(prompt) => {
-                self.blocking_task = None;
+                self.finish_blocking_task(ActivityState::Complete);
                 let waiting = self.update_composer(
                     ComposerEvent::ReviewWaiting {
                         waiting: false,
@@ -2905,7 +2719,7 @@ impl Component for RootNode {
                 draft
             }
             RootEvent::HandoffCancelled => {
-                self.blocking_task = None;
+                self.finish_blocking_task(ActivityState::Cancelled);
                 self.notification = Some(Notification::plain(
                     "Handoff cancelled.".to_owned(),
                     Color::Yellow,
@@ -2920,7 +2734,7 @@ impl Component for RootNode {
                 )
             }
             RootEvent::HandoffFailed(message) => {
-                self.blocking_task = None;
+                self.finish_blocking_task(ActivityState::Error);
                 self.notification = Some(Notification::plain(message, Color::Red));
                 self.update_composer(
                     ComposerEvent::ReviewWaiting {
@@ -2932,7 +2746,7 @@ impl Component for RootNode {
                 )
             }
             RootEvent::ReviewStarted => {
-                self.blocking_task = Some(BlockingTask::Review);
+                self.start_blocking_task(BlockingTask::Review);
                 self.review_url = None;
                 self.update_composer(
                     ComposerEvent::ReviewWaiting {
@@ -2954,8 +2768,8 @@ impl Component for RootNode {
                     RenderRequest::Immediate,
                 )
             }
-            RootEvent::ReviewFinished(markdown) => {
-                self.blocking_task = None;
+            RootEvent::ReviewFinished { markdown, feedback } => {
+                self.finish_blocking_task(ActivityState::Complete);
                 self.review_url = None;
                 let waiting = self.update_composer(
                     ComposerEvent::ReviewWaiting {
@@ -2977,23 +2791,23 @@ impl Component for RootNode {
                 } else {
                     "\n\n"
                 };
+                let inserted = format!("{before}{markdown}{after}");
                 let mut update = self.update_composer(
                     ComposerEvent::ReplaceRange {
                         range: cursor..cursor,
-                        text: format!("{before}{markdown}{after}"),
+                        text: inserted,
                     },
                     RenderRequest::Immediate,
                 );
                 update.effects.extend(waiting.effects);
-                self.notification = Some(Notification::plain(
-                    "Review feedback added to draft.".to_owned(),
-                    Color::Green,
-                ));
                 update.render = update.render.max(waiting.render);
+                if let Some(feedback) = feedback {
+                    self.composer.component_mut().attach_review(feedback);
+                }
                 update
             }
             RootEvent::ReviewCancelled => {
-                self.blocking_task = None;
+                self.finish_blocking_task(ActivityState::Cancelled);
                 self.review_url = None;
                 self.notification = Some(Notification::plain(
                     "Review cancelled.".to_owned(),
@@ -3009,7 +2823,7 @@ impl Component for RootNode {
                 )
             }
             RootEvent::ReviewFailed(message) => {
-                self.blocking_task = None;
+                self.finish_blocking_task(ActivityState::Error);
                 self.review_url = None;
                 self.notification = Some(Notification::plain(message, Color::Red));
                 self.update_composer(
@@ -3021,44 +2835,20 @@ impl Component for RootNode {
                     RenderRequest::Immediate,
                 )
             }
-            RootEvent::WorkerTurnFinished { terminal_expected } => {
-                self.worker_turn_finished(terminal_expected)
-            }
             RootEvent::ShellFinished => {
                 self.in_flight_shells = self.in_flight_shells.saturating_sub(1);
-                ComponentUpdate::none()
+                self.refresh_activity(Instant::now());
+                ComponentUpdate::render(RenderRequest::Immediate)
             }
             RootEvent::TurnsCancelled => self.turns_cancelled(),
             RootEvent::ForkReady => self.fork_ready(),
             RootEvent::NewSessionFailed(message) => self.new_session_failed(message),
             RootEvent::SessionsLoaded(sessions) => self.sessions_loaded(sessions),
-            RootEvent::FilesLoaded { request, result } => {
-                let Some(Overlay::FileFinder(mention)) = &mut self.overlay else {
-                    return ComponentUpdate::none();
-                };
-                if mention.request != request {
-                    return ComponentUpdate::none();
-                }
-                match result {
-                    Ok(paths) => {
-                        mention.finder.component_mut().set_paths(paths);
-                        ComponentUpdate::render(RenderRequest::Immediate)
-                    }
-                    Err(message) => {
-                        self.overlay = None;
-                        self.notification = Some(Notification::plain(message, Color::Red));
-                        ComponentUpdate::render(RenderRequest::Immediate)
-                    }
-                }
-            }
             RootEvent::RecentPromptsLoaded {
-                request,
                 session_id,
                 prompts,
-            } => self.recent_prompts_loaded(request, session_id, prompts),
-            RootEvent::RecentPromptLoadFailed { request, error } => {
-                self.recent_prompt_load_failed(request, error)
-            }
+            } => self.recent_prompts_loaded(session_id, prompts),
+            RootEvent::RecentPromptLoadFailed(message) => self.recent_prompt_load_failed(message),
             RootEvent::SessionLoadFailed(message) => self.session_load_failed(message),
             RootEvent::MemoriesLoaded { access, records } => {
                 self.update_memory(MemoryBrowserEvent::Loaded { access, records })
@@ -3078,28 +2868,6 @@ impl Component for RootNode {
             RootEvent::MemoryDeleteFailed { error, conflict } => {
                 self.update_memory(MemoryBrowserEvent::DeleteFailed { error, conflict })
             }
-            RootEvent::SessionRestored {
-                projection,
-                effort,
-                reasoning_mode,
-                preferred_reasoning_mode,
-                fast_mode,
-                model,
-                skills,
-            } => {
-                let workspace = self.workspace.clone();
-                self.install_session_projection(
-                    &workspace,
-                    effort,
-                    reasoning_mode,
-                    preferred_reasoning_mode,
-                    fast_mode,
-                    *projection,
-                );
-                self.set_model(model);
-                self.set_skills(skills);
-                ComponentUpdate::render(RenderRequest::Immediate)
-            }
             RootEvent::NotifyError(message) => {
                 self.notification = Some(Notification::plain(message, Color::Red));
                 ComponentUpdate::render(RenderRequest::Immediate)
@@ -3118,15 +2886,8 @@ impl Component for RootNode {
                 self.notification = Some(Notification::update_available(version));
                 ComponentUpdate::render(RenderRequest::Immediate)
             }
-            RootEvent::SteerAdmitted(id) => self.steer_admitted(id),
-            RootEvent::SteerPromoted(id) => self.steer_promoted(id),
-            RootEvent::SteerFailed { id } => self.steer_failed(id),
             RootEvent::AnimationFrame(now) => self.update_animation(now),
-        };
-        if self.refresh_activity(Instant::now()) {
-            update.render = update.render.max(RenderRequest::Immediate);
         }
-        update
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
@@ -3134,85 +2895,87 @@ impl Component for RootNode {
     }
 }
 
-fn activity_outcome(event: &RootEvent) -> Option<ActivityState> {
-    #[derive(serde::Deserialize)]
-    struct ShellOutcome {
-        exit_code: Option<i32>,
-        error: Option<serde::de::IgnoredAny>,
-    }
-
-    match event {
-        RootEvent::Transcript(record) if record.source() == "tact" => match record.kind() {
-            "shell.started" => Some(ActivityState::Idle),
-            "shell.finished" => Some(match record.decode_payload::<ShellOutcome>() {
-                Ok(outcome) if outcome.exit_code == Some(0) && outcome.error.is_none() => {
-                    ActivityState::Complete
-                }
-                _ => ActivityState::Error,
-            }),
-            _ => None,
-        },
-        RootEvent::TurnsCancelled | RootEvent::ReviewCancelled | RootEvent::HandoffCancelled => {
-            Some(ActivityState::Cancelled)
+fn turn_timer_event(record: &TranscriptRecord) -> Option<ComposerEvent> {
+    use crate::tui::host_projection::ViewChange;
+    match record.host()? {
+        ViewChange::RequestStarted { request } if record.recorded_at_unix_ms() != 0 => {
+            Some(ComposerEvent::TurnStarted {
+                request: *request,
+                elapsed: Duration::ZERO,
+                now: Instant::now(),
+            })
         }
-        RootEvent::NotifyError(_)
-        | RootEvent::ReviewFailed(_)
-        | RootEvent::HandoffFailed(_)
-        | RootEvent::NewSessionFailed(_)
-        | RootEvent::SessionLoadFailed(_) => Some(ActivityState::Error),
-        RootEvent::NotifySuccess(_)
-        | RootEvent::ReviewFinished(_)
-        | RootEvent::HandoffFinished(_) => Some(ActivityState::Complete),
-        RootEvent::CompactionFinished(error) => Some(if error.is_some() {
-            ActivityState::Error
-        } else {
-            ActivityState::Complete
-        }),
-        RootEvent::Transcript(record) if record.source() == "agent" => match record.kind() {
-            "run.started" => Some(ActivityState::Idle),
-            "run.completed" => Some(ActivityState::Complete),
-            "run.failed" => Some(ActivityState::Error),
-            _ => None,
-        },
+        ViewChange::RequestSettled { request, .. } => {
+            Some(ComposerEvent::TurnFinished { request: *request })
+        }
         _ => None,
     }
 }
 
-fn turn_timer_event(record: &TranscriptRecord) -> Option<ComposerEvent> {
-    if record.source() != "agent" {
-        return None;
+fn remember_recent_prompt(prompts: &mut Vec<RecentPromptDraft>, prompt: RecentPromptDraft) {
+    if prompts.len() == MAX_RECENT_PROMPTS {
+        prompts.remove(0);
     }
-    if record.kind() == "run.started" {
-        let now = Instant::now();
-        let now_unix_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        let elapsed_ms = u64::try_from(now_unix_ms)
-            .unwrap_or(u64::MAX)
-            .saturating_sub(record.recorded_at_unix_ms());
-        return Some(ComposerEvent::TurnStarted {
-            elapsed: Duration::from_millis(elapsed_ms),
-            now,
-        });
-    }
-    matches!(record.kind(), "run.completed" | "run.failed").then_some(ComposerEvent::TurnFinished)
+    prompts.push(prompt);
 }
 
 fn recent_prompt(record: &TranscriptRecord) -> Option<RecentPromptDraft> {
-    #[derive(serde::Deserialize)]
-    struct UserPrompt {
-        text: String,
-    }
-
-    if record.source() != "tact" || !matches!(record.kind(), "user.submitted" | "user.steered") {
+    if record.recorded_at_unix_ms() == 0 {
         return None;
     }
-    let prompt = record.decode_payload::<UserPrompt>().ok()?;
+    let text = match (record.host(), record.local()) {
+        (Some(crate::tui::host_projection::ViewChange::User { text, .. }), _) => text,
+        (
+            _,
+            Some(
+                crate::tui::transcript::LocalEvent::UserSubmitted { text, .. }
+                | crate::tui::transcript::LocalEvent::UserSteered { text },
+            ),
+        ) => text,
+        _ => return None,
+    };
     Some(RecentPromptDraft {
-        text: prompt.text,
+        text: text.clone(),
         recorded_at_unix_ms: record.recorded_at_unix_ms(),
     })
+}
+
+fn render_notification(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    theme: &Theme,
+    message: &Text<'_>,
+    color: Color,
+) {
+    if area.width < 3 || area.height < 3 {
+        return;
+    }
+    let longest = message.lines.iter().map(Line::width).max().unwrap_or(0);
+    let width = u16::try_from(longest.saturating_add(4))
+        .unwrap_or(u16::MAX)
+        .clamp(12, 64)
+        .min(area.width);
+    let inset = u16::from(width >= 40);
+    let text_width = width.saturating_sub(2 + inset * 2).max(1);
+    let paragraph = Paragraph::new(message.clone()).wrap(Wrap { trim: false });
+    let line_count = paragraph.line_count(text_width);
+    let body_height = u16::try_from(line_count).unwrap_or(u16::MAX).max(1);
+    let popup = Floating::new("", width, body_height.saturating_add(2), &[])
+        .at_top()
+        .colors(color, color)
+        .render(frame, area, theme);
+    let text_area = Rect::new(
+        popup.body.x + inset,
+        popup.body.y,
+        popup.body.width.saturating_sub(inset * 2),
+        popup.body.height,
+    );
+    let paragraph = if line_count == 1 {
+        paragraph.centered()
+    } else {
+        paragraph.left_aligned()
+    };
+    frame.render_widget(paragraph, text_area);
 }
 
 fn render_key_confirmation(
@@ -3320,14 +3083,27 @@ fn is_skill_picker_trigger(event: &Event) -> bool {
 }
 
 fn is_picker_navigation(event: &Event) -> bool {
-    let Event::Key(key) = event else {
-        return false;
-    };
-    matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
-        && matches!(
-            key.code,
-            KeyCode::Enter | KeyCode::Tab | KeyCode::Up | KeyCode::Down | KeyCode::Esc
-        )
+    match event {
+        // Pointer and terminal lifecycle events belong to the open picker;
+        // they must not dismiss it or reach the obscured transcript.
+        Event::Mouse(_) | Event::Resize(_, _) | Event::FocusGained | Event::FocusLost => true,
+        Event::Key(key) => {
+            matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
+                && matches!(
+                    key.code,
+                    KeyCode::Enter
+                        | KeyCode::Tab
+                        | KeyCode::Up
+                        | KeyCode::Down
+                        | KeyCode::PageUp
+                        | KeyCode::PageDown
+                        | KeyCode::Home
+                        | KeyCode::End
+                        | KeyCode::Esc
+                )
+        }
+        _ => false,
+    }
 }
 
 fn is_mention_edit(event: &Event) -> bool {
@@ -3356,6 +3132,17 @@ fn mention_edit_continues_query(event: &Event, valid: fn(char) -> bool) -> bool 
     }
 }
 
+/// A destination with no URL scheme that resolves to a real file inside the
+/// workspace is a source reference, not a link: open it in the editor rather
+/// than handing it to the operating system's generic opener.
+fn workspace_file(destination: &str, workspace: &Path) -> Option<PathBuf> {
+    if destination.contains("://") || destination.starts_with('#') {
+        return None;
+    }
+    let path = workspace.join(destination);
+    path.is_file().then_some(path)
+}
+
 fn is_file_query_character(character: char) -> bool {
     character.is_alphanumeric() || matches!(character, '_' | '-' | '.' | '/')
 }
@@ -3365,7 +3152,8 @@ fn model_name(model: Model) -> &'static str {
         Model::Luna => "Luna",
         Model::Terra => "Terra",
         Model::Sol => "Sol",
-        _ => "Sol",
+        Model::Glm => "GLM 5.3",
+        Model::Spark => "Spark",
     }
 }
 
@@ -3455,35 +3243,27 @@ fn is_plain_key(event: &Event, character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        Component, ComposerChromeTarget, ConfirmationAction, DraftReset, Overlay, RenderRequest,
-        RootEffect, RootEvent, RootNode, SessionListKind, SubagentOverlay, ThreadState,
-        TranscriptEvent,
+        ActivityState, Component, ComposerChromeTarget, ConfirmationAction, DraftReset, Overlay,
+        RenderRequest, RootEffect, RootEvent, RootNode, SessionListKind, SubagentOverlay,
+        ThreadState, TranscriptEvent,
     };
     use crate::{
         app::config::{ReasoningEffort, ReasoningMode},
         core::extensions::Skill,
-        sessions::{
-            checkpoint::{RecentPrompt, SessionSummary},
-            record::{LocalEvent, ShellId, TranscriptRecord, TurnId},
-        },
         tui::{
-            prompt::Submission,
+            children::{ChildId, ChildStatus, ChildUpdate, ChildView, MessageUpdate},
+            fixtures::{self, DisplaySample},
+            session::{RecentPrompt, SessionSummary},
             theme::{Theme, ThemeMode},
+            transcript::{LocalEvent, TranscriptRecord, TurnId},
         },
     };
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
         MouseEventKind,
     };
-    use nanocodex::{
-        Model,
-        agent::{
-            events::{AgentEvent, AgentEventKind},
-            input::{PromptInput, UserInput},
-        },
-    };
+    use orvek_harness::inference::Model;
     use orvek_memory::{MemoryAccess, MemoryKey, MemoryRecord, MemorySource};
-    use orvek_subagents::{AgentDescriptor, AgentId, AgentMessageUpdate, AgentStatus, AgentUpdate};
     use ratatui::{
         Terminal,
         backend::TestBackend,
@@ -3491,7 +3271,7 @@ mod tests {
         style::{Color, Modifier},
     };
     use semver::Version;
-    use serde_json::{json, value::to_raw_value};
+    use serde_json::json;
     use std::{
         fs,
         path::Path,
@@ -3535,10 +3315,6 @@ mod tests {
         super::RootEvent::Terminal(Event::Key(key))
     }
 
-    fn f2() -> super::RootEvent {
-        key(KeyCode::F(2), KeyModifiers::NONE)
-    }
-
     fn mouse(kind: MouseEventKind, column: u16, row: u16) -> super::RootEvent {
         super::RootEvent::Terminal(Event::Mouse(MouseEvent {
             kind,
@@ -3578,171 +3354,48 @@ mod tests {
             .join("\n")
     }
 
-    fn run_steered() -> super::RootEvent {
-        super::RootEvent::Transcript(Arc::new(TranscriptRecord::from_agent(
-            1,
-            1,
-            AgentEvent {
-                protocol_version: 1,
-                request_id: Arc::from("test"),
-                seq: 1,
-                kind: AgentEventKind::RunSteered,
-                payload: to_raw_value(&json!({
-                    "steer_index": 1,
-                    "instruction_bytes": 5,
-                }))
-                .unwrap()
-                .into(),
-            },
-        )))
-    }
-
     fn agent_record(
         sequence: u64,
-        kind: AgentEventKind,
+        kind: DisplaySample,
         payload: serde_json::Value,
     ) -> Arc<TranscriptRecord> {
-        Arc::new(TranscriptRecord::from_agent(
-            sequence,
-            sequence,
-            AgentEvent {
-                protocol_version: 1,
-                request_id: Arc::from("opaque-test-id"),
-                seq: sequence,
-                kind,
-                payload: to_raw_value(&payload).unwrap().into(),
-            },
-        ))
+        Arc::new(fixtures::record(sequence, sequence, kind, payload))
     }
 
     #[test]
-    fn persistent_activity_tracks_real_work_and_terminal_events() {
+    fn configured_context_window_reaches_the_composer() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        assert!(
-            render_root_text(&mut root, 80, 20)
-                .lines()
-                .next()
-                .unwrap()
-                .contains("Ready")
-        );
-        root.update(RootEvent::ReplaceDraft("inspect source".to_owned()));
-        root.update(key(KeyCode::Enter, KeyModifiers::NONE));
-        root.update(RootEvent::Transcript(agent_record(
-            1,
-            AgentEventKind::RunStarted,
-            json!({}),
-        )));
-        assert_eq!(root.activity.state(), super::ActivityState::Thinking);
-        root.update(RootEvent::Transcript(agent_record(
-            2,
-            AgentEventKind::ToolCall,
-            json!({
-                "call_id": "read-1", "tool": "read_file", "arguments": {"path": "src/main.rs"}
-            }),
-        )));
-        assert_eq!(root.activity.state(), super::ActivityState::Working);
-        root.update(RootEvent::Transcript(agent_record(
-            3,
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "read-1", "tool": "read_file", "status": "success", "duration_ns": 1,
-                "result": "fn main() {}", "structured_result": null, "metadata": null
-            }),
-        )));
-        assert_eq!(root.activity.state(), super::ActivityState::Thinking);
-        root.update(RootEvent::Transcript(agent_record(
-            4,
-            AgentEventKind::ModelCompactionStarted,
-            json!({}),
-        )));
-        assert_eq!(root.activity.state(), super::ActivityState::Compacting);
-        root.update(RootEvent::Transcript(agent_record(
-            5,
-            AgentEventKind::RunCompleted,
-            json!({}),
-        )));
-        root.update(RootEvent::WorkerTurnFinished {
-            terminal_expected: true,
-        });
-        assert_eq!(root.activity.state(), super::ActivityState::Complete);
-        root.activity
-            .advance(Instant::now() + std::time::Duration::from_millis(200));
-        assert!(root.activity.deadline().is_none());
-        assert!(
-            render_root_text(&mut root, 80, 20)
-                .lines()
-                .next()
-                .unwrap()
-                .contains("Complete")
-        );
-        root.update(RootEvent::NotifyError("fixture error".to_owned()));
-        assert_eq!(root.activity.state(), super::ActivityState::Error);
-        root.update(RootEvent::TurnsCancelled);
-        root.update(RootEvent::Transcript(agent_record(
-            6,
-            AgentEventKind::RunFailed,
-            json!({}),
-        )));
-        assert_eq!(root.activity.state(), super::ActivityState::Cancelled);
+
+        root.set_context_window_tokens(1_000_000);
+
+        assert!(render_root_text(&mut root, 100, 20).contains("0% / 1000k"));
     }
 
     #[test]
-    fn local_shell_outcome_replaces_previous_activity_success() {
-        for (exit_code, expected) in [
-            (Some(0), super::ActivityState::Complete),
-            (Some(1), super::ActivityState::Error),
-            (None, super::ActivityState::Error),
-        ] {
-            let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-            root.update(RootEvent::NotifySuccess(
-                "Previous work completed".to_owned(),
-            ));
-            let started = TranscriptRecord::from_local(
-                1,
-                1,
-                LocalEvent::ShellStarted {
-                    id: ShellId::new(1),
-                    command: "fixture".to_owned(),
-                    workspace: "/work".into(),
-                },
-            )
-            .unwrap();
-            root.update(RootEvent::Transcript(Arc::new(started)));
-            assert_eq!(root.activity.state(), super::ActivityState::Working);
-            let finished = TranscriptRecord::from_local(
-                2,
-                2,
-                LocalEvent::ShellFinished {
-                    id: ShellId::new(1),
-                    output: String::new(),
-                    exit_code,
-                    duration_ns: 1,
-                    truncated: false,
-                    error: None,
-                },
-            )
-            .unwrap();
-            root.update(RootEvent::Transcript(Arc::new(finished)));
-            root.update(RootEvent::ShellFinished);
-            assert_eq!(root.activity.state(), expected);
-            root.activity
-                .advance(Instant::now() + std::time::Duration::from_millis(200));
-            assert!(root.activity.deadline().is_none());
-        }
-    }
-
-    #[test]
-    fn cancelling_manual_compaction_keeps_a_cancelled_activity_outcome() {
+    fn fork_keeps_the_configured_context_window() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.blocking_task = Some(super::BlockingTask::Compaction);
-        root.update(key(KeyCode::Esc, KeyModifiers::NONE));
-        root.update(RootEvent::CompactionFinished(Some(
-            "Context compaction was cancelled".to_owned(),
-        )));
-        assert_eq!(root.activity.state(), super::ActivityState::Cancelled);
-        root.activity
-            .advance(Instant::now() + std::time::Duration::from_millis(200));
-        assert!(root.activity.deadline().is_none());
+        root.set_context_window_tokens(1_000_000);
+
+        let mut fork = root.fork(Path::new("/work"), ReasoningEffort::Medium);
+
+        assert!(render_root_text(&mut fork, 100, 20).contains("0% / 1000k"));
+    }
+
+    #[test]
+    fn restored_session_keeps_the_configured_context_window() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.set_context_window_tokens(1_000_000);
+
+        root.restore_session(
+            Path::new("/work"),
+            ReasoningEffort::Medium,
+            ReasoningMode::Standard,
+            ReasoningMode::Standard,
+            false,
+            Vec::new(),
+        );
+
+        assert!(render_root_text(&mut root, 100, 20).contains("0% / 1000k"));
     }
 
     #[test]
@@ -3750,7 +3403,7 @@ mod tests {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         let outbound = agent_record(
             1,
-            AgentEventKind::ApiEvent,
+            DisplaySample::ApiUsage,
             json!({
                 "direction": "outbound",
                 "phase": "generation",
@@ -3768,14 +3421,10 @@ mod tests {
             false,
             vec![outbound],
         );
-        assert_eq!(
-            root.context_diagnostics.continuation,
-            Some(crate::tui::context::ContinuationMode::PreviousResponse)
-        );
 
         let completed = agent_record(
             2,
-            AgentEventKind::ModelCallCompleted,
+            DisplaySample::Usage,
             json!({
                 "call_index": 1,
                 "model": "gpt-5.6-sol",
@@ -3811,15 +3460,31 @@ mod tests {
     }
 
     #[test]
-    fn restored_session_does_not_keep_historical_activity() {
+    fn context_diagnostics_show_the_configured_million_token_window() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+
+        root.set_context_window_tokens(1_000_000);
+
+        assert_eq!(
+            root.context_diagnostics.model_window_tokens,
+            Some(1_000_000)
+        );
+        assert_eq!(
+            root.context_diagnostics.auto_compact_token_limit,
+            Some(850_000)
+        );
+    }
+
+    #[test]
+    fn restored_session_keeps_unsettled_host_jobs_active_until_receipt() {
         let mut projection = RootNode::project_session(
             ReasoningEffort::Medium,
             vec![
-                agent_record(1, AgentEventKind::RunStarted, json!({})),
-                agent_record(2, AgentEventKind::RunStarted, json!({})),
+                agent_record(1, DisplaySample::Start, json!({})),
+                agent_record(2, DisplaySample::Start, json!({})),
                 agent_record(
                     3,
-                    AgentEventKind::ToolCall,
+                    DisplaySample::ToolStart,
                     json!({
                         "call_id": "orphaned-shell",
                         "tool": "exec_command",
@@ -3838,7 +3503,7 @@ mod tests {
             .transcript
             .update(TranscriptEvent::Record(agent_record(
                 4,
-                AgentEventKind::RunStarted,
+                DisplaySample::Start,
                 json!({}),
             )));
         assert_eq!(started.effects.len(), 1);
@@ -3849,12 +3514,119 @@ mod tests {
             .transcript
             .update(TranscriptEvent::Record(agent_record(
                 5,
-                AgentEventKind::RunCompleted,
+                DisplaySample::End,
                 json!({"duration_ns": 1_000_000}),
             )));
-        assert_eq!(completed.effects.len(), 1);
-        assert!(!completed.effects[0].active);
-        assert!(completed.effects[0].status.is_none());
+        assert!(completed.effects.is_empty());
+        let settled=projection.transcript.update(TranscriptEvent::Record(agent_record(6,DisplaySample::ToolReturn,json!({"call_id":"orphaned-shell","tool":"exec_command","status":"completed","structured_result":{"exit_code":0}}))));
+        assert_eq!(settled.effects.len(), 1);
+        assert!(!settled.effects[0].active);
+    }
+
+    #[test]
+    fn cancellation_clears_active_turn_timers() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(RootEvent::Transcript(agent_record(
+            1,
+            DisplaySample::Start,
+            json!({}),
+        )));
+        assert_eq!(root.composer.component().active_turn_timer_count(), 1);
+
+        root.update(RootEvent::TurnsCancelled);
+
+        assert_eq!(root.composer.component().active_turn_timer_count(), 0);
+        assert_eq!(root.in_flight_turns, 0);
+        assert_eq!(root.activity.visual().state(), ActivityState::Cancelled);
+    }
+
+    #[test]
+    fn terminal_view_disconnect_clears_timer_and_marks_error() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(RootEvent::Transcript(agent_record(
+            1,
+            DisplaySample::Start,
+            json!({}),
+        )));
+
+        root.update(RootEvent::ViewDisconnected);
+
+        assert_eq!(root.composer.component().active_turn_timer_count(), 0);
+        assert_eq!(root.in_flight_turns, 0);
+        assert_eq!(root.activity.visual().state(), ActivityState::Error);
+    }
+
+    #[test]
+    fn task_state_unifies_the_header_and_composer_line_grid() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(RootEvent::Transcript(agent_record(
+            1,
+            DisplaySample::Start,
+            json!({}),
+        )));
+        assert_eq!(root.activity.visual().state(), ActivityState::Thinking);
+
+        root.update(RootEvent::Transcript(agent_record(
+            2,
+            DisplaySample::ToolStart,
+            json!({
+                "call_id": "shell",
+                "tool": "exec_command",
+                "arguments": {"cmd": "cargo test"},
+            }),
+        )));
+        assert_eq!(root.activity.visual().state(), ActivityState::Working);
+
+        let theme = Theme::default();
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        terminal
+            .draw(|frame| root.render(frame, frame.area(), &theme))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let label = text_column(buffer, 0, "Working");
+        assert_eq!(buffer[(label, 0)].fg, theme.accent());
+        assert!(buffer[(label, 0)].modifier.contains(Modifier::BOLD));
+        let border_cells = buffer
+            .content()
+            .iter()
+            .filter(|cell| ["─", "│", "╭", "╮", "╰", "╯"].contains(&cell.symbol()))
+            .collect::<Vec<_>>();
+        assert!(border_cells.iter().all(|cell| cell.fg == theme.accent()));
+        assert!(
+            border_cells
+                .iter()
+                .any(|cell| cell.modifier.contains(Modifier::BOLD))
+        );
+        assert!(
+            border_cells
+                .iter()
+                .any(|cell| cell.modifier.contains(Modifier::DIM))
+        );
+
+        assert_eq!(root.composer.component().active_turn_timer_count(), 1);
+        root.update(RootEvent::TurnsCancelled);
+        assert_eq!(root.activity.visual().state(), ActivityState::Cancelled);
+        assert_eq!(root.in_flight_turns, 0);
+        assert_eq!(root.composer.component().active_turn_timer_count(), 0);
+
+        let mut completed = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        completed.update(RootEvent::Transcript(agent_record(
+            1,
+            DisplaySample::Start,
+            json!({}),
+        )));
+        completed.update(RootEvent::Transcript(agent_record(
+            2,
+            DisplaySample::End,
+            json!({"duration_ns": 1_000_000}),
+        )));
+        assert_eq!(completed.activity.visual().state(), ActivityState::Complete);
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        terminal
+            .draw(|frame| completed.render(frame, frame.area(), &theme))
+            .unwrap();
+        let label = text_column(terminal.backend().buffer(), 0, "Complete");
+        assert_eq!(terminal.backend().buffer()[(label, 0)].fg, Color::Green);
     }
 
     #[test]
@@ -3868,9 +3640,9 @@ mod tests {
             .unwrap();
 
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 6)].symbol(), "╭");
+        assert_eq!(buffer[(0, 7)].symbol(), "╭");
         assert_eq!(buffer[(0, 11)].symbol(), "╰");
-        assert_eq!(buffer[(0, 5)].symbol(), " ");
+        assert_eq!(buffer[(0, 6)].symbol(), " ");
     }
 
     #[test]
@@ -3908,16 +3680,14 @@ mod tests {
         assert!(matches!(root.overlay, Some(Overlay::Effort(_))));
 
         root.overlay = None;
-        root.update(super::RootEvent::Subagent(AgentUpdate::Added(
-            AgentDescriptor {
-                id: AgentId::new(1),
-                session_id: "child".to_owned(),
-                model: Model::Sol,
-                role: "worker".to_owned(),
-                task: "work".to_owned(),
-                parent: None,
-            },
-        )));
+        root.update(super::RootEvent::Subagent(ChildUpdate::Added(ChildView {
+            id: ChildId::new(1),
+            session_id: "child".to_owned(),
+            model: Model::Sol,
+            role: "worker".to_owned(),
+            task: "work".to_owned(),
+            parent: None,
+        })));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
@@ -3937,60 +3707,52 @@ mod tests {
     #[test]
     fn root_messages_render_once_in_main_and_are_projected_into_child_transcripts() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.update(RootEvent::Subagent(AgentUpdate::Added(AgentDescriptor {
-            id: AgentId::new(1),
+        root.update(RootEvent::Subagent(ChildUpdate::Added(ChildView {
+            id: ChildId::new(1),
             session_id: "child".to_owned(),
             model: Model::Sol,
             role: "worker".to_owned(),
             task: "verify ordering".to_owned(),
             parent: None,
         })));
-        root.update(RootEvent::Transcript(Arc::new(
-            TranscriptRecord::from_agent(
-                1,
-                1,
-                AgentEvent {
-                    protocol_version: 1,
-                    request_id: Arc::from("test"),
-                    seq: 1,
-                    kind: AgentEventKind::ToolCall,
-                    payload: to_raw_value(&json!({
-                        "call_id": "message-1",
-                        "tool": "send_agent_message",
-                        "arguments": {
-                            "agent_id": 1,
-                            "message": "Please verify the ordering.",
-                            "priority": "deferred",
-                            "purpose": "coordinate"
-                        }
-                    }))
-                    .unwrap()
-                    .into(),
-                },
-            ),
-        )));
-        let message = serde_json::from_value::<AgentMessageUpdate>(json!({
-            "message_id": 1,
-            "thread": {
-                "id": 1,
-                "participants": [
-                    {"kind": "root"},
-                    {"kind": "agent", "agent_id": 1}
-                ],
-                "messages": [{
-                    "id": 1,
-                    "thread_id": 1,
-                    "from": {"kind": "root"},
-                    "to": 1,
+        root.update(RootEvent::Transcript(Arc::new(fixtures::record(
+            1,
+            1,
+            DisplaySample::ToolStart,
+            json!({
+                "call_id": "message-1",
+                "tool": "send_agent_message",
+                "arguments": {
+                    "child_id": 1,
+                    "message": "Please verify the ordering.",
                     "priority": "deferred",
-                    "purpose": "coordinate",
-                    "body": "Please verify the ordering."
-                }]
-            },
-            "delivery": {"state": "delivered", "disposition": "started"}
-        }))
-        .unwrap();
-        root.update(RootEvent::Subagent(AgentUpdate::Message(message)));
+                    "purpose": "coordinate"
+                }
+            }),
+        ))));
+        let message =
+            serde_json::from_value::<MessageUpdate>(crate::tui::fixtures::native_ids(json!({
+                "message_id": 1,
+                "thread": {
+                    "id": 1,
+                    "participants": [
+                        {"kind": "root"},
+                        {"kind": "agent", "child_id": 1}
+                    ],
+                    "messages": [{
+                        "id": 1,
+                        "thread_id": 1,
+                        "from": {"kind": "root"},
+                        "to": 1,
+                        "priority": "deferred",
+                        "purpose": "coordinate",
+                        "body": "Please verify the ordering."
+                    }]
+                },
+                "delivery": {"state": "delivered", "disposition": "started"}
+            })))
+            .unwrap();
+        root.update(RootEvent::Subagent(ChildUpdate::Message(message)));
 
         let main = render_root_text(&mut root, 100, 20);
 
@@ -3998,7 +3760,7 @@ mod tests {
         child
             .draw(|frame| {
                 root.subagents.render_transcript(
-                    AgentId::new(1),
+                    ChildId::new(1),
                     frame,
                     frame.area(),
                     &Theme::default(),
@@ -4024,8 +3786,8 @@ mod tests {
     fn peer_messages_are_projected_into_the_main_transcript() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         for (id, role) in [(1, "sender"), (2, "recipient")] {
-            root.update(RootEvent::Subagent(AgentUpdate::Added(AgentDescriptor {
-                id: AgentId::new(id),
+            root.update(RootEvent::Subagent(ChildUpdate::Added(ChildView {
+                id: ChildId::new(id),
                 session_id: format!("child-{id}"),
                 model: Model::Sol,
                 role: role.to_owned(),
@@ -4033,29 +3795,30 @@ mod tests {
                 parent: None,
             })));
         }
-        let message = serde_json::from_value::<AgentMessageUpdate>(json!({
-            "message_id": 1,
-            "thread": {
-                "id": 1,
-                "participants": [
-                    {"kind": "agent", "agent_id": 1},
-                    {"kind": "agent", "agent_id": 2}
-                ],
-                "messages": [{
+        let message =
+            serde_json::from_value::<MessageUpdate>(crate::tui::fixtures::native_ids(json!({
+                "message_id": 1,
+                "thread": {
                     "id": 1,
-                    "thread_id": 1,
-                    "from": {"kind": "agent", "agent_id": 1},
-                    "to": 2,
-                    "priority": "deferred",
-                    "purpose": "coordinate",
-                    "body": "Peer coordination is visible."
-                }]
-            },
-            "delivery": {"state": "delivered", "disposition": "started"}
-        }))
-        .unwrap();
+                    "participants": [
+                        {"kind": "agent", "child_id": 1},
+                        {"kind": "agent", "child_id": 2}
+                    ],
+                    "messages": [{
+                        "id": 1,
+                        "thread_id": 1,
+                        "from": {"kind": "agent", "child_id": 1},
+                        "to": 2,
+                        "priority": "deferred",
+                        "purpose": "coordinate",
+                        "body": "Peer coordination is visible."
+                    }]
+                },
+                "delivery": {"state": "delivered", "disposition": "started"}
+            })))
+            .unwrap();
 
-        root.update(RootEvent::Subagent(AgentUpdate::Message(message)));
+        root.update(RootEvent::Subagent(ChildUpdate::Message(message)));
 
         let main = render_root_text(&mut root, 100, 20);
         assert!(main.contains("← Message  #1 → #2"));
@@ -4066,20 +3829,18 @@ mod tests {
     fn composer_hides_subagents_after_they_stop_running() {
         let mut terminal = Terminal::new(TestBackend::new(100, 16)).unwrap();
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.update(super::RootEvent::Subagent(AgentUpdate::Added(
-            AgentDescriptor {
-                id: AgentId::new(1),
-                session_id: "child".to_owned(),
-                model: Model::Sol,
-                role: "worker".to_owned(),
-                task: "work".to_owned(),
-                parent: None,
-            },
-        )));
-        root.update(super::RootEvent::Subagent(AgentUpdate::Status {
-            id: AgentId::new(1),
-            status: AgentStatus::Completed {
-                output: json!({ "report": "done" }),
+        root.update(super::RootEvent::Subagent(ChildUpdate::Added(ChildView {
+            id: ChildId::new(1),
+            session_id: "child".to_owned(),
+            model: Model::Sol,
+            role: "worker".to_owned(),
+            task: "work".to_owned(),
+            parent: None,
+        })));
+        root.update(super::RootEvent::Subagent(ChildUpdate::Status {
+            id: ChildId::new(1),
+            status: ChildStatus::Returned {
+                output: orvek_harness::Digest::of(b"{\"report\":\"done\"}"),
             },
         }));
 
@@ -4098,55 +3859,45 @@ mod tests {
     }
 
     #[test]
-    fn completed_direct_subagent_starts_a_continuation_when_idle() {
+    fn child_return_never_starts_a_frontend_owned_continuation() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.update(super::RootEvent::Subagent(AgentUpdate::Added(
-            AgentDescriptor {
-                id: AgentId::new(1),
-                session_id: "child".to_owned(),
-                model: Model::Sol,
-                role: "worker".to_owned(),
-                task: "inspect the queue".to_owned(),
-                parent: None,
-            },
-        )));
+        root.update(super::RootEvent::Subagent(ChildUpdate::Added(ChildView {
+            id: ChildId::new(1),
+            session_id: "child".to_owned(),
+            model: Model::Sol,
+            role: "worker".to_owned(),
+            task: "inspect the queue".to_owned(),
+            parent: None,
+        })));
 
-        let update = root.update(super::RootEvent::Subagent(AgentUpdate::Status {
-            id: AgentId::new(1),
-            status: AgentStatus::Completed {
-                output: json!({ "report": "queue is sound" }),
+        let update = root.update(super::RootEvent::Subagent(ChildUpdate::Status {
+            id: ChildId::new(1),
+            status: ChildStatus::Returned {
+                output: orvek_harness::Digest::of(b"{\"report\":\"queue is sound\"}"),
             },
         }));
 
-        assert!(matches!(
-            update.effects.as_slice(),
-            [RootEffect::ContinueSubagent(prompt)]
-                if prompt.display_text().contains("list_agents")
-                    && prompt.display_text().contains("agent_id=\"1\"")
-                    && !prompt.display_text().contains("queue is sound")
-        ));
-        assert_eq!(root.in_flight_turns, 1);
+        assert!(update.effects.is_empty());
+        assert_eq!(root.in_flight_turns, 0);
     }
 
     #[test]
     fn completed_subagent_does_not_start_a_competing_active_turn() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         root.in_flight_turns = 1;
-        root.update(super::RootEvent::Subagent(AgentUpdate::Added(
-            AgentDescriptor {
-                id: AgentId::new(1),
-                session_id: "child".to_owned(),
-                model: Model::Sol,
-                role: "worker".to_owned(),
-                task: "inspect the queue".to_owned(),
-                parent: None,
-            },
-        )));
+        root.update(super::RootEvent::Subagent(ChildUpdate::Added(ChildView {
+            id: ChildId::new(1),
+            session_id: "child".to_owned(),
+            model: Model::Sol,
+            role: "worker".to_owned(),
+            task: "inspect the queue".to_owned(),
+            parent: None,
+        })));
 
-        let update = root.update(super::RootEvent::Subagent(AgentUpdate::Status {
-            id: AgentId::new(1),
-            status: AgentStatus::Completed {
-                output: json!({ "report": "queue is sound" }),
+        let update = root.update(super::RootEvent::Subagent(ChildUpdate::Status {
+            id: ChildId::new(1),
+            status: ChildStatus::Returned {
+                output: orvek_harness::Digest::of(b"{\"report\":\"queue is sound\"}"),
             },
         }));
 
@@ -4157,21 +3908,19 @@ mod tests {
     #[test]
     fn completed_nested_subagent_does_not_bypass_its_parent() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.update(super::RootEvent::Subagent(AgentUpdate::Added(
-            AgentDescriptor {
-                id: AgentId::new(2),
-                session_id: "grandchild".to_owned(),
-                model: Model::Sol,
-                role: "worker".to_owned(),
-                task: "inspect the queue".to_owned(),
-                parent: Some(AgentId::new(1)),
-            },
-        )));
+        root.update(super::RootEvent::Subagent(ChildUpdate::Added(ChildView {
+            id: ChildId::new(2),
+            session_id: "grandchild".to_owned(),
+            model: Model::Sol,
+            role: "worker".to_owned(),
+            task: "inspect the queue".to_owned(),
+            parent: Some(ChildId::new(1)),
+        })));
 
-        let update = root.update(super::RootEvent::Subagent(AgentUpdate::Status {
-            id: AgentId::new(2),
-            status: AgentStatus::Completed {
-                output: json!({ "report": "queue is sound" }),
+        let update = root.update(super::RootEvent::Subagent(ChildUpdate::Status {
+            id: ChildId::new(2),
+            status: ChildStatus::Returned {
+                output: orvek_harness::Digest::of(b"{\"report\":\"queue is sound\"}"),
             },
         }));
 
@@ -4200,8 +3949,8 @@ mod tests {
             .unwrap();
 
         let buffer = terminal.backend().buffer();
-        assert!((0..6).any(|y| buffer[(0, y)].symbol() == "┃"));
-        assert_eq!(buffer[(0, 6)].symbol(), "╭");
+        assert!((0..7).any(|y| buffer[(0, y)].symbol() == "┃"));
+        assert_eq!(buffer[(0, 7)].symbol(), "╭");
     }
 
     #[test]
@@ -4220,7 +3969,7 @@ mod tests {
         root.update(super::RootEvent::Transcript(Arc::new(prompt)));
         root.update(super::RootEvent::Transcript(agent_record(
             2,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -4234,32 +3983,100 @@ mod tests {
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        root.update(mouse(MouseEventKind::ScrollUp, 5, 1));
+        root.update(mouse(MouseEventKind::ScrollUp, 5, 2));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
         assert_eq!(
-            terminal.backend().buffer()[(5, root.transcript_area.y)].bg,
+            terminal.backend().buffer()[(5, 1)].bg,
             Theme::default().code_background()
         );
 
-        root.update(mouse(
-            MouseEventKind::Down(MouseButton::Left),
-            5,
-            root.transcript_area.y,
-        ));
+        root.update(mouse(MouseEventKind::Down(MouseButton::Left), 5, 1));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
 
         let first_row = (0..40)
-            .map(|column| terminal.backend().buffer()[(column, root.transcript_area.y)].symbol())
+            .map(|column| terminal.backend().buffer()[(column, 1)].symbol())
             .collect::<String>();
         assert!(first_row.contains("jump to this prompt"));
         assert_ne!(
-            terminal.backend().buffer()[(5, root.transcript_area.y)].bg,
+            terminal.backend().buffer()[(5, 1)].bg,
             Theme::default().code_background()
         );
+    }
+
+    #[test]
+    fn wheel_targets_the_hovered_surface_without_changing_the_draft() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        for sequence in 1..=20 {
+            let record = TranscriptRecord::from_local(
+                sequence,
+                sequence,
+                LocalEvent::UserSubmitted {
+                    id: TurnId::new(sequence),
+                    text: format!("prompt {sequence}"),
+                },
+            )
+            .unwrap();
+            root.update(super::RootEvent::Transcript(Arc::new(record)));
+        }
+        let draft = (1..=15)
+            .map(|row| format!("draft {row}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        root.composer.component_mut().replace_draft(draft.clone());
+        let before = render_root_text(&mut root, 60, 25);
+        assert!(before.contains("draft 15"));
+        let cursor = root.composer.component().cursor();
+        let content = root.composer_content_area;
+        root.update(mouse(MouseEventKind::ScrollUp, content.x, content.y));
+        let scrolled = render_root_text(&mut root, 60, 25);
+        assert!(!scrolled.contains("draft 15"));
+        assert!(!scrolled.contains("Scrolled up"));
+        assert_eq!(root.composer.component().draft(), draft);
+        assert_eq!(root.composer.component().cursor(), cursor);
+
+        let transcript = root.transcript_area;
+        root.update(mouse(MouseEventKind::ScrollUp, transcript.x, transcript.y));
+        let detached = render_root_text(&mut root, 60, 25);
+        assert!(detached.contains("Scrolled up"));
+        assert!(!detached.contains("draft 15"));
+
+        root.update(mouse(MouseEventKind::ScrollDown, content.x, content.y));
+        let restored = render_root_text(&mut root, 60, 25);
+        assert!(restored.contains("draft 15"));
+        assert!(restored.contains("Scrolled up"));
+    }
+
+    #[test]
+    fn detached_banner_can_follow_without_new_updates() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        for sequence in 1..=20 {
+            let record = TranscriptRecord::from_local(
+                sequence,
+                sequence,
+                LocalEvent::UserSubmitted {
+                    id: TurnId::new(sequence),
+                    text: format!("prompt {sequence}"),
+                },
+            )
+            .unwrap();
+            root.update(super::RootEvent::Transcript(Arc::new(record)));
+        }
+        render_root_text(&mut root, 60, 20);
+        root.update(key(KeyCode::PageUp, KeyModifiers::NONE));
+        let mut terminal = Terminal::new(TestBackend::new(60, 20)).unwrap();
+        terminal
+            .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let row = root.transcript_area.bottom() - 1;
+        let column = text_column(terminal.backend().buffer(), row, "Scrolled up");
+        root.update(mouse(MouseEventKind::Down(MouseButton::Left), column, row));
+        let followed = render_root_text(&mut root, 60, 20);
+        assert!(!followed.contains("Scrolled up"));
+        assert!(followed.contains("prompt 20"));
     }
 
     #[test]
@@ -4298,16 +4115,13 @@ mod tests {
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        let banner_column = text_column(
-            terminal.backend().buffer(),
-            root.transcript_area.y,
-            "1 update",
-        );
+        let banner_row = root.transcript_area.bottom() - 1;
+        let banner_column = text_column(terminal.backend().buffer(), banner_row, "1 update");
 
         root.update(mouse(
             MouseEventKind::Down(MouseButton::Left),
             banner_column,
-            root.transcript_area.y,
+            banner_row,
         ));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
@@ -4328,23 +4142,16 @@ mod tests {
     fn clicking_a_transcript_link_requests_that_it_be_opened() {
         let mut terminal = Terminal::new(TestBackend::new(50, 12)).unwrap();
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        let record = TranscriptRecord::from_agent(
+        let record = fixtures::record(
             1,
             1,
-            AgentEvent {
-                protocol_version: 1,
-                request_id: Arc::from("test"),
-                seq: 1,
-                kind: AgentEventKind::AssistantMessage,
-                payload: to_raw_value(&json!({
-                    "model_call_index": 1,
-                    "item_id": "answer",
-                    "phase": "final_answer",
-                    "text": "Open [the site](https://example.com).",
-                }))
-                .unwrap()
-                .into(),
-            },
+            DisplaySample::Text,
+            json!({
+                "model_call_index": 1,
+                "item_id": "answer",
+                "phase": "final_answer",
+                "text": "Open [the site](https://example.com).",
+            }),
         );
         root.update(super::RootEvent::Transcript(Arc::new(record)));
         root.queue.component_mut().push("queued".to_owned());
@@ -4565,7 +4372,7 @@ mod tests {
     }
 
     #[test]
-    fn mouse_movement_keeps_mention_popovers_open() {
+    fn mouse_movement_preserves_mention_popovers() {
         let workspace = tempfile::tempdir().unwrap();
         let mut root = RootNode::new(workspace.path(), ReasoningEffort::Medium);
         root.update(key(KeyCode::Char('@'), KeyModifiers::NONE));
@@ -4573,8 +4380,7 @@ mod tests {
         let file_update = root.update(mouse(MouseEventKind::Moved, 0, 0));
 
         assert!(root.overlay.is_some());
-        assert!(file_update.effects.is_empty());
-        root.update(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(file_update.render, RenderRequest::None);
 
         root.set_skills(vec![Skill::new("autofix", "Repair a pull request.")].into());
         root.update(key(KeyCode::Char(' '), KeyModifiers::NONE));
@@ -4583,7 +4389,7 @@ mod tests {
         let skill_update = root.update(mouse(MouseEventKind::Moved, 0, 0));
 
         assert!(root.overlay.is_some());
-        assert!(skill_update.effects.is_empty());
+        assert_eq!(skill_update.render, RenderRequest::None);
     }
 
     #[test]
@@ -4599,6 +4405,43 @@ mod tests {
         assert!(matches!(&root.overlay, Some(Overlay::FileFinder(_))));
         assert_eq!(root.composer().draft(), "inspect @");
         assert_eq!(update.render, super::RenderRequest::Immediate);
+    }
+
+    #[test]
+    fn a_long_queue_leaves_room_for_the_transcript() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        for index in 0..30 {
+            root.queue.component_mut().push(format!("queued {index}"));
+        }
+        render_root_text(&mut root, 60, 24);
+        assert!(root.transcript_area.height >= 10);
+        assert!(root.queue_area.height >= 3);
+        assert!(root.queue_area.height <= 8);
+        let draft = root.composer().draft().to_owned();
+        let area = root.queue_area;
+        let update = root.update(mouse(MouseEventKind::ScrollUp, area.x + 2, area.y + 1));
+        assert!(update.effects.is_empty());
+        assert_eq!(root.composer().draft(), draft);
+        assert!(!render_root_text(&mut root, 60, 24).contains("Scrolled up"));
+    }
+
+    #[test]
+    fn pointer_and_resize_events_keep_file_suggestions_open() {
+        let workspace = tempfile::tempdir().unwrap();
+        let mut root = RootNode::new(workspace.path(), ReasoningEffort::Medium);
+        root.update(key(KeyCode::Char('@'), KeyModifiers::NONE));
+        render_root_text(&mut root, 60, 20);
+        for event in [
+            mouse(MouseEventKind::ScrollDown, 20, 6),
+            mouse(MouseEventKind::Moved, 20, 6),
+            RootEvent::Terminal(Event::Resize(50, 18)),
+            key(KeyCode::PageDown, KeyModifiers::NONE),
+        ] {
+            let update = root.update(event);
+            assert!(matches!(&root.overlay, Some(Overlay::FileFinder(_))));
+            assert!(update.effects.is_empty());
+            assert_eq!(root.composer().draft(), "@");
+        }
     }
 
     #[test]
@@ -4640,8 +4483,8 @@ mod tests {
             session_id: "session-123".to_owned(),
             started_at_unix_ms: 1,
             model: "model".to_owned(),
-            effort: ReasoningEffort::Medium,
-            reasoning_mode: ReasoningMode::Standard,
+            effort: Some(ReasoningEffort::Medium),
+            reasoning_mode: Some(ReasoningMode::Standard),
             workspace: workspace.path().to_path_buf(),
             preview: "earlier investigation".to_owned(),
         }]));
@@ -4659,12 +4502,7 @@ mod tests {
         let mut root = RootNode::new(workspace.path(), ReasoningEffort::Medium);
         for character in "@someone@".chars() {
             let update = root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
-            assert!(
-                update
-                    .effects
-                    .iter()
-                    .all(|effect| matches!(effect, RootEffect::DiscoverFiles(_)))
-            );
+            assert!(update.effects.is_empty());
         }
 
         assert!(root.overlay.is_none());
@@ -4683,72 +4521,6 @@ mod tests {
         assert_eq!(root.composer().draft(), "name@example.com");
     }
 
-    fn complete_file_discovery(root: &mut RootNode) {
-        let Some(Overlay::FileFinder(mention)) = &root.overlay else {
-            panic!("file picker must be open");
-        };
-        let request = mention.request;
-        let paths = super::super::file_finder::discover_paths(&root.workspace);
-        root.update(RootEvent::FilesLoaded {
-            request,
-            result: Ok(paths),
-        });
-    }
-
-    #[test]
-    fn file_discovery_is_cancelled_and_late_results_cannot_reopen_the_picker() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        let opened = root.update(key(KeyCode::Char('@'), KeyModifiers::NONE));
-        let [RootEffect::DiscoverFiles(request)] = opened.effects.as_slice() else {
-            panic!("opening must start one discovery");
-        };
-        let request = *request;
-        let token = root.file_request_token(request).unwrap();
-        root.update(key(KeyCode::Char('a'), KeyModifiers::NONE));
-        assert!(
-            root.update(key(KeyCode::Enter, KeyModifiers::NONE))
-                .effects
-                .is_empty()
-        );
-        root.update(key(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(token.is_cancelled());
-        root.update(RootEvent::FilesLoaded {
-            request,
-            result: Ok(vec!["alpha.rs".to_owned()]),
-        });
-        assert!(root.overlay.is_none());
-        assert_eq!(root.composer().draft(), "@a");
-    }
-
-    #[test]
-    fn file_discovery_keeps_the_latest_query_and_rejects_a_different_request() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        let opened = root.update(key(KeyCode::Char('@'), KeyModifiers::NONE));
-        let [RootEffect::DiscoverFiles(request)] = opened.effects.as_slice() else {
-            panic!("discovery");
-        };
-        let request = *request;
-        for character in "alpha".chars() {
-            root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
-        }
-        root.update(RootEvent::FilesLoaded {
-            request: request + 1,
-            result: Ok(vec!["wrong.rs".to_owned()]),
-        });
-        assert!(
-            root.update(key(KeyCode::Enter, KeyModifiers::NONE))
-                .effects
-                .is_empty()
-        );
-        root.update(RootEvent::FilesLoaded {
-            request,
-            result: Ok(vec!["beta.rs".to_owned(), "alpha.rs".to_owned()]),
-        });
-        root.update(key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(root.overlay.is_none());
-        assert_eq!(root.composer().draft(), "@alpha.rs ");
-    }
-
     fn assert_file_selection(key_code: KeyCode) {
         let workspace = tempfile::tempdir().unwrap();
         fs::write(workspace.path().join("notes.md"), "remember this").unwrap();
@@ -4761,7 +4533,6 @@ mod tests {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
         }
 
-        complete_file_discovery(&mut root);
         root.update(key(key_code, KeyModifiers::NONE));
 
         assert!(root.overlay.is_none());
@@ -4793,7 +4564,6 @@ mod tests {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
         }
 
-        complete_file_discovery(&mut root);
         root.update(key(KeyCode::Enter, KeyModifiers::NONE));
 
         assert!(root.overlay.is_none());
@@ -4983,14 +4753,14 @@ mod tests {
         let [RootEffect::Submit(prompt)] = submitted.effects.as_slice() else {
             panic!("restored draft should submit");
         };
-        let PromptInput::Content(content) = prompt.agent_prompt().instruction else {
-            panic!("restored image should produce multimodal input");
-        };
-        assert!(matches!(&content[0], UserInput::Text { text } if text == "inspect "));
-        assert!(matches!(
-            &content[1],
-            UserInput::Image { image_url, .. } if image_url.ends_with("restored")
-        ));
+        let content = prompt.host_content();
+        assert!(content[0]["text"] == "inspect ");
+        assert!(
+            content[1]["image_url"]
+                .as_str()
+                .unwrap()
+                .ends_with("restored")
+        );
     }
 
     #[test]
@@ -5073,6 +4843,10 @@ mod tests {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
         }
         root.update(key(KeyCode::Enter, KeyModifiers::NONE));
+        root.update(RootEvent::SubmissionAcknowledged(
+            "queued".to_owned().into(),
+        ));
+        root.queue.component_mut().push("queued".to_owned());
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
@@ -5100,7 +4874,7 @@ mod tests {
 
         assert!(matches!(
             update.effects.as_slice(),
-            [RootEffect::Steer { prompt, .. }] if prompt.display_text() == "steer now"
+            [RootEffect::Steer { id, .. }] if *id==super::QueueId::new(1)
         ));
         assert!(!root.queue.component().focused());
         assert!(root.composer().draft().is_empty());
@@ -5166,31 +4940,6 @@ mod tests {
     }
 
     #[test]
-    fn active_turn_submissions_can_grow_the_queue_without_restoring_the_draft() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.in_flight_turns = 1;
-        for prompt in ["one", "two", "three", "four", "five"] {
-            for character in prompt.chars() {
-                root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
-            }
-            let update = root.update(key(KeyCode::Enter, KeyModifiers::NONE));
-            assert!(update.effects.is_empty());
-        }
-
-        assert_eq!(root.queue.component().len(), 5);
-        assert!(root.composer().draft().is_empty());
-        assert!(!root.queue.component().focused());
-        assert!(root.notification.is_none());
-
-        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
-        terminal
-            .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
-            .unwrap();
-        assert_eq!(root.queue_area.width, 95);
-        assert_eq!(root.queue_area.bottom(), root.composer_area.y);
-    }
-
-    #[test]
     fn shell_commands_bypass_the_agent_message_queue() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         root.in_flight_turns = 1;
@@ -5201,162 +4950,10 @@ mod tests {
         assert_eq!(submitted.effects, [RootEffect::RunShell("pwd".to_owned())]);
         assert!(root.queue.component().is_empty());
         assert_eq!(root.in_flight_turns, 1);
-    }
+        assert_eq!(root.activity.visual().state(), ActivityState::Working);
 
-    #[test]
-    fn finished_turns_batch_ready_queued_messages_in_order() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.in_flight_turns = 1;
-        root.queue.component_mut().push("first".to_owned());
-        root.queue.component_mut().push("second".to_owned());
-
-        let update = root.update(super::RootEvent::WorkerTurnFinished {
-            terminal_expected: false,
-        });
-        assert_eq!(
-            update.effects,
-            [RootEffect::Submit("first\n\nsecond".to_owned().into())]
-        );
-        assert_eq!(root.in_flight_turns, 1);
-        assert!(root.queue.component().is_empty());
-    }
-
-    #[test]
-    fn queue_edit_preserves_images_in_the_queue_and_original_draft() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.in_flight_turns = 1;
-        root.update(RootEvent::PasteImage(
-            "data:image/png;base64,draft".to_owned(),
-        ));
-        let queued = crate::tui::prompt::Submission::multimodal(
-            "check [Image #1]".to_owned(),
-            [(6..16, "data:image/png;base64,queued".to_owned())],
-        );
-        root.queue.component_mut().push(queued.clone());
-        root.queue.component_mut().set_focused(true);
-        root.update(key(KeyCode::Char('e'), KeyModifiers::NONE));
-        root.update(key(KeyCode::Char('!'), KeyModifiers::NONE));
-        root.update(key(KeyCode::Enter, KeyModifiers::NONE));
-        let edited = root.queue.component_mut().drain_ready();
-        assert_eq!(
-            edited,
-            [crate::tui::prompt::Submission::multimodal(
-                "check [Image #1]!".to_owned(),
-                [(6..16, "data:image/png;base64,queued".to_owned())],
-            )]
-        );
-        assert_eq!(
-            root.composer.component_mut().take_submission(),
-            Some(crate::tui::prompt::Submission::multimodal(
-                "[Image #1]".to_owned(),
-                [(0..10, "data:image/png;base64,draft".to_owned())],
-            ))
-        );
-    }
-
-    #[test]
-    fn queue_edit_uses_the_composer_and_restores_its_draft_after_saving() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.in_flight_turns = 1;
-        root.update(super::RootEvent::ReplaceDraft(
-            "unfinished draft".to_owned(),
-        ));
-        root.queue.component_mut().push("original".to_owned());
-        root.queue.component_mut().set_focused(true);
-
-        let edit = root.update(key(KeyCode::Char('e'), KeyModifiers::NONE));
-        assert!(edit.effects.is_empty());
-        assert_eq!(root.composer.component().draft(), "original");
-        assert!(root.queue_edit.is_some());
-        assert_eq!(root.queue.component().len(), 1);
-
-        root.update(super::RootEvent::ReplaceDraft("edited".to_owned()));
-        let saved = root.update(key(KeyCode::Enter, KeyModifiers::NONE));
-
-        assert!(saved.effects.is_empty());
-        assert_eq!(root.composer.component().draft(), "unfinished draft");
-        assert!(root.queue_edit.is_none());
-        assert_eq!(root.queue.component().len(), 1);
-    }
-
-    #[test]
-    fn editing_blocks_queue_dequeue_until_the_inline_edit_is_saved() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.in_flight_turns = 1;
-        root.queue.component_mut().push("edit me".to_owned());
-        root.queue.component_mut().push("later".to_owned());
-        root.queue.component_mut().set_focused(true);
-        root.update(key(KeyCode::Up, KeyModifiers::NONE));
-
-        root.update(key(KeyCode::Char('e'), KeyModifiers::NONE));
-        assert_eq!(root.composer.component().draft(), "edit me");
-
-        let finished = root.update(super::RootEvent::WorkerTurnFinished {
-            terminal_expected: false,
-        });
-        assert!(finished.effects.is_empty());
-        assert_eq!(root.in_flight_turns, 0);
-
-        root.update(super::RootEvent::ReplaceDraft("edited".to_owned()));
-        let restored = root.update(key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(
-            restored.effects,
-            [RootEffect::Submit("edited\n\nlater".to_owned().into())]
-        );
-        assert_eq!(root.in_flight_turns, 1);
-        assert!(root.queue.component().is_empty());
-    }
-
-    #[test]
-    fn blank_queue_edit_discards_the_item_and_releases_later_messages() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.in_flight_turns = 1;
-        root.queue.component_mut().push("discard me".to_owned());
-        root.queue.component_mut().push("later".to_owned());
-        root.queue.component_mut().set_focused(true);
-        root.update(key(KeyCode::Up, KeyModifiers::NONE));
-
-        root.update(key(KeyCode::Char('e'), KeyModifiers::NONE));
-        let finished = root.update(super::RootEvent::WorkerTurnFinished {
-            terminal_expected: false,
-        });
-        assert!(finished.effects.is_empty());
-
-        root.update(super::RootEvent::ReplaceDraft("  \n".to_owned()));
-        let edited = root.update(key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(
-            edited.effects,
-            [RootEffect::Submit("later".to_owned().into())]
-        );
-        assert_eq!(root.in_flight_turns, 1);
-        assert!(root.queue.component().is_empty());
-    }
-
-    #[test]
-    fn escape_cancels_a_queue_edit_and_releases_the_original_message() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.in_flight_turns = 1;
-        root.update(super::RootEvent::ReplaceDraft("keep this draft".to_owned()));
-        root.queue.component_mut().push("keep original".to_owned());
-        root.queue.component_mut().set_focused(true);
-        root.update(key(KeyCode::Char('e'), KeyModifiers::NONE));
-        root.update(super::RootEvent::ReplaceDraft(
-            "discard this edit".to_owned(),
-        ));
-
-        let finished = root.update(super::RootEvent::WorkerTurnFinished {
-            terminal_expected: false,
-        });
-        assert!(finished.effects.is_empty());
-
-        let cancelled = root.update(key(KeyCode::Esc, KeyModifiers::NONE));
-
-        assert_eq!(
-            cancelled.effects,
-            [RootEffect::Submit("keep original".to_owned().into())]
-        );
-        assert_eq!(root.composer.component().draft(), "keep this draft");
-        assert!(root.queue_edit.is_none());
+        root.update(RootEvent::ShellFinished);
+        assert_eq!(root.activity.visual().state(), ActivityState::Thinking);
     }
 
     #[test]
@@ -5366,145 +4963,17 @@ mod tests {
         root.queue.component_mut().push("first line".to_owned());
         root.queue.component_mut().set_focused(true);
         root.update(key(KeyCode::Char('e'), KeyModifiers::NONE));
+        root.update(RootEvent::QueueEditReady {
+            id: super::QueueId::new(0),
+            expected_input: orvek_harness::Digest::of(b"fixture"),
+            prompt: "first line".to_owned().into(),
+        });
 
         let newline = root.update(key(KeyCode::Enter, KeyModifiers::SHIFT));
 
         assert!(newline.effects.is_empty());
         assert_eq!(root.composer.component().draft(), "first line\n");
         assert!(root.queue_edit.is_some());
-    }
-
-    #[test]
-    fn steer_completion_race_does_not_release_another_queued_message() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.in_flight_turns = 1;
-        root.queue.component_mut().push("later".to_owned());
-        root.queue.component_mut().push("steer now".to_owned());
-        root.queue.component_mut().set_focused(true);
-
-        let steer = root.update(key(KeyCode::Enter, KeyModifiers::NONE));
-        let RootEffect::Steer { id, .. } = &steer.effects[0] else {
-            panic!("enter should issue a steer");
-        };
-        let id = *id;
-        let finished = root.update(super::RootEvent::WorkerTurnFinished {
-            terminal_expected: false,
-        });
-        assert!(finished.effects.is_empty());
-        assert_eq!(root.queue.component().len(), 2);
-
-        root.update(super::RootEvent::SteerPromoted(id));
-        let promoted_finished = root.update(super::RootEvent::WorkerTurnFinished {
-            terminal_expected: false,
-        });
-        assert_eq!(
-            promoted_finished.effects,
-            [RootEffect::Submit("later".to_owned().into())]
-        );
-    }
-
-    #[test]
-    fn interrupt_drains_a_pending_steer_before_regular_queue_items() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.in_flight_turns = 1;
-        root.queue.component_mut().push("regular".to_owned());
-        root.queue.component_mut().push("priority steer".to_owned());
-        root.queue.component_mut().set_focused(true);
-        root.update(key(KeyCode::Enter, KeyModifiers::NONE));
-        root.queue.component_mut().set_focused(false);
-
-        root.update(key(KeyCode::Esc, KeyModifiers::NONE));
-        let interrupt = root.update(key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(interrupt.effects, [RootEffect::CancelTurns]);
-
-        root.update(super::RootEvent::TurnsCancelled);
-        let finished = root.update(super::RootEvent::WorkerTurnFinished {
-            terminal_expected: false,
-        });
-        assert_eq!(
-            finished.effects,
-            [RootEffect::Submit(
-                "priority steer\n\nregular".to_owned().into()
-            )]
-        );
-    }
-
-    #[test]
-    fn applied_steer_after_interrupt_ack_is_not_submitted_again() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.in_flight_turns = 1;
-        root.queue.component_mut().push("later".to_owned());
-        root.queue.component_mut().push("priority steer".to_owned());
-        root.queue.component_mut().set_focused(true);
-        let steer = root.update(key(KeyCode::Enter, KeyModifiers::NONE));
-        let RootEffect::Steer { id, .. } = &steer.effects[0] else {
-            panic!("enter should issue a steer");
-        };
-        let id = *id;
-        root.update(super::RootEvent::SteerAdmitted(id));
-
-        root.update(super::RootEvent::TurnsCancelled);
-        let applied = root.update(run_steered());
-        let finished = root.update(super::RootEvent::WorkerTurnFinished {
-            terminal_expected: false,
-        });
-
-        assert_eq!(
-            applied.effects,
-            [RootEffect::PersistSteer("priority steer".to_owned())]
-        );
-        assert_eq!(
-            finished.effects,
-            [RootEffect::Submit("later".to_owned().into())]
-        );
-    }
-
-    #[test]
-    fn steer_stays_queued_until_the_model_boundary_event() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.in_flight_turns = 1;
-        root.queue.component_mut().push("steer".to_owned());
-        root.queue.component_mut().set_focused(true);
-        let steer = root.update(key(KeyCode::Enter, KeyModifiers::NONE));
-        let RootEffect::Steer { id, .. } = &steer.effects[0] else {
-            panic!("enter should issue a steer");
-        };
-        let id = *id;
-
-        let admitted = root.update(super::RootEvent::SteerAdmitted(id));
-        assert!(admitted.effects.is_empty());
-        assert_eq!(root.queue.component().len(), 1);
-
-        let applied = root.update(run_steered());
-        assert_eq!(
-            applied.effects,
-            [RootEffect::PersistSteer("steer".to_owned())]
-        );
-        assert!(root.queue.component().is_empty());
-    }
-
-    #[test]
-    fn model_boundary_before_worker_ack_is_reconciled_once() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.in_flight_turns = 1;
-        root.queue.component_mut().push("steer".to_owned());
-        root.queue.component_mut().set_focused(true);
-        let steer = root.update(key(KeyCode::Enter, KeyModifiers::NONE));
-        let RootEffect::Steer { id, .. } = &steer.effects[0] else {
-            panic!("enter should issue a steer");
-        };
-        let id = *id;
-
-        let early_boundary = root.update(run_steered());
-        assert!(early_boundary.effects.is_empty());
-        assert_eq!(root.queue.component().len(), 1);
-
-        let admitted = root.update(super::RootEvent::SteerAdmitted(id));
-        assert_eq!(
-            admitted.effects,
-            [RootEffect::PersistSteer("steer".to_owned())]
-        );
-        assert!(root.queue.component().is_empty());
     }
 
     #[test]
@@ -5518,11 +4987,11 @@ mod tests {
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
 
-        root.update(mouse(MouseEventKind::Down(MouseButton::Left), 2, 8));
+        root.update(mouse(MouseEventKind::Down(MouseButton::Left), 1, 8));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        let update = root.update(mouse(MouseEventKind::Up(MouseButton::Left), 8, 8));
+        let update = root.update(mouse(MouseEventKind::Up(MouseButton::Left), 7, 8));
 
         assert_eq!(update.effects, [RootEffect::Copy("copy me".to_owned())]);
         assert_eq!(update.render, super::RenderRequest::Immediate);
@@ -5545,16 +5014,9 @@ mod tests {
         assert!(rendered.contains("Copied selection to clipboard."));
         let buffer = terminal.backend().buffer();
         let left = (40 - ("Copied selection to clipboard.".len() as u16 + 4)) / 2;
-        assert_eq!(buffer[(left, root.transcript_area.y)].symbol(), "╭");
-        assert_eq!(
-            buffer[(left, root.transcript_area.y)].fg,
-            ratatui::style::Color::Green
-        );
-        assert!(
-            buffer[(left + 2, root.transcript_area.y + 1)]
-                .modifier
-                .contains(Modifier::BOLD)
-        );
+        assert_eq!(buffer[(left, 0)].symbol(), "╭");
+        assert_eq!(buffer[(left, 0)].fg, ratatui::style::Color::Green);
+        assert!(buffer[(left + 2, 1)].modifier.contains(Modifier::BOLD));
 
         let deadline = root.notification.as_ref().unwrap().deadline;
         root.update(super::RootEvent::AnimationFrame(deadline));
@@ -5580,8 +5042,33 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(rendered.contains("Pro enabled"));
-        assert!(rendered.contains("F2 details"));
+        assert!(rendered.contains("start a new session"));
+        assert!(rendered.contains("apply."));
+    }
+
+    #[test]
+    fn multiline_notifications_use_rendered_height_and_sanitize_controls() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(super::RootEvent::NotifySuccess(
+            "First line\r\nSecond\tline\u{1b}".to_owned(),
+        ));
+        let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
+
+        terminal
+            .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let rows = (0..4)
+            .map(|row| {
+                (0..40)
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        assert!(rows[1].contains("First line"));
+        assert!(rows[2].contains("Second    line�"));
+        assert!(rows[3].contains('╰'));
     }
 
     #[test]
@@ -5606,51 +5093,23 @@ mod tests {
         let version_start = text_start + prefix_width;
         let command_start = version_start + version_width + suffix_width;
 
-        assert_eq!(buffer[(left, root.transcript_area.y)].symbol(), "╭");
-        assert_eq!(buffer[(left, root.transcript_area.y)].fg, Color::Green);
+        assert_eq!(buffer[(left, 0)].symbol(), "╭");
+        assert_eq!(buffer[(left, 0)].fg, Color::Green);
         for column in text_start..version_start {
-            assert_eq!(
-                buffer[(column, root.transcript_area.y + 1)].fg,
-                Color::Green
-            );
-            assert!(
-                !buffer[(column, root.transcript_area.y + 1)]
-                    .modifier
-                    .contains(Modifier::BOLD)
-            );
+            assert_eq!(buffer[(column, 1)].fg, Color::Green);
+            assert!(!buffer[(column, 1)].modifier.contains(Modifier::BOLD));
         }
         for column in version_start..version_start + version_width {
-            assert_eq!(
-                buffer[(column, root.transcript_area.y + 1)].fg,
-                Color::Green
-            );
-            assert!(
-                buffer[(column, root.transcript_area.y + 1)]
-                    .modifier
-                    .contains(Modifier::BOLD)
-            );
+            assert_eq!(buffer[(column, 1)].fg, Color::Green);
+            assert!(buffer[(column, 1)].modifier.contains(Modifier::BOLD));
         }
         for column in version_start + version_width..command_start {
-            assert_eq!(
-                buffer[(column, root.transcript_area.y + 1)].fg,
-                Color::Green
-            );
-            assert!(
-                !buffer[(column, root.transcript_area.y + 1)]
-                    .modifier
-                    .contains(Modifier::BOLD)
-            );
+            assert_eq!(buffer[(column, 1)].fg, Color::Green);
+            assert!(!buffer[(column, 1)].modifier.contains(Modifier::BOLD));
         }
         for column in command_start..text_start + message_width {
-            assert_eq!(
-                buffer[(column, root.transcript_area.y + 1)].fg,
-                Color::Reset
-            );
-            assert!(
-                !buffer[(column, root.transcript_area.y + 1)]
-                    .modifier
-                    .contains(Modifier::BOLD)
-            );
+            assert_eq!(buffer[(column, 1)].fg, Color::Reset);
+            assert!(!buffer[(column, 1)].modifier.contains(Modifier::BOLD));
         }
 
         let rendered = buffer
@@ -5706,7 +5165,7 @@ mod tests {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         root.update(super::RootEvent::Transcript(agent_record(
             1,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -5752,7 +5211,7 @@ mod tests {
         let output = "alpha beta gamma delta epsilon zeta\nsecond line";
         root.update(super::RootEvent::Transcript(agent_record(
             1,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "workflow",
                 "tool": "exec",
@@ -5761,7 +5220,7 @@ mod tests {
         )));
         root.update(super::RootEvent::Transcript(agent_record(
             2,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "workflow/shell",
                 "tool": "exec_command",
@@ -5770,7 +5229,7 @@ mod tests {
         )));
         root.update(super::RootEvent::Transcript(agent_record(
             3,
-            AgentEventKind::ToolResult,
+            DisplaySample::ToolReturn,
             json!({
                 "call_id": "workflow/shell",
                 "tool": "exec_command",
@@ -5870,7 +5329,7 @@ mod tests {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         root.update(super::RootEvent::Transcript(agent_record(
             1,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -5919,7 +5378,7 @@ mod tests {
         let markdown = "See [inclusion.rs](/workspace/glue/src/inclusion.rs) or [mailbox.rs](/workspace/glue/src/mailbox.rs).";
         root.update(super::RootEvent::Transcript(agent_record(
             1,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -5968,7 +5427,7 @@ mod tests {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         root.update(super::RootEvent::Transcript(agent_record(
             1,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -5979,7 +5438,7 @@ mod tests {
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        let row = (root.transcript_area.y..root.transcript_area.bottom())
+        let row = (0..root.transcript_area.height)
             .find(|&row| {
                 (0..40)
                     .map(|column| terminal.backend().buffer()[(column, row)].symbol())
@@ -6002,7 +5461,7 @@ mod tests {
 
     #[test]
     fn transcript_selection_survives_scrolling_beyond_the_viewport() {
-        let mut terminal = Terminal::new(TestBackend::new(32, 15)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(32, 12)).unwrap();
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         for sequence in 1..=10 {
             let record = TranscriptRecord::from_local(
@@ -6020,7 +5479,7 @@ mod tests {
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        let start_row = (root.transcript_area.y..root.transcript_area.bottom())
+        let start_row = (0..root.transcript_area.height)
             .find(|&row| {
                 (0..32)
                     .map(|column| terminal.backend().buffer()[(column, row)].symbol())
@@ -6034,7 +5493,7 @@ mod tests {
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        let end_row = (root.transcript_area.y..root.transcript_area.bottom())
+        let end_row = (0..root.transcript_area.height)
             .rev()
             .find(|&row| terminal.backend().buffer()[(0, row)].symbol() == "┃")
             .expect("a later prompt should be visible");
@@ -6056,14 +5515,14 @@ mod tests {
         assert_eq!(
             update.effects,
             [RootEffect::Copy(
-                "prompt 1\n\nprompt 2\n\nprompt 3\n\nprompt 4\n\nprompt 5".to_owned()
+                "prompt 1\n\nprompt 2\n\nprompt 3\n\nprompt 4".to_owned()
             )]
         );
     }
 
     #[test]
     fn dragging_at_the_viewport_edge_keeps_extending_the_selection() {
-        let mut terminal = Terminal::new(TestBackend::new(32, 15)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(32, 12)).unwrap();
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         for sequence in 1..=12 {
             let record = TranscriptRecord::from_local(
@@ -6081,7 +5540,7 @@ mod tests {
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        let start_row = (root.transcript_area.y..root.transcript_area.bottom())
+        let start_row = (0..root.transcript_area.height)
             .find(|&row| {
                 (0..32)
                     .map(|column| terminal.backend().buffer()[(column, row)].symbol())
@@ -6093,7 +5552,7 @@ mod tests {
         root.update(mouse(MouseEventKind::Down(MouseButton::Left), 2, start_row));
         root.update(mouse(MouseEventKind::Drag(MouseButton::Left), 31, edge));
 
-        for _ in 0..4 {
+        for _ in 0..7 {
             terminal
                 .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
                 .unwrap();
@@ -6186,27 +5645,15 @@ mod tests {
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
 
-        root.update(mouse(
-            MouseEventKind::Down(MouseButton::Left),
-            2,
-            root.transcript_area.y,
-        ));
+        root.update(mouse(MouseEventKind::Down(MouseButton::Left), 2, 1));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        root.update(mouse(
-            MouseEventKind::Drag(MouseButton::Left),
-            39,
-            root.transcript_area.y,
-        ));
+        root.update(mouse(MouseEventKind::Drag(MouseButton::Left), 39, 1));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        let update = root.update(mouse(
-            MouseEventKind::Up(MouseButton::Left),
-            39,
-            root.transcript_area.y,
-        ));
+        let update = root.update(mouse(MouseEventKind::Up(MouseButton::Left), 39, 1));
 
         assert_eq!(
             update.effects,
@@ -6279,27 +5726,6 @@ mod tests {
         );
         assert_eq!(root.composer().effort(), ReasoningEffort::High);
         assert!(root.overlay.is_none());
-
-        let theme = Theme::default();
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
-        terminal
-            .draw(|frame| root.render(frame, frame.area(), &theme))
-            .unwrap();
-        let artwork = terminal
-            .backend()
-            .buffer()
-            .content()
-            .chunks(80)
-            .skip(usize::from(root.transcript_area.y))
-            .take(usize::from(root.transcript_area.height))
-            .flatten()
-            .filter(|cell| cell.symbol() != " ")
-            .collect::<Vec<_>>();
-        assert!(!artwork.is_empty());
-        assert!(artwork.iter().all(|cell| matches!(
-            cell.fg,
-            Color::Rgb(182, 160, 247) | Color::Rgb(120, 201, 208)
-        ) || cell.fg == theme.code_text()));
     }
 
     #[test]
@@ -6325,8 +5751,9 @@ mod tests {
         let notification = root.notification.as_ref().unwrap();
         let message = notification
             .message
-            .spans
+            .lines
             .iter()
+            .flat_map(|line| &line.spans)
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert_eq!(
@@ -6350,8 +5777,9 @@ mod tests {
         let notification = root.notification.as_ref().unwrap();
         let message = notification
             .message
-            .spans
+            .lines
             .iter()
+            .flat_map(|line| &line.spans)
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert_eq!(
@@ -6375,6 +5803,14 @@ mod tests {
         assert!(root.composer().fast_mode());
         assert!(root.overlay.is_none());
 
+        root.reset_session(
+            Path::new("/work"),
+            ReasoningEffort::Medium,
+            ReasoningMode::Standard,
+            ReasoningMode::Standard,
+            DraftReset::Preserve,
+        );
+        root.set_fast_mode(true);
         root.update(key(KeyCode::Char('/'), KeyModifiers::NONE));
         for character in "priority".chars() {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
@@ -6407,8 +5843,8 @@ mod tests {
     fn subagents_action_reopens_the_active_filter_on_the_oldest_active_agent() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         for (id, role) in [(1, "completed"), (2, "active")] {
-            root.update(RootEvent::Subagent(AgentUpdate::Added(AgentDescriptor {
-                id: AgentId::new(id),
+            root.update(RootEvent::Subagent(ChildUpdate::Added(ChildView {
+                id: ChildId::new(id),
                 session_id: format!("agent-{id}"),
                 model: Model::Sol,
                 role: role.to_owned(),
@@ -6416,10 +5852,10 @@ mod tests {
                 parent: None,
             })));
         }
-        root.update(RootEvent::Subagent(AgentUpdate::Status {
-            id: AgentId::new(1),
-            status: AgentStatus::Completed {
-                output: json!({ "report": "done" }),
+        root.update(RootEvent::Subagent(ChildUpdate::Status {
+            id: ChildId::new(1),
+            status: ChildStatus::Returned {
+                output: orvek_harness::Digest::of(b"{\"report\":\"done\"}"),
             },
         }));
         root.subagents.update_tree(Event::Key(KeyEvent::new(
@@ -6441,7 +5877,7 @@ mod tests {
         assert!(matches!(
             root.overlay,
             Some(Overlay::Subagents(SubagentOverlay::Transcript(id)))
-                if id == AgentId::new(2)
+                if id == ChildId::new(2)
         ));
     }
 
@@ -6514,84 +5950,17 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_recent_prompt_loading_preserves_images_and_rejects_late_results() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.update(RootEvent::PasteImage(
-            "data:image/png;base64,fixture".to_owned(),
-        ));
-        root.update(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
-        let request = root.pending_recent_request.unwrap();
-        let cancelled = root.update(key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(
-            cancelled.effects,
-            [RootEffect::CancelRecentPrompts(request)]
-        );
-        assert!(root.interactive);
-        root.update(RootEvent::RecentPromptsLoaded {
-            request,
-            session_id: "old".to_owned(),
-            prompts: Vec::new(),
-        });
-        assert!(root.overlay.is_none());
-        assert_eq!(
-            root.composer.component_mut().take_submission(),
-            Some(Submission::multimodal(
-                "[Image #1]".to_owned(),
-                [(0..10, "data:image/png;base64,fixture".to_owned())],
-            ))
-        );
-    }
-
-    #[test]
-    fn replacement_session_ignores_the_previous_prompt_request() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.update(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
-        let old = root.pending_recent_request.unwrap();
-        root.reset_session(
-            Path::new("/work"),
-            ReasoningEffort::Medium,
-            ReasoningMode::Standard,
-            ReasoningMode::Standard,
-            super::DraftReset::Preserve,
-        );
-        root.update(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
-        let current = root.pending_recent_request.unwrap();
-        assert_ne!(current, old);
-        root.update(RootEvent::RecentPromptsLoaded {
-            request: old,
-            session_id: "old".to_owned(),
-            prompts: Vec::new(),
-        });
-        assert!(root.overlay.is_none());
-        assert_eq!(root.pending_recent_request, Some(current));
-        root.update(RootEvent::RecentPromptsLoaded {
-            request: current,
-            session_id: "current".to_owned(),
-            prompts: Vec::new(),
-        });
-        assert!(matches!(&root.overlay, Some(Overlay::RecentPrompts(_))));
-        assert!(root.interactive);
-    }
-
-    #[test]
     fn control_r_loads_recent_prompts_and_inserts_from_the_current_session() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         root.update(RootEvent::ReplaceDraft("keep while loading".to_owned()));
 
         let loading = root.update(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
 
-        assert_eq!(
-            loading.effects,
-            [RootEffect::LoadRecentPrompts {
-                request: 0,
-                current_prompts: Vec::new()
-            }]
-        );
+        assert_eq!(loading.effects, [RootEffect::LoadRecentPrompts(Vec::new())]);
         assert_eq!(root.composer().draft(), "keep while loading");
         assert!(!root.interactive);
 
         root.update(RootEvent::RecentPromptsLoaded {
-            request: 0,
             session_id: "current".to_owned(),
             prompts: vec![
                 RecentPrompt {
@@ -6626,10 +5995,7 @@ mod tests {
         root.update(RootEvent::ReplaceDraft("keep me".to_owned()));
         root.update(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
 
-        root.update(RootEvent::RecentPromptLoadFailed {
-            request: 0,
-            error: "load failed".to_owned(),
-        });
+        root.update(RootEvent::RecentPromptLoadFailed("load failed".to_owned()));
 
         assert!(root.interactive);
         assert_eq!(root.composer().draft(), "keep me");
@@ -6654,13 +6020,12 @@ mod tests {
 
         assert_eq!(
             loading.effects,
-            [RootEffect::LoadRecentPrompts {
-                request: 0,
-                current_prompts: vec![super::RecentPromptDraft {
+            [RootEffect::LoadRecentPrompts(vec![
+                super::RecentPromptDraft {
                     text: "just submitted".to_owned(),
                     recorded_at_unix_ms: 42,
-                },]
-            }]
+                },
+            ])]
         );
     }
 
@@ -6771,7 +6136,11 @@ mod tests {
         );
         assert!(!root.reflection_input);
         assert!(root.thread == ThreadState::Started);
-        assert_eq!(root.in_flight_turns, 1);
+        assert_eq!(root.in_flight_turns, 0);
+        assert!(root.pending_submission.is_some());
+        root.update(RootEvent::SubmissionAcknowledged(
+            "Focus on validation gaps.".to_owned().into(),
+        ));
         assert!(root.composer().draft().is_empty());
         root.update(key(KeyCode::Up, KeyModifiers::NONE));
         assert!(root.composer().draft().is_empty());
@@ -6928,9 +6297,10 @@ mod tests {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
         }
         root.update(key(KeyCode::Enter, KeyModifiers::NONE));
-        root.update(super::RootEvent::WorkerTurnFinished {
-            terminal_expected: false,
-        });
+        root.agent_turn_finished();
+        root.update(RootEvent::SubmissionAcknowledged(
+            "old prompt".to_owned().into(),
+        ));
         root.update(key(KeyCode::Char('/'), KeyModifiers::NONE));
         for character in "clear".chars() {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
@@ -6963,6 +6333,10 @@ mod tests {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
         }
         root.update(key(KeyCode::Enter, KeyModifiers::NONE));
+        root.update(RootEvent::SubmissionAcknowledged(
+            "active prompt".to_owned().into(),
+        ));
+        root.in_flight_turns = 1;
         root.update(key(KeyCode::Char('/'), KeyModifiers::NONE));
         for character in "clear".chars() {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
@@ -6986,6 +6360,7 @@ mod tests {
             [RootEffect::Submit("hi".to_owned().into())]
         );
 
+        root.update(RootEvent::SubmissionAcknowledged("hi".to_owned().into()));
         root.update(key(KeyCode::Char('/'), KeyModifiers::NONE));
         for character in "effort".chars() {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
@@ -7002,124 +6377,29 @@ mod tests {
         root.update(super::RootEvent::ReplaceDraft("existing draft".to_owned()));
         root.update(super::RootEvent::ReviewStarted);
 
-        root.update(super::RootEvent::ReviewFinished(
-            "## Review: Approved".to_owned(),
-        ));
+        root.update(super::RootEvent::ReviewFinished {
+            markdown: "## Review: Approved".to_owned(),
+            feedback: Some(
+                "0000000000000000000000000000000000000000000000000000000000000000"
+                    .parse()
+                    .unwrap(),
+            ),
+        });
 
         assert_eq!(
             root.composer().draft(),
             "existing draft\n\n## Review: Approved"
+        );
+        assert_eq!(
+            root.composer
+                .component()
+                .submission()
+                .unwrap()
+                .reviews()
+                .len(),
+            1
         );
         assert!(root.blocking_task.is_none());
-    }
-
-    #[test]
-    fn review_feedback_reports_a_draft_insert_without_sending_it() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.update(super::RootEvent::ReplaceDraft("existing draft".to_owned()));
-        root.update(super::RootEvent::ReviewStarted);
-
-        let update = root.update(super::RootEvent::ReviewFinished(
-            "## Review: Approved".to_owned(),
-        ));
-
-        assert_eq!(update.effects, Vec::new());
-        let notification = root.notification.as_ref().unwrap();
-        assert_eq!(
-            notification
-                .message
-                .spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>(),
-            "Review feedback added to draft."
-        );
-        assert_eq!(
-            root.composer().draft(),
-            "existing draft\n\n## Review: Approved"
-        );
-    }
-
-    #[test]
-    fn notification_details_open_from_the_rendered_notice_and_capture_clicks() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.update(super::RootEvent::NotifyError(
-            "first line\nsecond line\nthird line".to_owned(),
-        ));
-        let rendered = render_root_text(&mut root, 100, 20);
-        assert!(rendered.contains("first line"));
-
-        let opened = root.update(f2());
-        assert_eq!(opened.render, super::RenderRequest::Immediate);
-        assert!(matches!(
-            root.overlay,
-            Some(Overlay::NotificationDetails(_))
-        ));
-        root.update(key(KeyCode::Char('x'), KeyModifiers::NONE));
-        assert!(root.composer().draft().is_empty());
-
-        let copy = root.update(key(KeyCode::Char('c'), KeyModifiers::NONE));
-        assert_eq!(
-            copy.effects,
-            [RootEffect::Copy(
-                "first line\nsecond line\nthird line".to_owned()
-            )]
-        );
-        let dismissed = root.update(key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(dismissed.render, super::RenderRequest::Immediate);
-        assert!(root.overlay.is_none());
-
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.update(super::RootEvent::NotifySuccess("click me".to_owned()));
-        let _ = render_root_text(&mut root, 100, 20);
-        let area = root.notification_hit_area.unwrap();
-        root.update(mouse(
-            MouseEventKind::Down(MouseButton::Left),
-            area.x + 1,
-            area.y + 1,
-        ));
-        assert!(matches!(
-            root.overlay,
-            Some(Overlay::NotificationDetails(_))
-        ));
-    }
-
-    #[test]
-    fn notification_details_copy_takes_precedence_over_review_link_copy() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.update(super::RootEvent::NotifyError("notice message".to_owned()));
-        let _ = render_root_text(&mut root, 100, 20);
-        root.update(super::RootEvent::ReviewStarted);
-        root.update(super::RootEvent::ReviewReady(
-            "http://127.0.0.1:4321/review".to_owned(),
-        ));
-        root.update(f2());
-
-        let copy = root.update(key(KeyCode::Char('c'), KeyModifiers::NONE));
-        let escape = root.update(key(KeyCode::Esc, KeyModifiers::NONE));
-
-        assert_eq!(
-            copy.effects,
-            [RootEffect::Copy("notice message".to_owned())]
-        );
-        assert_eq!(escape.effects, Vec::new());
-        assert_eq!(root.blocking_task, Some(super::BlockingTask::Review));
-    }
-
-    #[test]
-    fn notification_details_keep_their_snapshot_and_resume_the_newest_notice() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.update(super::RootEvent::NotifyError("opened notice".to_owned()));
-        let _ = render_root_text(&mut root, 100, 20);
-        root.update(f2());
-        root.update(super::RootEvent::NotifySuccess("newest notice".to_owned()));
-
-        let copy = root.update(key(KeyCode::Char('c'), KeyModifiers::NONE));
-        root.update(key(KeyCode::Esc, KeyModifiers::NONE));
-        let rendered = render_root_text(&mut root, 100, 20);
-
-        assert_eq!(copy.effects, [RootEffect::Copy("opened notice".to_owned())]);
-        assert!(rendered.contains("newest notice"));
     }
 
     #[test]
@@ -7134,8 +6414,9 @@ mod tests {
         let notification = root.notification.as_ref().unwrap();
         let message = notification
             .message
-            .spans
+            .lines
             .iter()
+            .flat_map(|line| &line.spans)
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert_eq!(message, "The folder must be a git repository.");
@@ -7147,14 +6428,15 @@ mod tests {
     fn review_waiting_is_shown_in_the_composer_instead_of_the_transcript() {
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
         root.update(RootEvent::ReviewStarted);
+        assert_eq!(root.activity.visual().state(), ActivityState::Thinking);
         root.update(RootEvent::Transcript(agent_record(
             1,
-            AgentEventKind::RunStarted,
+            DisplaySample::Start,
             json!({}),
         )));
         root.update(RootEvent::Transcript(agent_record(
             2,
-            AgentEventKind::RunCompleted,
+            DisplaySample::End,
             json!({}),
         )));
 
@@ -7164,6 +6446,7 @@ mod tests {
         assert!(!rendered.contains("Preparing review overview"));
 
         root.update(RootEvent::ReviewCancelled);
+        assert_eq!(root.activity.visual().state(), ActivityState::Cancelled);
         assert!(!render_root_text(&mut root, 100, 20).contains("Waiting for review"));
     }
 
@@ -7299,7 +6582,7 @@ mod tests {
         root.in_flight_turns = 1;
         root.update(RootEvent::Transcript(agent_record(
             1,
-            AgentEventKind::RunStarted,
+            DisplaySample::Start,
             json!({}),
         )));
 
@@ -7319,5 +6602,85 @@ mod tests {
 
         assert!(fork.blocking_task.is_none());
         assert!(!render_root_text(&mut fork, 100, 20).contains("Waiting for review"));
+    }
+    #[test]
+    fn submission_draft_is_retained_until_receipt_and_double_enter_cannot_duplicate() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(RootEvent::ReplaceDraft("repair fixture".into()));
+        let sent = root.update(key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(sent.effects.as_slice(), [RootEffect::Submit(_)]));
+        assert_eq!(root.composer().draft(), "repair fixture");
+        assert!(
+            root.update(key(KeyCode::Enter, KeyModifiers::NONE))
+                .effects
+                .is_empty()
+        );
+        root.update(RootEvent::SubmissionAcknowledged(
+            "repair fixture".to_owned().into(),
+        ));
+        assert!(root.composer().draft().is_empty());
+        assert!(root.pending_submission.is_none());
+    }
+    #[test]
+    fn rejected_and_uncertain_submissions_keep_the_original_draft() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(RootEvent::ReplaceDraft("repair fixture".into()));
+        root.update(key(KeyCode::Enter, KeyModifiers::NONE));
+        root.update(RootEvent::SubmissionFailed {
+            uncertain: true,
+            error: "lost reply".into(),
+        });
+        assert_eq!(
+            root.update(key(KeyCode::Enter, KeyModifiers::NONE)).effects,
+            [RootEffect::RetrySubmission]
+        );
+        assert!(
+            root.update(key(KeyCode::Enter, KeyModifiers::NONE))
+                .effects
+                .is_empty()
+        );
+        root.update(RootEvent::SubmissionFailed {
+            uncertain: false,
+            error: "rejected".into(),
+        });
+        assert_eq!(root.composer().draft(), "repair fixture");
+        assert!(root.pending_submission.is_none());
+    }
+    #[test]
+    fn edits_made_during_acknowledgement_are_not_cleared_and_busy_inputs_go_to_host() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.in_flight_turns = 1;
+        root.update(RootEvent::ReplaceDraft("queued input".into()));
+        assert!(matches!(
+            root.update(key(KeyCode::Enter, KeyModifiers::NONE))
+                .effects
+                .as_slice(),
+            [RootEffect::Submit(_)]
+        ));
+        assert!(root.queue.component().is_empty());
+        root.update(RootEvent::ReplaceDraft("new draft".into()));
+        root.update(RootEvent::SubmissionAcknowledged(
+            "queued input".to_owned().into(),
+        ));
+        assert_eq!(root.composer().draft(), "new draft");
+        assert!(root.agent_turn_finished().effects.is_empty());
+    }
+    #[test]
+    fn queue_edit_uses_frozen_input_identity_and_preserves_unrelated_draft() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(RootEvent::ReplaceDraft("my current draft".into()));
+        let id = super::QueueId::new(8);
+        let digest = orvek_harness::Digest::of(b"queued");
+        root.update(RootEvent::QueueEditReady {
+            id,
+            expected_input: digest,
+            prompt: "queued input".to_owned().into(),
+        });
+        root.update(RootEvent::ReplaceDraft("edited input".into()));
+        let saved = root.update(key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            matches!(saved.effects.as_slice(),[RootEffect::ReplaceQueued{id:actual,expected_input,prompt}] if *actual==id&&*expected_input==digest&&prompt.display_text()=="edited input")
+        );
+        assert_eq!(root.composer().draft(), "my current draft");
     }
 }

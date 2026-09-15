@@ -1,10 +1,10 @@
-use serde_json::json;
 use orvek_harness::{
     Digest, Store,
     context::{self, ContextError},
     inference::ModelSettings,
     session::{RecordedToolCall, SessionConfig, SessionId, SessionState},
 };
+use serde_json::json;
 use uuid::Uuid;
 
 fn session() -> SessionState {
@@ -17,6 +17,7 @@ fn session() -> SessionState {
                 workspace: root.path().into(),
                 model: ModelSettings::default(),
                 instructions: String::new(),
+                context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
             },
             None,
         )

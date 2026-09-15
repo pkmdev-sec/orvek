@@ -1,7 +1,5 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{Value, json};
-use std::{collections::BTreeMap, fs, time::Duration};
 use orvek_harness::inference::{
     ArgumentValidity, AttemptStatus, Delta, FailureKind, InferenceRequest, Limits, Model,
     ModelSettings, OutputItem, ReasoningMode, ResponseStatus, ResponsesClient, Route, Thinking,
@@ -10,6 +8,8 @@ use orvek_harness::inference::{
         Auth, AuthError, AuthMode, ChatGptLogin, SecretString, chatgpt_auth_status, logout_chatgpt,
     },
 };
+use serde_json::{Value, json};
+use std::{collections::BTreeMap, fs, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -412,9 +412,9 @@ async fn closed_stream_keeps_partial_output_and_does_not_retry_a_possibly_billed
 }
 
 #[tokio::test]
-async fn retry_count_and_uncertain_failed_attempts_remain_visible_after_success() {
+async fn rate_limit_retries_remain_visible_after_success() {
     let (base, served) = server(vec![
-        Reply::reject(503),
+        Reply::reject(429),
         Reply::reject(429),
         Reply::sse(vec![terminal("completed", vec![message("done")], usage())]),
     ])
@@ -424,15 +424,52 @@ async fn retry_count_and_uncertain_failed_attempts_remain_visible_after_success(
         .await;
     assert!(outcome.failure.is_none());
     assert_eq!(outcome.attempts.len(), 3);
-    assert!(outcome.attempts[0].billing_uncertain);
-    assert!(!outcome.attempts[1].billing_uncertain);
-    assert!(outcome.billing_uncertain());
+    assert!(!outcome.billing_uncertain());
+    assert!(!outcome.rate_limited());
     assert_eq!(served.await.unwrap().len(), 3);
 }
 
 #[tokio::test]
+async fn ambiguous_server_rejections_are_not_retried() {
+    for status in [408, 502, 503, 504] {
+        let (base, served) = server(vec![Reply::reject(status)]).await;
+        let outcome = client(&base, limits())
+            .respond(&request(), &CancellationToken::new(), |_| {})
+            .await;
+        assert_eq!(outcome.attempts.len(), 1);
+        assert!(outcome.billing_uncertain());
+        assert!(!outcome.rate_limited());
+        assert_eq!(served.await.unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn single_admitted_rate_limit_rejection_is_safe_to_readmit() {
+    let (base, served) = server(vec![Reply::reject(429)]).await;
+    let outcome = client(
+        &base,
+        Limits {
+            max_attempts: 1,
+            ..limits()
+        },
+    )
+    .respond(&request(), &CancellationToken::new(), |_| {})
+    .await;
+    assert_eq!(outcome.attempts.len(), 1);
+    assert!(outcome.rate_limited());
+    assert!(!outcome.billing_uncertain());
+    assert_eq!(served.await.unwrap().len(), 1);
+    let mut ambiguous = outcome.clone();
+    ambiguous.attempts[0].billing_uncertain = true;
+    assert!(!ambiguous.rate_limited());
+    let mut partial = outcome;
+    partial.partial_text = "provisional output".into();
+    assert!(!partial.rate_limited());
+}
+
+#[tokio::test]
 async fn exhausted_retries_and_permanent_rejections_are_bounded_and_redacted() {
-    for (code, attempts) in [(503, 3), (400, 1), (401, 1), (307, 1)] {
+    for (code, attempts) in [(429, 3), (503, 1), (400, 1), (401, 1), (307, 1)] {
         let (base, served) = server((0..attempts).map(|_| Reply::reject(code)).collect()).await;
         let outcome = client(&base, limits())
             .respond(&request(), &CancellationToken::new(), |_| {})
@@ -451,9 +488,9 @@ async fn malformed_events_and_inconsistent_terminal_ids_do_not_finish() {
             created(),
             json!({"type":"response.completed","response":{"id":"other","status":"completed","output":[],"usage":usage()}}),
         ],
-        vec![
-            json!({"type":"response.completed","response":{"id":"response-fixture","status":"incomplete","output":[],"usage":usage()}}),
-        ],
+        // A terminal event whose status names a different outcome now decodes
+        // as that outcome; bridges rely on it. It must not be treated as
+        // malformed.
         vec![terminal("completed", vec![tool("{}"), tool("{}")], usage())],
         vec![json!({"type":"error","error":{"message":"unsafe provider detail"}})],
         vec![

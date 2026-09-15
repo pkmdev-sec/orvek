@@ -1,6 +1,7 @@
 //! Stateful UI components and their event boundary.
 
 mod actions;
+mod activity;
 mod activity_mark;
 mod app;
 mod composer;
@@ -12,7 +13,6 @@ mod keybindings;
 mod memory;
 mod model_selector;
 mod node;
-mod notification;
 mod queue;
 mod recent_prompt_picker;
 mod review_confirmation;
@@ -24,13 +24,11 @@ mod subagent_tree_layout;
 mod subagents;
 mod theme_selector;
 mod transcript;
+mod typography;
 mod waved_text;
 
 pub(crate) use app::{AppEffect, AppEvent, AppNode};
-pub(crate) use file_finder::discover_paths_cancellable;
 pub(crate) use node::{ComponentUpdate, RenderRequest};
-pub(crate) use queue::QueueId;
-pub(crate) use root::{
-    DraftReset, RecentPromptDraft, RestoredSessionProjection, RootEffect, RootNode, SessionListKind,
-};
+pub(crate) use queue::{QueueId, QueuedInput};
+pub(crate) use root::{DraftReset, RootEffect, RootNode, SessionListKind};
 pub(crate) use transcript::image::initialize as initialize_image_renderer;

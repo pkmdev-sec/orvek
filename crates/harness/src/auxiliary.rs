@@ -28,10 +28,14 @@ pub struct AuxiliaryLimits {
 }
 impl Default for AuxiliaryLimits {
     fn default() -> Self {
+        // Reasoning-first models spend most of a turn's tokens and time
+        // thinking before any visible text, so side turns use the widest
+        // allowances the validator accepts. Task execution keeps its own
+        // stricter `contract::Limits`.
         Self {
-            model_calls: 8,
-            tokens: 32_000,
-            elapsed_ms: 120_000,
+            model_calls: 32,
+            tokens: 256_000,
+            elapsed_ms: 600_000,
         }
     }
 }

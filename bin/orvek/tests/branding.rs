@@ -25,7 +25,7 @@ fn shown_config(home: &Path, variables: &[(&str, &str)], args: &[&str]) -> toml:
 }
 
 #[test]
-fn command_identifies_as_orvek_and_exposes_context_controls() {
+fn command_identifies_as_orvek_and_describes_the_durable_host() {
     let home = TempDir::new().unwrap();
     let version = command(home.path()).arg("--version").output().unwrap();
     assert!(version.status.success());
@@ -34,7 +34,7 @@ fn command_identifies_as_orvek_and_exposes_context_controls() {
     assert!(help.status.success());
     let help = String::from_utf8(help.stdout).unwrap();
     assert!(help.contains("Usage: orvek"));
-    assert!(help.contains("ORVEK_COMPACTION"));
+    assert!(help.contains("durable coding host"));
     assert!(!help.contains("Usage: tact"));
 }
 

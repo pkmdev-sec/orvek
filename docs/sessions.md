@@ -2,20 +2,21 @@
 
 ## Resume and fork
 
-Orvek checkpoints completed turns and keeps an append-only transcript.
+Orvek's detached host keeps authoritative session history and an append-only journal.
 
 ```sh
 orvek resume
 orvek --resume SESSION_ID
 ```
 
-The exit message includes the active session's resume command. Session data lives at
-`<config-dir>/sessions/v2.sqlite3`; the internal schema version is independent of the filename.
-Snapshots and archives contain unredacted conversation data.
+The exit message includes the active session's resume command. Native state lives under
+`<config-dir>/host/v1`; imported historical SQLite data remains in its existing database.
+Session state and imported archives can contain unredacted conversation data.
 
 Press `Ctrl+T` or choose **Fork session** to start from stable conversation history in a second
-pane. Each fork has its own later prompts, responses, and saved checkpoints. One fork can be open
-at a time. See [compaction recovery](compaction.md#recovery) for damaged archives.
+pane. Each fork has its own later prompts, responses, and durable host history. One fork can be
+open at a time. See [legacy compaction data](compaction.md#persistence-and-recovery) before moving
+or deleting historical databases.
 
 ## Review changes
 

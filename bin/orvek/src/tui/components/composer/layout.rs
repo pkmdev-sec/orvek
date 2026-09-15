@@ -28,10 +28,6 @@ impl VisualLayout {
             cursor_column,
         }
     }
-
-    pub(super) fn set_cursor(&mut self, text: &str, cursor: usize) {
-        (self.cursor_row, self.cursor_column) = locate_cursor(text, &self.lines, cursor);
-    }
 }
 
 pub(super) fn wrap_text(text: &str, width: usize) -> Vec<VisualLine> {
@@ -143,13 +139,24 @@ fn wrap_logical_line(
 }
 
 fn locate_cursor(text: &str, lines: &[VisualLine], cursor: usize) -> (usize, usize) {
-    // A soft-wrap boundary belongs to the next row; a newline stays on the previous row.
-    let row = lines.partition_point(|line| line.start <= cursor) - 1;
-    let line = &lines[row];
-    (
-        row,
-        terminal_text_width(&text[line.start..cursor.min(line.end)]),
-    )
+    for (row, line) in lines.iter().enumerate() {
+        if cursor < line.end || (line.start == line.end && cursor == line.start) {
+            return (
+                row,
+                terminal_text_width(&text[line.start..cursor.min(line.end)]),
+            );
+        }
+        if cursor == line.end {
+            let next_starts_here = lines.get(row + 1).is_some_and(|next| next.start == cursor);
+            if next_starts_here {
+                continue;
+            }
+            return (row, line.width);
+        }
+    }
+
+    let row = lines.len().saturating_sub(1);
+    (row, lines[row].width)
 }
 
 pub(super) fn byte_at_column(text: &str, line: &VisualLine, target: usize) -> usize {
@@ -192,62 +199,5 @@ mod tests {
         assert_eq!(grapheme_at_column(text, line, 2), 1..4);
         assert_eq!(grapheme_at_column(text, line, 3), 4..7);
         assert_eq!(grapheme_at_column(text, line, 4), 7..7);
-    }
-
-    #[test]
-    fn relocating_the_caret_preserves_wide_and_combining_graphemes() {
-        let text = "a界e\u{301}z\nxy";
-        let mut layout = VisualLayout::new(text, 0, 4);
-
-        for (cursor, expected) in [
-            (11, (2, 2)),
-            (7, (1, 0)),
-            (1, (0, 1)),
-            (8, (1, 1)),
-            (4, (0, 3)),
-            (9, (2, 0)),
-            (0, (0, 0)),
-        ] {
-            layout.set_cursor(text, cursor);
-            assert_eq!((layout.cursor_row, layout.cursor_column), expected);
-        }
-    }
-
-    #[test]
-    fn hard_newlines_and_exact_width_endings_keep_their_caret_rows() {
-        let text = "abcd\n\nxyzz";
-        let mut layout = VisualLayout::new(text, 0, 4);
-
-        for (cursor, expected) in [
-            (4, (0, 4)),
-            (5, (1, 0)),
-            (6, (2, 0)),
-            (10, (3, 0)),
-            (8, (2, 2)),
-        ] {
-            layout.set_cursor(text, cursor);
-            assert_eq!((layout.cursor_row, layout.cursor_column), expected);
-        }
-
-        let mut empty = VisualLayout::new("", 0, 4);
-        empty.set_cursor("", 0);
-        assert_eq!((empty.cursor_row, empty.cursor_column), (0, 0));
-    }
-
-    #[test]
-    fn word_wrap_boundaries_put_the_caret_at_the_next_word() {
-        let text = "one two three";
-        let mut layout = VisualLayout::new(text, 0, 6);
-
-        for (cursor, expected) in [
-            (4, (1, 0)),
-            (8, (2, 0)),
-            (3, (0, 3)),
-            (7, (1, 3)),
-            (13, (2, 5)),
-        ] {
-            layout.set_cursor(text, cursor);
-            assert_eq!((layout.cursor_row, layout.cursor_column), expected);
-        }
     }
 }

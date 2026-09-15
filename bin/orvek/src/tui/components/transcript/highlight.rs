@@ -27,9 +27,8 @@ pub(super) fn assets() -> &'static Assets {
     })
 }
 
-pub(super) fn theme() -> &'static SyntaxTheme {
-    static THEME: OnceLock<SyntaxTheme> = OnceLock::new();
-    THEME.get_or_init(|| SyntaxTheme {
+pub(super) fn theme() -> SyntaxTheme {
+    SyntaxTheme {
         name: Some("orvek".to_owned()),
         settings: ThemeSettings {
             foreground: Some(syntect_color(Color::Reset)),
@@ -55,7 +54,7 @@ pub(super) fn theme() -> &'static SyntaxTheme {
             rule("invalid", Color::Red, Some(FontStyle::UNDERLINE)),
         ],
         ..SyntaxTheme::default()
-    })
+    }
 }
 
 pub(super) fn syntax_for_token<'a>(syntaxes: &'a SyntaxSet, token: &str) -> &'a SyntaxReference {

@@ -1,10 +1,13 @@
 //! Collapsible presentation for one directed-message thread.
 
 use super::markdown::{sanitize, wrap_plain, wrap_spans};
-use crate::tui::{theme::Theme, transcript::DirectedMessageEntry};
-use orvek_subagents::{
-    AgentId, AgentMessage, MessageDeliveryState, MessageDisposition, MessagePriority,
-    MessagePurpose, MessageSender,
+use crate::tui::{
+    children::{
+        ChildId, DirectedMessage, MessageDeliveryState, MessageDisposition, MessageOrigin,
+        MessagePriority, MessagePurpose,
+    },
+    theme::Theme,
+    transcript::DirectedMessageEntry,
 };
 use ratatui::{
     style::{Modifier, Style},
@@ -216,7 +219,7 @@ fn append_footer(lines: &mut Vec<Line<'static>>, footer: &str, width: u16, theme
     }));
 }
 
-fn direction(message: &AgentMessage, perspective: MessageSender) -> &'static str {
+fn direction(message: &DirectedMessage, perspective: MessageOrigin) -> &'static str {
     if message.from == perspective {
         "→"
     } else {
@@ -224,7 +227,7 @@ fn direction(message: &AgentMessage, perspective: MessageSender) -> &'static str
     }
 }
 
-fn route(message: &AgentMessage, perspective: MessageSender) -> String {
+fn route(message: &DirectedMessage, perspective: MessageOrigin) -> String {
     format!(
         "{} → {}",
         sender_label(message.from, perspective),
@@ -232,21 +235,21 @@ fn route(message: &AgentMessage, perspective: MessageSender) -> String {
     )
 }
 
-fn sender_label(sender: MessageSender, perspective: MessageSender) -> String {
+fn sender_label(sender: MessageOrigin, perspective: MessageOrigin) -> String {
     if sender == perspective {
         return "you".to_owned();
     }
     match sender {
-        MessageSender::Root => "root".to_owned(),
-        MessageSender::Agent { agent_id } => agent_label(agent_id, perspective),
+        MessageOrigin::Root => "root".to_owned(),
+        MessageOrigin::Child { child_id } => agent_label(child_id, perspective),
     }
 }
 
-fn agent_label(agent_id: AgentId, perspective: MessageSender) -> String {
-    if perspective == (MessageSender::Agent { agent_id }) {
+fn agent_label(child_id: ChildId, perspective: MessageOrigin) -> String {
+    if perspective == (MessageOrigin::Child { child_id }) {
         return "you".to_owned();
     }
-    format!("#{agent_id}")
+    format!("#{child_id}")
 }
 
 fn delivery_label(state: &MessageDeliveryState, theme: &Theme) -> (String, Style) {
@@ -314,49 +317,53 @@ fn first_line(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::render;
-    use crate::tui::{theme::Theme, transcript::DirectedMessageEntry};
-    use orvek_subagents::{AgentMessageUpdate, MessageDeliveryState};
+    use crate::tui::{
+        children::{MessageDeliveryState, MessageUpdate},
+        theme::Theme,
+        transcript::DirectedMessageEntry,
+    };
     use serde_json::json;
 
     fn entry() -> DirectedMessageEntry {
-        let update = serde_json::from_value::<AgentMessageUpdate>(json!({
-            "message_id": 2,
-            "thread": {
-                "id": 1,
-                "participants": [
-                    {"kind": "agent", "agent_id": 1},
-                    {"kind": "agent", "agent_id": 2}
-                ],
-                "messages": [
-                    {
-                        "id": 1,
-                        "thread_id": 1,
-                        "from": {"kind": "agent", "agent_id": 1},
-                        "to": 2,
-                        "priority": "deferred",
-                        "purpose": "question",
-                        "body": "Can you verify the ordering?"
-                    },
-                    {
-                        "id": 2,
-                        "thread_id": 1,
-                        "from": {"kind": "agent", "agent_id": 2},
-                        "to": 1,
-                        "priority": "urgent",
-                        "purpose": "reply",
-                        "in_reply_to": 1,
-                        "body": "Yes. Delivery precedes projection."
-                    }
-                ]
-            },
-            "delivery": {"state": "delivered", "disposition": "steered"}
-        }))
-        .unwrap();
+        let update =
+            serde_json::from_value::<MessageUpdate>(crate::tui::fixtures::native_ids(json!({
+                "message_id": 2,
+                "thread": {
+                    "id": 1,
+                    "participants": [
+                        {"kind": "agent", "child_id": 1},
+                        {"kind": "agent", "child_id": 2}
+                    ],
+                    "messages": [
+                        {
+                            "id": 1,
+                            "thread_id": 1,
+                            "from": {"kind": "agent", "child_id": 1},
+                            "to": 2,
+                            "priority": "deferred",
+                            "purpose": "question",
+                            "body": "Can you verify the ordering?"
+                        },
+                        {
+                            "id": 2,
+                            "thread_id": 1,
+                            "from": {"kind": "agent", "child_id": 2},
+                            "to": 1,
+                            "priority": "urgent",
+                            "purpose": "reply",
+                            "in_reply_to": 1,
+                            "body": "Yes. Delivery precedes projection."
+                        }
+                    ]
+                },
+                "delivery": {"state": "delivered", "disposition": "steered"}
+            })))
+            .unwrap();
         DirectedMessageEntry {
-            perspective: serde_json::from_value(json!({
+            perspective: serde_json::from_value(crate::tui::fixtures::native_ids(json!({
                 "kind": "agent",
-                "agent_id": 1
-            }))
+                "child_id": 1
+            })))
             .unwrap(),
             thread: update.thread,
             deliveries: vec![crate::tui::transcript::MessageDelivery {

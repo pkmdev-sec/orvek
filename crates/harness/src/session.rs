@@ -1,5 +1,9 @@
 use crate::{
     Digest,
+    evolution::{
+        Channel, HarnessBinding, HarnessProvenance, ModelIdentity, PolicyIdentity, TargetProfile,
+        ValidatedHarnessRevision,
+    },
     inference::ModelSettings,
     state::{Outcome, RequestKind, TaskId},
 };
@@ -39,6 +43,253 @@ pub struct SessionConfig {
     pub workspace: PathBuf,
     pub model: ModelSettings,
     pub instructions: String,
+    #[serde(default = "default_context_window_tokens")]
+    pub context_window_tokens: u64,
+}
+
+/// Bounded client intent for a new session. The Host supplies every privileged
+/// behavior and runtime identity after it canonicalizes this request.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionAdmissionRequest {
+    workspace: PathBuf,
+    model: ModelSettings,
+    #[serde(default = "default_context_window_tokens")]
+    context_window_tokens: u64,
+    channel: Channel,
+}
+
+impl SessionAdmissionRequest {
+    pub fn new(
+        workspace: PathBuf,
+        model: ModelSettings,
+        context_window_tokens: u64,
+        channel: Channel,
+    ) -> Self {
+        Self {
+            workspace,
+            model,
+            context_window_tokens,
+            channel,
+        }
+    }
+
+    pub fn workspace(&self) -> &PathBuf {
+        &self.workspace
+    }
+
+    pub const fn model(&self) -> ModelSettings {
+        self.model
+    }
+
+    pub const fn context_window_tokens(&self) -> u64 {
+        self.context_window_tokens
+    }
+
+    pub const fn channel(&self) -> Channel {
+        self.channel
+    }
+
+    pub(crate) fn canonicalized(mut self, workspace: PathBuf) -> Self {
+        self.workspace = workspace;
+        self
+    }
+}
+
+/// Immutable Host-derived authority used for every execution path of a
+/// session. Fields are private so callers cannot assemble a privileged profile.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionAdmissionProfile {
+    version: u32,
+    request: SessionAdmissionRequest,
+    binding: HarnessBinding,
+    provenance: HarnessProvenance,
+    authority: Digest,
+    request_digest: Digest,
+    revision_manifest: Vec<u8>,
+    behavior_instructions: String,
+}
+
+impl SessionAdmissionProfile {
+    pub(crate) fn new(
+        request: SessionAdmissionRequest,
+        binding: HarnessBinding,
+        provenance: HarnessProvenance,
+        authority: Digest,
+        revision: &ValidatedHarnessRevision,
+    ) -> Result<Self, serde_json::Error> {
+        let request_digest = Digest::of_value(&request)?;
+        Ok(Self {
+            version: 1,
+            request,
+            binding,
+            provenance,
+            authority,
+            request_digest,
+            revision_manifest: revision.canonical_bytes().to_vec(),
+            behavior_instructions: revision.behavior_instructions().to_owned(),
+        })
+    }
+
+    pub const fn version(&self) -> u32 {
+        self.version
+    }
+
+    pub fn request(&self) -> &SessionAdmissionRequest {
+        &self.request
+    }
+
+    pub const fn binding(&self) -> HarnessBinding {
+        self.binding
+    }
+
+    pub const fn provenance(&self) -> HarnessProvenance {
+        self.provenance
+    }
+
+    pub const fn authority(&self) -> Digest {
+        self.authority
+    }
+
+    pub const fn request_digest(&self) -> Digest {
+        self.request_digest
+    }
+
+    pub fn workspace(&self) -> &PathBuf {
+        self.request.workspace()
+    }
+
+    pub const fn model(&self) -> ModelSettings {
+        self.request.model()
+    }
+
+    pub const fn context_window_tokens(&self) -> u64 {
+        self.request.context_window_tokens()
+    }
+
+    pub(crate) fn behavior_instructions(&self) -> &str {
+        &self.behavior_instructions
+    }
+
+    pub(crate) fn revision_manifest(&self) -> &[u8] {
+        &self.revision_manifest
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.version != 1 {
+            return Err("unsupported session admission profile");
+        }
+        if !self.request.workspace.is_absolute() || !self.request.workspace.is_dir() {
+            return Err("session workspace must be an absolute directory");
+        }
+        if self.request.context_window_tokens == 0 {
+            return Err("session context window must be positive");
+        }
+        if self.behavior_instructions.is_empty() || self.behavior_instructions.len() > 32 * 1024 {
+            return Err("session behavior instructions exceed their bound");
+        }
+        if Digest::of_value(&self.request).ok() != Some(self.request_digest) {
+            return Err("session admission request identity mismatch");
+        }
+        let revision = ValidatedHarnessRevision::from_manifest_json(&self.revision_manifest)
+            .map_err(|_| "session harness revision is invalid")?;
+        if revision.digest() != self.binding.revision()
+            || revision.behavior_digest() != self.binding.behavior()
+            || revision.envelope_digest() != self.binding.envelope()
+            || PolicyIdentity::from_digest(Digest::of(revision.policy_id().as_bytes()))
+                != self.binding.policy()
+        {
+            return Err("session harness revision differs from its binding");
+        }
+        if revision.behavior_instructions() != self.behavior_instructions {
+            return Err("session behavior differs from its harness revision");
+        }
+        let target: TargetProfile = self.binding.target();
+        if target.model
+            != ModelIdentity::from_digest(
+                Digest::of_value(&self.request.model)
+                    .map_err(|_| "session model identity could not be computed")?,
+            )
+            || target.channel != self.request.channel
+        {
+            return Err("session admission target differs from its request");
+        }
+        Ok(())
+    }
+}
+
+const fn default_context_window_tokens() -> u64 {
+    crate::context::DEFAULT_WINDOW_TOKENS
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    use crate::evolution::{
+        BaselineReason, EnvironmentIdentity, ProtocolIdentity, TaskProfileIdentity,
+    };
+
+    fn profile(workspace: PathBuf) -> SessionAdmissionProfile {
+        let model = ModelSettings::default();
+        let request = SessionAdmissionRequest::new(
+            workspace,
+            model,
+            default_context_window_tokens(),
+            Channel::Stable,
+        );
+        let target = TargetProfile::new(
+            ModelIdentity::from_digest(Digest::of_value(&model).unwrap()),
+            ProtocolIdentity::from_digest(Digest::of(b"protocol")),
+            EnvironmentIdentity::from_digest(Digest::of(b"environment")),
+            TaskProfileIdentity::from_digest(Digest::of(b"task-profile")),
+            Channel::Stable,
+        );
+        let revision = ValidatedHarnessRevision::compiled_baseline().unwrap();
+        let binding = HarnessBinding::baseline(
+            target,
+            revision.digest(),
+            revision.behavior_digest(),
+            revision.envelope_digest(),
+            PolicyIdentity::from_digest(Digest::of(revision.policy_id().as_bytes())),
+        );
+        SessionAdmissionProfile::new(
+            request,
+            binding,
+            HarnessProvenance::CompiledBaseline {
+                reason: BaselineReason::StoreFixture,
+            },
+            Digest::of(b"authority"),
+            &revision,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn serialized_behavior_tampering_is_rejected() {
+        let workspace = tempfile::tempdir().unwrap();
+        let mut serialized = serde_json::to_value(profile(workspace.path().to_owned())).unwrap();
+        serialized["behavior_instructions"] = json!("forged behavior");
+        let tampered: SessionAdmissionProfile = serde_json::from_value(serialized).unwrap();
+
+        assert_eq!(
+            tampered.validate(),
+            Err("session behavior differs from its harness revision")
+        );
+    }
+
+    #[test]
+    fn request_target_tampering_is_rejected_after_digest_recomputation() {
+        let workspace = tempfile::tempdir().unwrap();
+        let mut tampered = profile(workspace.path().to_owned());
+        tampered.request.model.reasoning_mode = crate::inference::ReasoningMode::Pro;
+        tampered.request_digest = Digest::of_value(&tampered.request).unwrap();
+
+        assert_eq!(
+            tampered.validate(),
+            Err("session admission target differs from its request")
+        );
+    }
 }
 
 /// A reference to journaled state, never a second serialized model machine.
@@ -71,6 +322,10 @@ pub struct SessionState {
     pub id: SessionId,
     pub revision: u64,
     pub settled_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission: Option<SessionAdmissionProfile>,
+    /// Legacy forensic request data. Execution authority comes only from
+    /// `admission`; these fields remain to verify schema-v3 projections.
     pub initial_config: SessionConfig,
     pub config: SessionConfig,
     pub parent: Option<SessionCursor>,
@@ -114,6 +369,8 @@ pub enum SessionEvent {
     Created {
         branch: SessionBranch,
         config: SessionConfig,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        admission: Option<Box<SessionAdmissionProfile>>,
         parent: Option<SessionCursor>,
         history: Vec<Value>,
         at_ms: u64,
@@ -138,6 +395,10 @@ pub enum SessionEvent {
     deny_unknown_fields
 )]
 pub enum SessionCommand {
+    AdmissionPinned {
+        profile: Box<SessionAdmissionProfile>,
+        legacy_config_digest: Digest,
+    },
     ReviewRecorded {
         feedback: Digest,
     },
@@ -190,6 +451,10 @@ pub enum SessionCommand {
         request: Uuid,
         items: Vec<Value>,
     },
+    ProviderUsage {
+        request: Uuid,
+        usage: crate::inference::Usage,
+    },
     Feedback {
         message: String,
     },
@@ -214,6 +479,16 @@ pub enum SessionCommand {
     },
 }
 
+pub(crate) struct SessionCreation {
+    pub(crate) branch: SessionBranch,
+    pub(crate) config: SessionConfig,
+    pub(crate) admission: Option<SessionAdmissionProfile>,
+    pub(crate) parent: Option<SessionCursor>,
+    pub(crate) history: Vec<Value>,
+    pub(crate) started_ms: u64,
+    pub(crate) imported: Option<ImportedSource>,
+}
+
 impl SessionState {
     pub fn fork_cursor(&self) -> SessionCursor {
         SessionCursor {
@@ -230,15 +505,16 @@ impl SessionState {
         }
     }
 
-    pub(crate) fn create(
-        id: SessionId,
-        config: SessionConfig,
-        parent: Option<SessionCursor>,
-        history: Vec<Value>,
-        started_ms: u64,
-        imported: Option<ImportedSource>,
-        branch: SessionBranch,
-    ) -> Self {
+    pub(crate) fn create(id: SessionId, creation: SessionCreation) -> Self {
+        let SessionCreation {
+            branch,
+            config,
+            admission,
+            parent,
+            history,
+            started_ms,
+            imported,
+        } = creation;
         let title = imported
             .as_ref()
             .map(|source| {
@@ -269,6 +545,7 @@ impl SessionState {
             id,
             revision: 1,
             settled_revision: 1,
+            admission,
             initial_config: config.clone(),
             config,
             parent,
@@ -295,6 +572,21 @@ impl SessionState {
         command: &SessionCommand,
     ) -> Result<(), serde_json::Error> {
         match command {
+            SessionCommand::AdmissionPinned {
+                profile,
+                legacy_config_digest,
+            } => {
+                if self.admission.is_some()
+                    || Digest::of_value(&self.config)? != *legacy_config_digest
+                    || profile.validate().is_err()
+                {
+                    return Err(serde_json::Error::io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "invalid session admission pin",
+                    )));
+                }
+                self.admission = Some(profile.as_ref().clone());
+            }
             SessionCommand::ReviewRecorded { feedback } => {
                 self.feedbacks.insert(*feedback);
             }
@@ -430,6 +722,7 @@ impl SessionState {
                 }
                 self.history.extend(items.clone());
             }
+            SessionCommand::ProviderUsage { .. } => {}
             SessionCommand::Feedback { message } => self
                 .history
                 .push(json!({"role":"developer","content":message})),
@@ -452,7 +745,15 @@ impl SessionState {
                 self.outcome = *outcome;
                 self.error = error.clone();
             }
-            SessionCommand::SettingsChanged(settings) => self.config.model = *settings,
+            SessionCommand::SettingsChanged(settings) => {
+                if self.admission.is_some() {
+                    return Err(serde_json::Error::io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "bound session settings are immutable",
+                    )));
+                }
+                self.config.model = *settings;
+            }
             SessionCommand::ContextProjected { projection, .. } => {
                 self.history = projection.clone()
             }
@@ -464,6 +765,36 @@ impl SessionState {
             self.settled_revision = self.revision;
         }
         Ok(())
+    }
+
+    pub fn admission(&self) -> Option<&SessionAdmissionProfile> {
+        self.admission.as_ref()
+    }
+
+    pub fn workspace(&self) -> &PathBuf {
+        self.admission
+            .as_ref()
+            .map_or(&self.config.workspace, SessionAdmissionProfile::workspace)
+    }
+
+    pub fn model(&self) -> ModelSettings {
+        self.admission
+            .as_ref()
+            .map_or(self.config.model, SessionAdmissionProfile::model)
+    }
+
+    pub fn context_window_tokens(&self) -> u64 {
+        self.admission.as_ref().map_or(
+            self.config.context_window_tokens,
+            SessionAdmissionProfile::context_window_tokens,
+        )
+    }
+
+    pub(crate) fn behavior_instructions(&self) -> Result<&str, &'static str> {
+        self.admission
+            .as_ref()
+            .ok_or("session has no trusted admission profile")
+            .map(SessionAdmissionProfile::behavior_instructions)
     }
 }
 

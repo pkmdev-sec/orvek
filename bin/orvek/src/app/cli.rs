@@ -6,12 +6,11 @@ use crate::{
         error::{AuthResult, Error, Result, RuntimeError},
         shutdown, update,
     },
-    core::ConfiguredAgent,
     tui,
 };
 use clap::{ArgAction, Parser, Subcommand, builder::NonEmptyStringValueParser};
 use crossterm::style::{Color, Stylize};
-use nanocodex::Model;
+use orvek_harness::inference::Model;
 use std::{env, env::VarError, fmt, path::PathBuf};
 use tokio_util::sync::CancellationToken;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -36,7 +35,7 @@ const BUILD_VERSION: &str = concat!(
     env!("ORVEK_RUSTC_VERSION"),
 );
 
-// Prefer the new name without mutating process-wide environment in the async runtime.
+// Prefer Orvek's current variable while keeping existing Tact installations usable.
 fn compatible_env(current: &'static str, legacy: &'static str) -> &'static str {
     if env::var_os(current).is_none() && env::var_os(legacy).is_some() {
         legacy
@@ -50,7 +49,7 @@ fn compatible_env(current: &'static str, legacy: &'static str) -> &'static str {
 #[command(
     version,
     long_version = BUILD_VERSION,
-    about = "A terminal coding workspace with durable context and local tools",
+    about = "A terminal interface for Orvek’s durable coding host",
     subcommand_negates_reqs = true
 )]
 pub(crate) struct Cli {
@@ -99,21 +98,12 @@ pub(crate) struct Cli {
     /// Model used when starting a new agent.
     #[arg(long, global = true, env = compatible_env("ORVEK_MODEL", "TACT_MODEL"), value_name = "MODEL")]
     model: Option<Model>,
-    /// Override the saved compaction strategy for this launch.
-    #[arg(
-        long,
-        global = true,
-        env = compatible_env("ORVEK_COMPACTION", "TACT_COMPACTION"),
-        value_enum,
-        value_name = "STRATEGY"
-    )]
-    compaction: Option<crate::app::compaction::Strategy>,
 
     /// Maximum number of sub-agents that may run concurrently.
     #[arg(long, global = true, env = compatible_env("ORVEK_MAX_SUBAGENTS", "TACT_MAX_SUBAGENTS"), value_name = "COUNT")]
     max_subagents: Option<usize>,
 
-    /// Replace Nanocodex's standard instructions, before Orvek's built-in appendix.
+    /// Replace the session instructions before optional context references.
     #[arg(
         long,
         global = true,
@@ -172,6 +162,9 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Run the durable local host independently of terminal clients.
+    #[command(hide = true)]
+    Host,
     /// Manage authentication.
     Auth {
         #[command(subcommand)]
@@ -187,24 +180,14 @@ enum Command {
         #[command(subcommand)]
         command: McpCommand,
     },
-    /// Run one prompt and stream Nanocodex events as JSONL.
+    /// Run one durable task and stream versioned host events as JSONL.
     Run {
-        #[cfg(feature = "harbor-evals")]
-        /// Write child-agent events and the final cleanup state as JSONL.
-        #[arg(long, env = compatible_env("ORVEK_ORCHESTRATION_LOG", "TACT_ORCHESTRATION_LOG"), value_name = "PATH")]
-        orchestration_log: Option<PathBuf>,
-
         /// Prompt submitted to the agent.
-        #[arg(env = compatible_env("ORVEK_PROMPT", "TACT_PROMPT"), value_parser = NonEmptyStringValueParser::new())]
+        #[arg(env = "ORVEK_PROMPT", value_parser = NonEmptyStringValueParser::new())]
         prompt: String,
     },
     /// Open the interactive session picker.
     Resume,
-    /// Recover a saved context checkpoint without contacting a model.
-    Context {
-        #[command(subcommand)]
-        command: ContextCommand,
-    },
     /// Transfer memories between the global local store and the remote service.
     Memory {
         #[command(subcommand)]
@@ -236,14 +219,6 @@ enum MemoryCommand {
         /// Pull one namespace; repeat to select more than one.
         #[arg(long, value_name = "NAME", value_parser = NonEmptyStringValueParser::new())]
         namespace: Vec<String>,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum ContextCommand {
-    /// Restore the retained pre-SnapCompact checkpoint of a closed session.
-    RestoreBackup {
-        session_id: nanocodex::agent::session::SessionId,
     },
 }
 
@@ -311,6 +286,9 @@ enum McpCommand {
         )]
         command: Vec<String>,
     },
+
+    /// Show the configured MCP servers without revealing any secret values.
+    List,
 }
 
 impl fmt::Debug for McpCommand {
@@ -334,13 +312,16 @@ impl fmt::Debug for McpCommand {
                 .field("header_env", header_env)
                 .field("command", command)
                 .finish(),
+            Self::List => formatter.write_str("List"),
         }
     }
 }
 
 impl Zeroize for McpCommand {
     fn zeroize(&mut self) {
-        let Self::Add { url, .. } = self;
+        let Self::Add { url, .. } = self else {
+            return;
+        };
         if let Some(url) = url {
             url.zeroize();
         }
@@ -376,7 +357,6 @@ impl Cli {
         }
 
         let overrides = ConfigOverrides {
-            compaction_strategy: self.compaction,
             path: self.config,
             auth_mode: self.auth,
             auth_file: self.auth_file,
@@ -396,7 +376,7 @@ impl Cli {
         } else {
             Config::load(overrides)?
         };
-        let model = self.model.unwrap_or_default();
+        let model = self.model.unwrap_or(config.agent().model());
 
         match self.command {
             Some(Command::Resume) => {
@@ -436,12 +416,11 @@ impl Cli {
 }
 
 fn print_resume_hint(session_id: &str) {
-    let art = r"          /\
-        <    >
-          \/
- /--\  |--\  \   /  |---  |  /
- |  |  |__/   \ /   |--   |<
- \--/  |  \    V    |---  |  \";
+    let art = r"  ___  ____  __     __ _____ _  __
+ / _ \|  _ \ \ \   / /| ____| |/ /
+| | | | |_) | \ \ / / |  _| | ' /
+| |_| |  _ <   \ V /  | |___| . \
+ \___/|_| \_\   \_/   |_____|_|\_\";
     println!("\n{}", art.with(Color::Cyan));
     println!(
         "{} {}",
@@ -487,48 +466,23 @@ impl Command {
 
     async fn run_with_config(self, config: &Config, model: Model) -> Result<()> {
         match self {
+            Self::Host => crate::app::host::serve(config).await,
             Self::Auth { command } => command.run(config).await.map_err(Into::into),
             Self::Config { command } => command.run(config),
             Self::Mcp { command } => command.run(config),
-            Self::Run {
-                prompt,
-                #[cfg(feature = "harbor-evals")]
-                orchestration_log,
-            } => {
-                Self::run_agent(
-                    config,
-                    model,
-                    prompt,
-                    #[cfg(feature = "harbor-evals")]
-                    orchestration_log,
-                )
-                .await
-            }
+            Self::Run { prompt } => Self::run_agent(config, model, prompt).await,
             Self::Resume => unreachable!("resume is dispatched to the TUI"),
-            Self::Context { command } => command.run(config).await,
             Self::Memory { command } => command.run(config).await,
             Self::Update => unreachable!("update is dispatched before configuration is loaded"),
         }
     }
 
-    async fn run_agent(
-        config: &Config,
-        model: Model,
-        prompt: String,
-        #[cfg(feature = "harbor-evals")] orchestration_log: Option<PathBuf>,
-    ) -> Result<()> {
+    async fn run_agent(config: &Config, model: Model, prompt: String) -> Result<()> {
         let shutdown = CancellationToken::new();
-        let run = ConfiguredAgent::run_from_config(
-            config,
-            model,
-            prompt,
-            shutdown.clone(),
-            #[cfg(feature = "harbor-evals")]
-            orchestration_log,
-        );
+        let run = crate::app::headless::run(config, model, prompt, shutdown.clone());
         tokio::pin!(run);
 
-        tokio::select! {
+        let outcome = tokio::select! {
             result = &mut run => result,
             signal = shutdown::signal() => {
                 shutdown.cancel();
@@ -536,28 +490,11 @@ impl Command {
                 signal.map_err(RuntimeError::ShutdownSignal)?;
                 result
             }
-        }
-    }
-}
-
-impl ContextCommand {
-    async fn run(self, config: &Config) -> Result<()> {
-        match self {
-            Self::RestoreBackup { session_id } => {
-                let config_path = config.path().to_path_buf();
-                tokio::task::spawn_blocking(move || {
-                    crate::sessions::storage::SessionStorage::open(&config_path)?
-                        .restore_context_backup(&session_id.to_string())
-                })
-                .await
-                .map_err(RuntimeError::SessionTask)?
-                .map_err(crate::sessions::checkpoint::SessionError::from)?;
-                println!(
-                    "Restored the pre-SnapCompact checkpoint. Later transcript records remain available as recovery evidence."
-                );
-                println!("Resume with: orvek --compaction provider --resume {session_id}");
-                Ok(())
-            }
+        }?;
+        if outcome == orvek_harness::state::Outcome::Complete {
+            Ok(())
+        } else {
+            Err(Error::TaskOutcome { outcome })
         }
     }
 }
@@ -750,6 +687,50 @@ impl McpCommand {
                 )?;
                 println!("Added MCP server `{name}`.");
             }
+            Self::List => {
+                let servers = config.mcp_servers();
+                if servers.is_empty() {
+                    println!("No MCP servers are configured.");
+                    return Ok(());
+                }
+                for (name, server) in servers {
+                    match server {
+                        super::config::McpServerConfig::Stdio(stdio) => {
+                            println!("{name} (stdio)");
+                            println!(
+                                "  command: {}",
+                                std::iter::once(stdio.command())
+                                    .chain(stdio.args().iter().map(String::as_str))
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            );
+                            if let Some(cwd) = stdio.cwd() {
+                                println!("  cwd: {}", cwd.display());
+                            }
+                            // Names only. The values stay secret; nothing here
+                            // prints what `expose` yields.
+                            let names = stdio
+                                .env()
+                                .expose()
+                                .map(|(name, _)| name)
+                                .collect::<Vec<_>>();
+                            if !names.is_empty() {
+                                println!("  env: {}", names.join(", "));
+                            }
+                        }
+                        super::config::McpServerConfig::Http(http) => {
+                            println!("{name} (http)");
+                            println!("  url: {}", http.url());
+                            if let Some(variable) = http.bearer_token_env_var() {
+                                println!("  bearer token from: {variable}");
+                            }
+                            for (header, variable) in http.header_env() {
+                                println!("  {header} from: {variable}");
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -795,7 +776,7 @@ mod tests {
         error::{ConfigError, Error},
     };
     use clap::{CommandFactory, Parser, error::ErrorKind};
-    use nanocodex::Model;
+    use orvek_harness::inference::Model;
     use std::{
         env::VarError,
         ffi::OsString,
@@ -1130,27 +1111,6 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "harbor-evals")]
-    #[test]
-    fn run_accepts_an_orchestration_log() {
-        let cli = Cli::try_parse_from([
-            "orvek",
-            "run",
-            "--orchestration-log",
-            "/logs/agent/orchestration.jsonl",
-            "inspect the workspace",
-        ])
-        .unwrap();
-
-        assert!(matches!(
-            cli.command,
-            Some(Command::Run {
-                orchestration_log: Some(path),
-                ..
-            }) if path == std::path::Path::new("/logs/agent/orchestration.jsonl")
-        ));
-    }
-
     #[test]
     fn append_instructions_are_accepted() {
         let cli = Cli::try_parse_from([
@@ -1401,7 +1361,6 @@ mod tests {
             ("thinking", "ORVEK_THINKING"),
             ("reasoning_mode", "ORVEK_REASONING_MODE"),
             ("model", "ORVEK_MODEL"),
-            ("compaction", "ORVEK_COMPACTION"),
             ("max_subagents", "ORVEK_MAX_SUBAGENTS"),
             ("instructions", "ORVEK_INSTRUCTIONS"),
             ("append_instructions", "ORVEK_APPEND_INSTRUCTIONS"),
@@ -1440,22 +1399,7 @@ mod tests {
                     && !matches!(argument.get_id().as_str(), "help" | "version")
             })
             .collect::<Vec<_>>();
-        assert_eq!(
-            arguments.len(),
-            if cfg!(feature = "harbor-evals") { 2 } else { 1 }
-        );
-        #[cfg(feature = "harbor-evals")]
-        {
-            let orchestration_log = arguments
-                .iter()
-                .copied()
-                .find(|argument| argument.get_id() == "orchestration_log")
-                .expect("missing orchestration log argument");
-            assert_eq!(
-                orchestration_log.get_env().and_then(|value| value.to_str()),
-                Some("ORVEK_ORCHESTRATION_LOG")
-            );
-        }
+        assert_eq!(arguments.len(), 1);
         let prompt = arguments
             .into_iter()
             .find(|argument| argument.get_id() == "prompt")

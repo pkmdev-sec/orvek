@@ -3,25 +3,20 @@
 use super::{
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
+    typography::{CHOICE_MARKER, ChoiceStyle, SearchField},
 };
-use crate::tui::{
-    format::{truncate_display, wrap_display_lines},
-    theme::Theme,
-};
-use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
+use crate::tui::theme::Theme;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{List, ListItem, ListState},
 };
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
-const ACTIONS: [Action; 17] = [
+const ACTIONS: [Action; 16] = [
     Action::Effort,
     Action::FastMode,
     Action::Theme,
@@ -38,18 +33,14 @@ const ACTIONS: [Action; 17] = [
     Action::Handoff,
     Action::Review,
     Action::Model,
-    Action::Compact,
 ];
 const KEY_BINDINGS: [(&str, &str); 3] = [("↑↓", "move"), ("enter/tab", "open"), ("esc", "close")];
-const SEARCH_LABEL: &str = "Search: ";
-const SELECTION_MARKER: &str = "› ";
 
 pub(super) enum ActionsEvent {
     Terminal(Event),
 }
 
 pub(super) struct ActionAvailability {
-    pub(super) compact: bool,
     pub(super) new_session: bool,
     pub(super) fork: bool,
     pub(super) fast_mode: bool,
@@ -59,7 +50,6 @@ pub(super) struct ActionAvailability {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Action {
-    Compact,
     Handoff,
     Review,
     Subagents,
@@ -87,10 +77,9 @@ pub(super) enum ActionsEffect {
 pub(super) struct ActionsMenu {
     query: String,
     selected: usize,
+    navigation_area: Rect,
     matches: Vec<usize>,
     availability: ActionAvailability,
-    list_area: Rect,
-    offset: usize,
 }
 
 impl ActionsMenu {
@@ -98,15 +87,26 @@ impl ActionsMenu {
         Self {
             query: String::new(),
             selected: 0,
+            navigation_area: Rect::default(),
             matches: (0..ACTIONS.len()).collect(),
             availability,
-            list_area: Rect::default(),
-            offset: 0,
         }
     }
 
     pub(super) fn set_fork_available(&mut self, available: bool) {
         self.availability.fork = available;
+    }
+
+    fn select_bounded(&mut self, delta: isize) -> ComponentUpdate<ActionsEffect> {
+        let next = self
+            .selected
+            .saturating_add_signed(delta)
+            .min(self.matches.len().saturating_sub(1));
+        if next == self.selected {
+            return ComponentUpdate::none();
+        }
+        self.selected = next;
+        ComponentUpdate::render(RenderRequest::Immediate)
     }
 
     fn update_key(&mut self, key: KeyEvent) -> ComponentUpdate<ActionsEffect> {
@@ -115,6 +115,16 @@ impl ActionsMenu {
         }
 
         match key.code {
+            KeyCode::PageUp => self.select_bounded(
+                -(isize::try_from(self.navigation_area.height)
+                    .unwrap_or(1)
+                    .max(1)),
+            ),
+            KeyCode::PageDown => self.select_bounded(
+                isize::try_from(self.navigation_area.height)
+                    .unwrap_or(1)
+                    .max(1),
+            ),
             KeyCode::Esc => Self::dismiss(),
             KeyCode::Backspace if !self.query.is_empty() => {
                 self.remove_last_grapheme();
@@ -166,43 +176,15 @@ impl ActionsMenu {
     }
 
     fn refresh_matches(&mut self) {
-        self.matches = ACTIONS
-            .iter()
-            .enumerate()
-            .filter(|(_, action)| {
-                action.matches(&self.query)
-                    || contains_ignore_ascii_case(self.display_label(**action), &self.query)
-            })
-            .map(|(index, _)| index)
-            .collect();
+        self.matches.clear();
+        self.matches.extend(
+            ACTIONS
+                .iter()
+                .enumerate()
+                .filter(|(_, action)| action.matches(&self.query))
+                .map(|(index, _)| index),
+        );
         self.selected = 0;
-        self.offset = 0;
-        self.list_area = Rect::default();
-    }
-
-    fn update_mouse(&mut self, mouse: MouseEvent) -> ComponentUpdate<ActionsEffect> {
-        if !self
-            .list_area
-            .contains(Position::new(mouse.column, mouse.row))
-        {
-            return ComponentUpdate::none();
-        }
-        match mouse.kind {
-            MouseEventKind::ScrollUp => self.select_previous(),
-            MouseEventKind::ScrollDown => self.select_next(),
-            MouseEventKind::Down(MouseButton::Left) => {
-                let index = self.offset + usize::from(mouse.row - self.list_area.y);
-                if index >= self.matches.len() {
-                    return ComponentUpdate::none();
-                }
-                self.selected = index;
-                let mut update = self.trigger_selected();
-                update.render = RenderRequest::Immediate;
-                return update;
-            }
-            _ => return ComponentUpdate::none(),
-        }
-        ComponentUpdate::render(RenderRequest::Immediate)
     }
 
     fn select_previous(&mut self) {
@@ -237,93 +219,49 @@ impl ActionsMenu {
     }
 
     fn render_search(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        if area.is_empty() {
-            return;
-        }
-
-        let marker = "  ";
-        let prefix_width = marker.width() + SEARCH_LABEL.width();
-        let query_width = usize::from(area.width).saturating_sub(prefix_width);
-        let visible_query = visible_query_tail(&self.query, query_width);
-        let label_style = Style::default().fg(theme.muted());
-        let line = Line::from(vec![
-            Span::styled(marker, label_style),
-            Span::styled(SEARCH_LABEL, label_style),
-            Span::styled(visible_query, Style::default().fg(theme.text())),
-        ]);
-        frame.render_widget(Paragraph::new(line), area);
+        SearchField::new(&self.query).render(frame, area, theme);
     }
 
-    fn render_actions(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme, wide: bool) {
-        self.list_area = area;
+    fn render_actions(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         if area.is_empty() {
             return;
         }
-        if self.matches.is_empty() {
-            frame.render_widget(
-                Paragraph::new("  No matching actions").style(Style::default().fg(theme.muted())),
-                area,
-            );
-            return;
-        }
-        let capacity = usize::from(area.height);
-        self.offset = self
-            .offset
-            .min(self.matches.len().saturating_sub(capacity))
-            .min(self.selected);
-        if self.selected >= self.offset + capacity {
-            self.offset = self.selected + 1 - capacity;
-        }
-        let width = usize::from(area.width).saturating_sub(4);
-        for (row, index) in self
-            .matches
-            .iter()
-            .skip(self.offset)
-            .take(capacity)
-            .enumerate()
-        {
+
+        let items = self.matches.iter().enumerate().map(|(row, index)| {
             let action = ACTIONS[*index];
             let enabled = self.is_enabled(action);
-            let selected = self.offset + row == self.selected;
-            let color = if !enabled {
-                theme.muted()
-            } else if selected {
-                theme.accent()
-            } else {
-                theme.text()
-            };
-            let style = Style::default().fg(color);
-            let alias = action
+            let selected = row == self.selected;
+            let typography = ChoiceStyle::new(selected, enabled);
+            let mut spans = vec![Span::styled(
+                self.display_label(action),
+                typography.primary(theme),
+            )];
+            if let Some(alias) = action
                 .alias()
-                .filter(|_| wide && (enabled || action != Action::Memory))
-                .map(|alias| format!("(alias: {alias})"))
-                .unwrap_or_default();
-            let label_width =
-                width.saturating_sub(alias.width() + usize::from(!alias.is_empty()) * 2);
-            let label = truncate_display(self.display_label(action), label_width);
-            let padding = width.saturating_sub(label.width() + alias.width());
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(if selected { SELECTION_MARKER } else { "  " }, style),
-                    Span::styled(
-                        label,
-                        if selected && enabled {
-                            style.add_modifier(Modifier::BOLD)
-                        } else {
-                            style
-                        },
-                    ),
-                    Span::raw(" ".repeat(padding)),
-                    Span::styled(alias, Style::default().fg(theme.muted())),
-                ])),
-                Rect::new(area.x, area.y + row as u16, area.width, 1),
-            );
-        }
+                .filter(|_| enabled || action != Action::Memory)
+            {
+                spans.push(Span::styled(
+                    format!(" (alias: {alias})"),
+                    typography.detail(theme),
+                ));
+            }
+            ListItem::new(Line::from(spans))
+        });
+        let selected_enabled = self
+            .matches
+            .get(self.selected)
+            .is_some_and(|index| self.is_enabled(ACTIONS[*index]));
+        let list = List::new(items)
+            .style(Style::default().fg(theme.text()))
+            .highlight_style(ChoiceStyle::new(true, selected_enabled).highlight(theme))
+            .highlight_symbol(CHOICE_MARKER);
+        let selected = (!self.matches.is_empty()).then_some(self.selected);
+        let mut state = ListState::default().with_selected(selected);
+        frame.render_stateful_widget(list, area, &mut state);
     }
 
     const fn is_enabled(&self, action: Action) -> bool {
         match action {
-            Action::Compact => self.availability.compact,
             Action::Handoff | Action::Review | Action::Reflection => self.availability.new_session,
             Action::Subagents => true,
             Action::Effort => true,
@@ -343,29 +281,35 @@ impl ActionsMenu {
 
     const fn display_label(&self, action: Action) -> &'static str {
         match action {
+            Action::NewSession if !self.availability.new_session => {
+                "New session · finish active work first"
+            }
+            Action::ResumeSession if !self.availability.new_session => {
+                "Resume session · finish active work first"
+            }
+            Action::Fork if !self.availability.fork => "Fork session · one fork at a time",
+            Action::Review if !self.availability.new_session => {
+                "Review changes · finish active work first"
+            }
+            Action::Handoff if !self.availability.new_session => {
+                "Prepare handoff · finish active work first"
+            }
+            Action::Reflection if !self.availability.new_session => {
+                "Reflect on session · finish active work first"
+            }
             Action::FastMode if self.availability.fast_mode => "Disable fast mode",
+            Action::Model if !self.availability.model => "Select model · start a new session first",
+            Action::Memory if !self.availability.memory => {
+                "Memory · enable in config: memory.enabled = true"
+            }
             _ => action.label(),
         }
-    }
-
-    const fn disabled_reason(&self, action: Action) -> Option<&'static str> {
-        if self.is_enabled(action) {
-            return None;
-        }
-        Some(match action {
-            Action::Compact => "Finish a conversation turn first",
-            Action::Fork => "One fork at a time",
-            Action::Model => "Start a new session first",
-            Action::Memory => "Enable in config: memory.enabled = true",
-            _ => "Finish active work first",
-        })
     }
 }
 
 impl Action {
     const fn label(self) -> &'static str {
         match self {
-            Self::Compact => "Compact context",
             Self::Handoff => "Prepare handoff",
             Self::Review => "Review changes",
             Self::Subagents => "Subagents",
@@ -387,7 +331,6 @@ impl Action {
 
     const fn alias(self) -> Option<&'static str> {
         match self {
-            Self::Compact => Some("compress"),
             Self::Handoff => Some("handoff"),
             Self::Review => Some("review"),
             Self::Subagents => Some("agents"),
@@ -420,14 +363,24 @@ impl Component for ActionsMenu {
     fn update(&mut self, event: Self::Event) -> ComponentUpdate<Self::Effect> {
         match event {
             ActionsEvent::Terminal(Event::Key(key)) => self.update_key(key),
-            ActionsEvent::Terminal(Event::Mouse(mouse)) => self.update_mouse(mouse),
             ActionsEvent::Terminal(Event::Paste(text)) => self.insert_paste(&text),
+            ActionsEvent::Terminal(Event::Mouse(mouse))
+                if self
+                    .navigation_area
+                    .contains(Position::new(mouse.column, mouse.row)) =>
+            {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.select_bounded(-1),
+                    MouseEventKind::ScrollDown => self.select_bounded(1),
+                    _ => ComponentUpdate::none(),
+                }
+            }
             ActionsEvent::Terminal(_) => ComponentUpdate::none(),
         }
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        self.list_area = Rect::default();
+        self.navigation_area = Rect::default();
         if area.is_empty() {
             return;
         }
@@ -440,45 +393,14 @@ impl Component for ActionsMenu {
             height: 1,
             ..layout.body
         };
-        let wide = area.width >= 54;
-        let detail = self
-            .matches
-            .get(self.selected)
-            .map(|index| {
-                let action = ACTIONS[*index];
-                self.disabled_reason(action)
-                    .map(str::to_owned)
-                    .or_else(|| {
-                        (!wide)
-                            .then(|| action.alias().map(|alias| format!("Alias: {alias}")))
-                            .flatten()
-                    })
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
-        let width = usize::from(layout.body.width.saturating_sub(4));
-        let details = wrap_display_lines(&detail, width);
-        let detail_height =
-            (details.len().clamp(1, 2) as u16).min(layout.body.height.saturating_sub(2));
-        let actions_area = Rect::new(
-            layout.body.x,
-            layout.body.y + 1,
-            layout.body.width,
-            layout.body.height.saturating_sub(1 + detail_height),
-        );
+        let actions_area = Rect {
+            y: layout.body.y + 1,
+            height: layout.body.height.saturating_sub(1),
+            ..layout.body
+        };
+        self.navigation_area = actions_area;
         self.render_search(frame, search_area, theme);
-        self.render_actions(frame, actions_area, theme, wide);
-        for (row, line) in details.iter().take(usize::from(detail_height)).enumerate() {
-            frame.render_widget(
-                Paragraph::new(line.as_str()).style(Style::default().fg(theme.muted())),
-                Rect::new(
-                    layout.body.x + 2.min(layout.body.width),
-                    actions_area.bottom() + row as u16,
-                    width as u16,
-                    1,
-                ),
-            );
-        }
+        self.render_actions(frame, actions_area, theme);
     }
 }
 
@@ -495,24 +417,12 @@ fn contains_ignore_ascii_case(value: &str, query: &str) -> bool {
         .any(|window| window.eq_ignore_ascii_case(query.as_bytes()))
 }
 
-fn visible_query_tail(query: &str, width: usize) -> &str {
-    let mut used = 0;
-    for (index, grapheme) in query.grapheme_indices(true).rev() {
-        used += grapheme.width();
-        if used > width {
-            return &query[index + grapheme.len()..];
-        }
-    }
-    query
-}
-
 #[cfg(test)]
 mod tests {
     use super::{Action, ActionAvailability, ActionsEffect, ActionsEvent, ActionsMenu, Component};
     use crate::tui::theme::Theme;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{Terminal, backend::TestBackend};
-    use unicode_width::UnicodeWidthStr;
 
     fn key(code: KeyCode) -> ActionsEvent {
         ActionsEvent::Terminal(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)))
@@ -520,33 +430,11 @@ mod tests {
 
     fn available() -> ActionAvailability {
         ActionAvailability {
-            compact: true,
             new_session: true,
             fork: true,
             fast_mode: false,
             memory: true,
             model: true,
-        }
-    }
-
-    #[test]
-    fn compaction_action_obeys_idle_availability() {
-        for enabled in [false, true] {
-            let mut availability = available();
-            availability.compact = enabled;
-            let mut menu = ActionsMenu::new(availability);
-            for character in "compact".chars() {
-                menu.update(key(KeyCode::Char(character)));
-            }
-            let result = menu.update(key(KeyCode::Enter));
-            assert_eq!(
-                result.effects,
-                if enabled {
-                    vec![ActionsEffect::Trigger(Action::Compact)]
-                } else {
-                    vec![]
-                }
-            );
         }
     }
 
@@ -566,26 +454,101 @@ mod tests {
     }
 
     #[test]
-    fn popup_aligns_aliases_and_keeps_native_action_order() {
+    fn popup_is_centered_with_the_first_action_selected() {
         let mut menu = ActionsMenu::new(available());
         let terminal = render(&mut menu);
+
         assert_eq!(
             row_segment(&terminal, 0, 1, 58),
             "╭─────────────────────── Actions ────────────────────────╮"
         );
-        let first = row_segment(&terminal, 2, 1, 58);
-        let second = row_segment(&terminal, 3, 1, 58);
-        assert!(first.contains("› Change effort"));
-        assert!(second.contains("Enable fast mode"));
         assert_eq!(
-            first[..first.find("(alias:").unwrap()].width(),
-            second[..second.find("(alias:").unwrap()].width()
+            row_segment(&terminal, 1, 1, 58),
+            "│  Search: ▏ type to filter                              │"
         );
-        assert!(row_segment(&terminal, 17, 1, 58).contains("enter/tab open"));
-        assert!(row_segment(&terminal, 18, 1, 58).ends_with('╯'));
         assert_eq!(
-            terminal.backend().buffer()[(4, 2)].fg,
+            row_segment(&terminal, 2, 1, 58),
+            "│› Change effort (alias: thinking)                       │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 3, 1, 58),
+            "│  Enable fast mode (alias: priority)                    │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 4, 1, 58),
+            "│  Select theme (alias: appearance)                      │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 5, 1, 58),
+            "│  New session (alias: clear)                            │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 6, 1, 58),
+            "│  Resume session (alias: restore)                       │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 7, 1, 58),
+            "│  Fork session (alias: btw)                             │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 8, 1, 58),
+            "│  Keyboard shortcuts                                    │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 9, 1, 58),
+            "│  Reload config (alias: refresh)                        │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 10, 1, 58),
+            "│  Edit config                                           │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 11, 1, 58),
+            "│  Memory (alias: remember/forget)                       │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 12, 1, 58),
+            "│  Subagents (alias: agents)                             │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 13, 1, 58),
+            "│  Debug context                                         │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 14, 1, 58),
+            "│  Reflect on session (alias: reflection)                │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 15, 1, 58),
+            "│  Prepare handoff (alias: handoff)                      │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 16, 1, 58),
+            "│  Review changes (alias: review)                        │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 17, 1, 58),
+            "│          ↑↓ move · enter/tab open · esc close          │"
+        );
+        assert_eq!(
+            row_segment(&terminal, 18, 1, 58),
+            "╰────────────────────────────────────────────────────────╯"
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(18, 2)].fg,
+            Theme::default().text()
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(12, 17)].fg,
             Theme::default().accent()
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(2, 2)].bg,
+            Theme::default().code_background()
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(15, 17)].fg,
+            Theme::default().muted()
         );
     }
 
@@ -680,7 +643,7 @@ mod tests {
         }
         let terminal = render(&mut disabled);
         assert!((0..20).any(|row| {
-            row_segment(&terminal, row, 0, 60).contains("Start a new session first")
+            row_segment(&terminal, row, 0, 60).contains("Select model · start a new session first")
         }));
         assert!(disabled.update(key(KeyCode::Enter)).effects.is_empty());
     }
@@ -719,21 +682,6 @@ mod tests {
     }
 
     #[test]
-    fn fast_mode_search_matches_visible_original_and_alias_labels() {
-        for query in ["disable fast mode", "enable fast mode", "priority"] {
-            let mut availability = available();
-            availability.fast_mode = true;
-            let mut menu = ActionsMenu::new(availability);
-            menu.update(ActionsEvent::Terminal(Event::Paste(query.to_owned())));
-            assert_eq!(
-                menu.update(key(KeyCode::Enter)).effects,
-                [ActionsEffect::Trigger(Action::FastMode)],
-                "{query}"
-            );
-        }
-    }
-
-    #[test]
     fn fast_mode_action_reflects_the_current_setting() {
         let mut enabled = ActionsMenu::new(available());
         for character in "priority".chars() {
@@ -748,7 +696,10 @@ mod tests {
         availability.fast_mode = true;
         let mut disabled = ActionsMenu::new(availability);
         let terminal = render(&mut disabled);
-        assert!(row_segment(&terminal, 3, 1, 58).contains("Disable fast mode"));
+        assert_eq!(
+            row_segment(&terminal, 3, 1, 58),
+            "│  Disable fast mode (alias: priority)                   │"
+        );
     }
 
     #[test]
@@ -791,10 +742,9 @@ mod tests {
         disabled.update(key(KeyCode::Down));
         disabled.update(key(KeyCode::Down));
         let terminal = render(&mut disabled);
-        assert!(row_segment(&terminal, 5, 1, 58).contains("› New session"));
-        assert!(
-            (0..20)
-                .any(|row| row_segment(&terminal, row, 0, 60).contains("Finish active work first"))
+        assert_eq!(
+            row_segment(&terminal, 5, 1, 58),
+            "│› New session · finish active work first (alias: clear) │"
         );
         assert_eq!(
             terminal.backend().buffer()[(4, 5)].fg,
@@ -875,10 +825,10 @@ mod tests {
         assert!(disabled.update(key(KeyCode::Enter)).effects.is_empty());
 
         let terminal = render(&mut disabled);
-        assert!(row_segment(&terminal, 2, 1, 58).contains("› Memory"));
-        assert!((0..20).any(|row| {
-            row_segment(&terminal, row, 0, 60).contains("Enable in config: memory.enabled = true")
-        }));
+        assert_eq!(
+            row_segment(&terminal, 2, 1, 58),
+            "│› Memory · enable in config: memory.enabled = true      │"
+        );
         assert_eq!(
             terminal.backend().buffer()[(4, 2)].fg,
             Theme::default().muted()
@@ -935,106 +885,106 @@ mod tests {
         assert_eq!(terminal.backend().buffer().area.width, 3);
     }
     #[test]
-    fn mouse_uses_the_visible_scrolled_row_and_disabled_guard() {
-        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-        let mut availability = available();
-        availability.compact = false;
-        let mut menu = ActionsMenu::new(availability);
-        for _ in 0..30 {
-            menu.update(key(KeyCode::Down));
-        }
-        render(&mut menu);
-        let mouse = |kind, row| {
-            ActionsEvent::Terminal(Event::Mouse(MouseEvent {
+    fn rendered_picker_bounds_wheel_and_page_navigation() {
+        let mut picker = ActionsMenu::new(ActionAvailability {
+            new_session: true,
+            fork: true,
+            fast_mode: true,
+            memory: true,
+            model: true,
+        });
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 12)).unwrap();
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
+            .unwrap();
+        let body = picker.navigation_area;
+        assert!(!body.is_empty());
+        let mouse = |kind, column, row| {
+            ActionsEvent::Terminal(Event::Mouse(crossterm::event::MouseEvent {
                 kind,
-                column: menu.list_area.x,
+                column,
                 row,
                 modifiers: KeyModifiers::NONE,
             }))
         };
-        let row = menu.list_area.y + (menu.selected - menu.offset) as u16;
-        let click = mouse(MouseEventKind::Down(MouseButton::Left), row);
-        assert!(menu.update(click).effects.is_empty());
-        assert_eq!(menu.selected, 16);
-        menu.set_fork_available(false);
-        menu.update(ActionsEvent::Terminal(Event::Paste("btw".into())));
-        render(&mut menu);
-        let click = ActionsEvent::Terminal(Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: menu.list_area.x,
-            row: menu.list_area.y,
-            modifiers: KeyModifiers::NONE,
-        }));
-        assert!(menu.update(click).effects.is_empty());
-        menu.set_fork_available(true);
+        picker.update(mouse(crossterm::event::MouseEventKind::ScrollDown, 0, 0));
+        assert_eq!(picker.selected, 0);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 1);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 0);
+        picker.update(ActionsEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::PageDown,
+            KeyModifiers::NONE,
+        ))));
         assert_eq!(
-            menu.update(key(KeyCode::Enter)).effects,
-            [ActionsEffect::Trigger(Action::Fork)]
+            picker.selected,
+            picker
+                .matches
+                .len()
+                .saturating_sub(1)
+                .min(usize::from(body.height).max(1))
         );
-    }
-
-    #[test]
-    fn narrow_alias_and_empty_state_are_visible_and_tiny_areas_are_safe() {
-        let mut menu = ActionsMenu::new(available());
-        let mut terminal = Terminal::new(TestBackend::new(32, 19)).unwrap();
-        terminal
-            .draw(|frame| menu.render(frame, frame.area(), &Theme::default()))
-            .unwrap();
-        let text = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-        assert!(text.contains("Alias: thinking"));
-        menu.update(ActionsEvent::Terminal(Event::Paste("zzzz".into())));
-        terminal
-            .draw(|frame| menu.render(frame, frame.area(), &Theme::default()))
-            .unwrap();
-        let text = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-        assert!(text.contains("No matching actions"));
-        for width in 0..12 {
-            for height in 0..8 {
-                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-                terminal
-                    .draw(|frame| menu.render(frame, frame.area(), &Theme::default()))
-                    .unwrap();
-            }
+        for _ in 0..40 {
+            picker.update(ActionsEvent::Terminal(Event::Key(KeyEvent::new(
+                KeyCode::PageDown,
+                KeyModifiers::NONE,
+            ))));
         }
-    }
-    #[test]
-    fn mouse_wheel_and_click_follow_keyboard_action_selection() {
-        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-        let mut menu = ActionsMenu::new(available());
-        render(&mut menu);
-        let mouse = |kind, area: ratatui::layout::Rect| {
-            ActionsEvent::Terminal(Event::Mouse(MouseEvent {
-                kind,
-                column: area.x,
-                row: area.y,
-                modifiers: KeyModifiers::NONE,
-            }))
-        };
-        menu.update(mouse(MouseEventKind::ScrollDown, menu.list_area));
-        assert_eq!(
-            menu.update(key(KeyCode::Enter)).effects,
-            [ActionsEffect::Trigger(Action::FastMode)]
-        );
-        menu.update(mouse(MouseEventKind::ScrollUp, menu.list_area));
-        assert_eq!(
-            menu.update(mouse(
-                MouseEventKind::Down(MouseButton::Left),
-                menu.list_area
-            ))
-            .effects,
-            menu.update(key(KeyCode::Enter)).effects
-        );
+        let last = picker.matches.len().saturating_sub(1);
+        assert_eq!(picker.selected, last);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, last);
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
+            .unwrap();
+        assert_eq!(picker.selected, last);
+        let buffer = terminal.backend().buffer();
+        assert!((body.y..body.bottom()).any(|row| {
+            let text = (body.x..body.right())
+                .map(|column| buffer[(column, row)].symbol())
+                .collect::<String>();
+            text.contains("› ") && text.contains("Select model")
+        }));
+        for _ in 0..40 {
+            picker.update(ActionsEvent::Terminal(Event::Key(KeyEvent::new(
+                KeyCode::PageUp,
+                KeyModifiers::NONE,
+            ))));
+        }
+        assert_eq!(picker.selected, 0);
+        terminal
+            .draw(|frame| {
+                picker.render(
+                    frame,
+                    ratatui::layout::Rect::default(),
+                    &crate::tui::theme::Theme::default(),
+                )
+            })
+            .unwrap();
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 0);
     }
 }

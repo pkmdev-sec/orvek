@@ -1,6 +1,6 @@
 //! Deterministic world-space layout for the subagent hierarchy.
 
-use orvek_subagents::AgentId;
+use crate::tui::children::ChildId;
 use std::collections::{HashMap, HashSet};
 
 pub(super) const NODE_WIDTH: i32 = 24;
@@ -10,8 +10,8 @@ pub(super) const VERTICAL_GAP: i32 = 5;
 
 #[derive(Clone, Copy)]
 pub(super) struct LayoutNode {
-    pub(super) id: AgentId,
-    pub(super) parent: Option<AgentId>,
+    pub(super) id: ChildId,
+    pub(super) parent: Option<ChildId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -27,26 +27,17 @@ pub(super) struct NodePosition {
 }
 
 pub(super) struct TreeLayout {
-    positions: HashMap<AgentId, NodePosition>,
-    parents: HashMap<AgentId, AgentId>,
-    children: HashMap<AgentId, Vec<AgentId>>,
-    roots: Vec<AgentId>,
-    order: Vec<(AgentId, usize)>,
-    bounds: Option<LayoutBounds>,
-}
-
-struct LayoutBounds {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
+    positions: HashMap<ChildId, NodePosition>,
+    parents: HashMap<ChildId, ChildId>,
+    children: HashMap<ChildId, Vec<ChildId>>,
+    roots: Vec<ChildId>,
 }
 
 impl TreeLayout {
     pub(super) fn new(nodes: &[LayoutNode]) -> Self {
         let ids = nodes.iter().map(|node| node.id).collect::<HashSet<_>>();
         let mut parents = HashMap::new();
-        let mut children = HashMap::<AgentId, Vec<AgentId>>::new();
+        let mut children = HashMap::<ChildId, Vec<ChildId>>::new();
 
         for node in nodes {
             let parent = node.parent.filter(|parent| ids.contains(parent));
@@ -102,103 +93,46 @@ impl TreeLayout {
             left += width + HORIZONTAL_GAP;
         }
 
-        let bounds = positions
-            .values()
-            .fold(None::<LayoutBounds>, |bounds, position| {
-                let left = position.center_x - NODE_WIDTH / 2;
-                let right = left + NODE_WIDTH;
-                let bottom = position.top + NODE_HEIGHT;
-                Some(match bounds {
-                    None => LayoutBounds {
-                        left,
-                        top: position.top,
-                        right,
-                        bottom,
-                    },
-                    Some(bounds) => LayoutBounds {
-                        left: bounds.left.min(left),
-                        top: bounds.top.min(position.top),
-                        right: bounds.right.max(right),
-                        bottom: bounds.bottom.max(bottom),
-                    },
-                })
-            });
-        let mut order = Vec::with_capacity(positions.len());
-        let mut stack = roots.iter().rev().map(|id| (*id, 0)).collect::<Vec<_>>();
-        let mut visited = HashSet::new();
-        while let Some((id, depth)) = stack.pop() {
-            if !visited.insert(id) {
-                continue;
-            }
-            order.push((id, depth));
-            stack.extend(
-                children
-                    .get(&id)
-                    .into_iter()
-                    .flatten()
-                    .rev()
-                    .map(|child| (*child, depth + 1)),
-            );
-        }
         Self {
             positions,
             parents,
             children,
             roots,
-            order,
-            bounds,
         }
     }
 
-    pub(super) fn overview_center(&self, width: u16, height: u16) -> Option<WorldPoint> {
-        let bounds = self.bounds.as_ref()?;
-        let forest_width = bounds.right - bounds.left;
-        let forest_height = bounds.bottom - bounds.top;
-        if forest_width > i32::from(width) || forest_height > i32::from(height) {
-            return None;
-        }
-        Some(WorldPoint {
-            x: f64::from(bounds.left + forest_width / 2),
-            y: f64::from(bounds.top + forest_height / 2),
-        })
-    }
-
-    pub(super) fn ordered_nodes(&self) -> &[(AgentId, usize)] {
-        &self.order
-    }
-
-    pub(super) fn position(&self, id: AgentId) -> Option<NodePosition> {
+    pub(super) fn position(&self, id: ChildId) -> Option<NodePosition> {
         self.positions.get(&id).copied()
     }
 
-    pub(super) fn center(&self, id: AgentId) -> Option<WorldPoint> {
+    pub(super) fn center(&self, id: ChildId) -> Option<WorldPoint> {
         self.position(id).map(|position| WorldPoint {
             x: f64::from(position.center_x),
             y: f64::from(position.top + NODE_HEIGHT / 2),
         })
     }
 
-    pub(super) fn parent(&self, id: AgentId) -> Option<AgentId> {
+    pub(super) fn parent(&self, id: ChildId) -> Option<ChildId> {
         self.parents.get(&id).copied()
     }
 
-    pub(super) fn children(&self, id: AgentId) -> &[AgentId] {
+    pub(super) fn children(&self, id: ChildId) -> &[ChildId] {
         self.children.get(&id).map_or(&[], Vec::as_slice)
     }
 
-    pub(super) fn roots(&self) -> &[AgentId] {
+    pub(super) fn roots(&self) -> &[ChildId] {
         &self.roots
     }
 
-    pub(super) fn positioned_nodes(&self) -> impl Iterator<Item = (AgentId, NodePosition)> + '_ {
+    pub(super) fn positioned_nodes(&self) -> impl Iterator<Item = (ChildId, NodePosition)> + '_ {
         self.positions.iter().map(|(&id, &position)| (id, position))
     }
 }
 
 fn break_parent_cycles(
-    ids: &HashSet<AgentId>,
-    parents: &mut HashMap<AgentId, AgentId>,
-    children: &mut HashMap<AgentId, Vec<AgentId>>,
+    ids: &HashSet<ChildId>,
+    parents: &mut HashMap<ChildId, ChildId>,
+    children: &mut HashMap<ChildId, Vec<ChildId>>,
 ) {
     let mut ordered = ids.iter().copied().collect::<Vec<_>>();
     ordered.sort_unstable();
@@ -220,10 +154,10 @@ fn break_parent_cycles(
 }
 
 fn measure_subtree(
-    id: AgentId,
-    children: &HashMap<AgentId, Vec<AgentId>>,
-    measured: &mut HashMap<AgentId, i32>,
-    visiting: &mut HashSet<AgentId>,
+    id: ChildId,
+    children: &HashMap<ChildId, Vec<ChildId>>,
+    measured: &mut HashMap<ChildId, i32>,
+    visiting: &mut HashSet<ChildId>,
 ) -> i32 {
     if let Some(&width) = measured.get(&id) {
         return width;
@@ -246,13 +180,13 @@ fn measure_subtree(
 
 #[allow(clippy::too_many_arguments)]
 fn place_subtree(
-    id: AgentId,
+    id: ChildId,
     left: i32,
     depth: i32,
-    children: &HashMap<AgentId, Vec<AgentId>>,
-    measured: &HashMap<AgentId, i32>,
-    positions: &mut HashMap<AgentId, NodePosition>,
-    placed: &mut HashSet<AgentId>,
+    children: &HashMap<ChildId, Vec<ChildId>>,
+    measured: &HashMap<ChildId, i32>,
+    positions: &mut HashMap<ChildId, NodePosition>,
+    placed: &mut HashSet<ChildId>,
 ) {
     if !placed.insert(id) {
         return;
@@ -291,12 +225,12 @@ fn place_subtree(
 #[cfg(test)]
 mod tests {
     use super::{HORIZONTAL_GAP, LayoutNode, NODE_WIDTH, TreeLayout};
-    use orvek_subagents::AgentId;
+    use crate::tui::children::ChildId;
 
     fn node(id: u64, parent: Option<u64>) -> LayoutNode {
         LayoutNode {
-            id: AgentId::new(id),
-            parent: parent.map(AgentId::new),
+            id: ChildId::new(id),
+            parent: parent.map(ChildId::new),
         }
     }
 
@@ -309,9 +243,9 @@ mod tests {
             node(4, Some(1)),
             node(5, Some(1)),
         ]);
-        let parent = layout.position(AgentId::new(1)).unwrap();
-        let first = layout.position(AgentId::new(2)).unwrap();
-        let last = layout.position(AgentId::new(5)).unwrap();
+        let parent = layout.position(ChildId::new(1)).unwrap();
+        let first = layout.position(ChildId::new(2)).unwrap();
+        let last = layout.position(ChildId::new(5)).unwrap();
 
         assert_eq!(parent.center_x * 2, first.center_x + last.center_x);
     }
@@ -326,8 +260,8 @@ mod tests {
             node(5, Some(2)),
             node(6, Some(3)),
         ]);
-        let left_grandchild = layout.position(AgentId::new(5)).unwrap();
-        let right_grandchild = layout.position(AgentId::new(6)).unwrap();
+        let left_grandchild = layout.position(ChildId::new(5)).unwrap();
+        let right_grandchild = layout.position(ChildId::new(6)).unwrap();
 
         assert!(
             right_grandchild.center_x - left_grandchild.center_x >= NODE_WIDTH + HORIZONTAL_GAP
@@ -338,9 +272,9 @@ mod tests {
     fn missing_parents_become_stable_roots() {
         let layout = TreeLayout::new(&[node(1, Some(99)), node(2, None)]);
 
-        assert_eq!(layout.roots(), [AgentId::new(1), AgentId::new(2)]);
-        assert!(layout.position(AgentId::new(1)).is_some());
-        assert!(layout.position(AgentId::new(2)).is_some());
+        assert_eq!(layout.roots(), [ChildId::new(1), ChildId::new(2)]);
+        assert!(layout.position(ChildId::new(1)).is_some());
+        assert!(layout.position(ChildId::new(2)).is_some());
     }
 
     #[test]
@@ -357,8 +291,8 @@ mod tests {
 
         for id in 1..=4 {
             assert_eq!(
-                ordered.position(AgentId::new(id)),
-                shuffled.position(AgentId::new(id))
+                ordered.position(ChildId::new(id)),
+                shuffled.position(ChildId::new(id))
             );
         }
     }
@@ -374,12 +308,12 @@ mod tests {
         ]);
 
         assert_eq!(
-            layout.position(AgentId::new(2)).unwrap().top,
-            layout.position(AgentId::new(3)).unwrap().top
+            layout.position(ChildId::new(2)).unwrap().top,
+            layout.position(ChildId::new(3)).unwrap().top
         );
         assert_eq!(
-            layout.position(AgentId::new(4)).unwrap().top,
-            layout.position(AgentId::new(5)).unwrap().top
+            layout.position(ChildId::new(4)).unwrap().top,
+            layout.position(ChildId::new(5)).unwrap().top
         );
     }
 
@@ -391,55 +325,5 @@ mod tests {
         assert_eq!(layout.positioned_nodes().count(), 3);
         let root = layout.roots()[0];
         assert!(layout.parent(root).is_none());
-    }
-    #[test]
-    fn overview_uses_the_complete_forest_and_exact_terminal_cell_bounds() {
-        let layout = TreeLayout::new(&[
-            node(1, None),
-            node(2, Some(1)),
-            node(3, Some(1)),
-            node(4, Some(1)),
-        ]);
-        assert_eq!(
-            layout.overview_center(84, 13),
-            Some(super::WorldPoint { x: 0.0, y: 6.0 })
-        );
-        assert!(layout.overview_center(83, 13).is_none());
-        assert!(layout.overview_center(84, 12).is_none());
-        assert!(TreeLayout::new(&[]).overview_center(100, 100).is_none());
-    }
-
-    #[test]
-    fn compact_order_keeps_parents_before_children_after_cycle_and_orphan_repair() {
-        let layout = TreeLayout::new(&[
-            node(7, Some(99)),
-            node(3, Some(2)),
-            node(2, Some(1)),
-            node(1, Some(3)),
-            node(8, Some(7)),
-        ]);
-        let order = layout.ordered_nodes();
-        assert_eq!(order.len(), 5);
-        for (position, (id, depth)) in order.iter().enumerate() {
-            if let Some(parent) = layout.parent(*id) {
-                let (parent_position, (_, parent_depth)) = order
-                    .iter()
-                    .enumerate()
-                    .find(|(_, (id, _))| *id == parent)
-                    .unwrap();
-                assert!(parent_position < position);
-                assert_eq!(*depth, parent_depth + 1);
-            } else {
-                assert_eq!(*depth, 0);
-            }
-        }
-        assert_eq!(
-            order
-                .iter()
-                .map(|(id, _)| *id)
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-            5
-        );
     }
 }

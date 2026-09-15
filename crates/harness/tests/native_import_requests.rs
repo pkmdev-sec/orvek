@@ -1,11 +1,11 @@
-use rusqlite::{Connection, params};
-use serde_json::json;
 use orvek_harness::{
     Digest, Store, StoreError,
     import::{ImportLimits, LegacyArchive, PreparedImport, PublicationLimits, prepare_import},
-    inference::{ModelSettings, Thinking},
+    inference::ModelSettings,
     session::{SessionCommand, SessionConfig},
 };
+use rusqlite::{Connection, params};
+use serde_json::json;
 use uuid::Uuid;
 
 struct Fixture {
@@ -45,6 +45,7 @@ impl Fixture {
             workspace: workspace.canonicalize().unwrap(),
             model: ModelSettings::default(),
             instructions: "fixture instructions".into(),
+            context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
         };
         let store = Store::open(&root.path().join("host")).unwrap();
         Self {
@@ -58,7 +59,7 @@ impl Fixture {
         let archive = LegacyArchive::open(&self.database, ImportLimits::default()).unwrap();
         prepare_import(
             &archive,
-            self.store.artifacts(),
+            self.store.public_artifacts(),
             "old",
             PublicationLimits::default(),
         )
@@ -120,15 +121,15 @@ fn fresh_operations_reuse_identical_selected_bytes_and_preserve_native_progress(
             prepared,
         )
         .unwrap();
-    let mut model = first.config.model;
-    model.thinking = Thinking::Max;
     let progressed = fixture
         .store
         .session_command(
             first.id,
             first.revision,
             Uuid::new_v4(),
-            SessionCommand::SettingsChanged(model),
+            SessionCommand::Feedback {
+                message: "preserved native progress".into(),
+            },
         )
         .unwrap();
     let other = Uuid::new_v4();
@@ -139,7 +140,8 @@ fn fresh_operations_reuse_identical_selected_bytes_and_preserve_native_progress(
         .commit_legacy_import(other, fingerprint, fixture.config.clone(), prepared)
         .unwrap();
     assert_eq!(reused.id, first.id);
-    assert_eq!(reused.config.model, progressed.config.model);
+    assert_eq!(reused.history, progressed.history);
+    assert_eq!(reused.admission(), progressed.admission());
     assert!(reused.revision > progressed.revision);
     let retry = fixture
         .store
@@ -252,7 +254,9 @@ fn first_import_operation_cannot_be_reused_for_an_unrelated_session_command() {
             first.id,
             first.revision,
             operation,
-            SessionCommand::SettingsChanged(first.config.model)
+            SessionCommand::Feedback {
+                message: "must not be applied".into(),
+            }
         ),
         Err(StoreError::Invalid(_))
     ));

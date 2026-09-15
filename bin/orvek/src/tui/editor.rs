@@ -119,7 +119,6 @@ async fn launch(
         .arg(path)
         .current_dir(workspace)
         .env("ORVEK_EXTERNAL_EDITOR", "1")
-        .env("TACT_EXTERNAL_EDITOR", "1")
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())

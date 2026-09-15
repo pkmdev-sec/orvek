@@ -92,10 +92,11 @@ impl Store {
         Ok(())
     }
 
-    pub fn settle_classification(
+    pub fn settle_failed_classification(
         &mut self,
         session: SessionId,
         request: Uuid,
+        error: String,
     ) -> Result<(), StoreError> {
         let state = self.load_session(session)?;
         if state.active_request != Some(request) {
@@ -108,7 +109,7 @@ impl Store {
             SessionCommand::TurnSettled {
                 request,
                 outcome: None,
-                error: None,
+                error: Some(error),
             },
         )?;
         Ok(())
@@ -168,17 +169,48 @@ impl Store {
         receipt: ModelCallReceipt,
         started_ms: u64,
     ) -> Result<TaskState, StoreError> {
+        self.account_ordinary_classification_record(
+            task, request, kind, call, receipt, started_ms, true,
+        )
+    }
+
+    pub(crate) fn account_ordinary_classification_without_budget_limit(
+        &mut self,
+        task: TaskId,
+        request: Uuid,
+        kind: OrdinaryKind,
+        call: Uuid,
+        receipt: ModelCallReceipt,
+        started_ms: u64,
+    ) -> Result<TaskState, StoreError> {
+        self.account_ordinary_classification_record(
+            task, request, kind, call, receipt, started_ms, false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn account_ordinary_classification_record(
+        &mut self,
+        task: TaskId,
+        request: Uuid,
+        kind: OrdinaryKind,
+        call: Uuid,
+        receipt: ModelCallReceipt,
+        started_ms: u64,
+        enforce_budget: bool,
+    ) -> Result<TaskState, StoreError> {
         if kind != OrdinaryKind::Action || call == request || started_ms == 0 {
             return Err(StoreError::Invalid(
                 "ordinary classifier cannot be charged to a task",
             ));
         }
-        self.reserve_model_call(task, Uuid::new_v5(&request, b"ordinary-classifier"))?;
-        self.record_model_call(
-            task,
-            Uuid::new_v5(&request, b"ordinary-classifier"),
-            receipt,
-        )
+        let operation = Uuid::new_v5(&request, b"ordinary-classifier");
+        if enforce_budget {
+            self.reserve_model_call(task, operation)?;
+        } else {
+            self.reserve_model_call_without_budget_limit(task, operation)?;
+        }
+        self.record_model_call(task, operation, receipt)
     }
 
     pub fn record_auxiliary(

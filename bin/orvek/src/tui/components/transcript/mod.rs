@@ -9,25 +9,24 @@ mod message;
 mod tool;
 
 use super::{
-    activity_mark::ActivityState,
+    activity::ActivityState,
     node::{Component, ComponentUpdate, RenderRequest},
     selection::{TextRange, TextSpan},
 };
 use crate::{
     app::config::ReasoningEffort,
-    sessions::record::TranscriptRecord,
     tui::{
-        format::{
-            duration_display_tick, format_duration, format_turn_duration, normalize_line_endings,
-        },
+        children::{MessageOrigin, MessageUpdate},
+        format::{duration_display_tick, format_turn_duration, normalize_line_endings},
         spinner::Spinner,
         theme::Theme,
-        transcript::{EntryId, EntryKind, TranscriptEntry, TranscriptModel, TransientStatus},
+        transcript::{
+            EntryId, EntryKind, TranscriptEntry, TranscriptModel, TranscriptRecord, TransientStatus,
+        },
     },
 };
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use empty::EmptyLogo;
-use orvek_subagents::{AgentMessageUpdate, MessageSender};
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -49,13 +48,12 @@ const EXPANDABLE_FOCUS_HINTS: [&str; 2] =
     ["↑↓ item · Enter toggle · Esc back", "↑↓ item · Enter · Esc"];
 const NESTED_TOOL_INDENT: u16 = 4;
 const PINNED_PROMPT_MAX_HEIGHT: u16 = 3;
-const RETRY_COUNTDOWN_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(crate) enum TranscriptEvent {
     Record(Arc<TranscriptRecord>),
     DirectedMessage {
-        perspective: MessageSender,
-        update: AgentMessageUpdate,
+        perspective: MessageOrigin,
+        update: MessageUpdate,
     },
     AgentStreamClosed,
     Scroll(ScrollCommand),
@@ -70,6 +68,7 @@ pub(crate) enum TranscriptEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TranscriptEffect {
     pub(crate) active: bool,
+    pub(crate) state: Option<ActivityState>,
     pub(crate) status: Option<String>,
 }
 
@@ -82,10 +81,7 @@ pub(crate) struct Transcript {
     viewport_height: u16,
     new_updates: u64,
     tool_spinner: Option<Spinner>,
-    motion_enabled: bool,
-    last_duration_refresh: Instant,
     running_tool_timers: HashMap<EntryId, RunningToolTimer>,
-    retry_timer: Option<RetryTimer>,
     expandables_focused: bool,
     selected_expandable: Option<EntryId>,
     expandable_hits: Vec<ExpandableHitRegion>,
@@ -181,13 +177,6 @@ struct RunningToolTimer {
 }
 
 #[derive(Clone, Copy)]
-struct RetryTimer {
-    deadline: Instant,
-    remaining_ns: u64,
-    next_frame: Option<Instant>,
-}
-
-#[derive(Clone, Copy)]
 struct PinnedPrompt {
     entry: EntryId,
     area: Rect,
@@ -208,26 +197,6 @@ impl RunningToolTimer {
     fn elapsed(self, now: Instant) -> Duration {
         self.elapsed_at_observation
             .saturating_add(now.saturating_duration_since(self.observed_at))
-    }
-}
-
-impl RetryTimer {
-    fn new(now: Instant, delay_ns: u64) -> Self {
-        let deadline = now + Duration::from_nanos(delay_ns);
-        Self {
-            deadline,
-            remaining_ns: delay_ns,
-            next_frame: Some((now + RETRY_COUNTDOWN_INTERVAL).min(deadline)),
-        }
-    }
-
-    fn refresh(&mut self, now: Instant) -> bool {
-        let previous_tick = duration_display_tick(self.remaining_ns);
-        self.remaining_ns = u64::try_from(self.deadline.saturating_duration_since(now).as_nanos())
-            .unwrap_or(u64::MAX);
-        self.next_frame =
-            (self.remaining_ns > 0).then(|| (now + RETRY_COUNTDOWN_INTERVAL).min(self.deadline));
-        duration_display_tick(self.remaining_ns) != previous_tick
     }
 }
 
@@ -265,10 +234,7 @@ impl Transcript {
             viewport_height: 0,
             new_updates: 0,
             tool_spinner: None,
-            motion_enabled: true,
-            last_duration_refresh: Instant::now(),
             running_tool_timers: HashMap::new(),
-            retry_timer: None,
             expandables_focused: false,
             selected_expandable: None,
             expandable_hits: Vec::new(),
@@ -312,12 +278,27 @@ impl Transcript {
             height: area.bottom().saturating_sub(prompt.area.bottom()),
             ..area
         });
-        if self.expandables_focused {
+        if self.expandables_focused && matches!(self.scroll, ScrollState::Follow) {
             let _ = render_top_right_hint(frame, area, &EXPANDABLE_FOCUS_HINTS, theme.accent());
             return;
         }
 
-        if !matches!(self.scroll, ScrollState::Detached(_)) || self.new_updates == 0 {
+        if !matches!(self.scroll, ScrollState::Detached(_)) || area.is_empty() {
+            return;
+        }
+        let area = Rect {
+            y: area.bottom().saturating_sub(1),
+            height: 1,
+            ..area
+        };
+
+        if self.new_updates == 0 {
+            self.updates_banner_area = render_top_right_hint(
+                frame,
+                area,
+                &["↓ Scrolled up · Ctrl+End to follow", "↓ Ctrl+End to follow"],
+                theme.border(),
+            );
             return;
         }
 
@@ -332,41 +313,17 @@ impl Transcript {
             render_top_right_hint(frame, area, &[&label, &compact_label], theme.border());
     }
 
-    pub(super) fn visual_activity(&self) -> Option<ActivityState> {
-        if matches!(self.model.transient(), Some(TransientStatus::Compacting)) {
-            Some(ActivityState::Compacting)
-        } else if self.model.has_running_tools() {
-            Some(ActivityState::Working)
-        } else if self.model.is_active() {
-            Some(ActivityState::Thinking)
-        } else {
-            None
-        }
-    }
-
     pub(crate) fn animation_deadline(&self) -> Option<Instant> {
         let empty = self
             .is_empty()
             .then(|| self.empty_logo.deadline())
             .flatten();
         self.tool_spinner
-            .map(|spinner| {
-                if self.motion_enabled {
-                    spinner.deadline()
-                } else {
-                    self.last_duration_refresh + Duration::from_secs(1)
-                }
-            })
+            .map(Spinner::deadline)
             .into_iter()
             .chain(empty)
-            .chain(self.retry_timer.and_then(|timer| timer.next_frame))
             .chain(self.cache.images.animation_deadline())
             .min()
-    }
-
-    pub(super) fn set_render_preferences(&mut self, motion: bool, ascii: bool) {
-        self.motion_enabled = motion;
-        self.empty_logo.set_preferences(motion, ascii);
     }
 
     fn update_record(
@@ -377,12 +334,8 @@ impl Transcript {
         let change = self.model.apply(&record);
         let activity = self.activity();
         let now = Instant::now();
-        if record.kind() == "model.attempt.retrying" {
-            if let Some(TransientStatus::Retrying(delay_ns)) = self.model.transient() {
-                self.retry_timer = Some(RetryTimer::new(now, *delay_ns));
-            }
-        } else if !matches!(self.model.transient(), Some(TransientStatus::Retrying(_))) {
-            self.retry_timer = None;
+        for id in change.removed.iter().copied() {
+            self.forget_entry(id);
         }
         self.sync_running_tool_timers(now);
         let tool_active = self.model.has_running_tools();
@@ -400,7 +353,7 @@ impl Transcript {
             .collect();
         let render = if !change.changed {
             RenderRequest::None
-        } else if record.source() == "tact" {
+        } else if record.local().is_some() {
             RenderRequest::Immediate
         } else {
             RenderRequest::Streaming
@@ -410,11 +363,11 @@ impl Transcript {
 
     fn update_message(
         &mut self,
-        perspective: MessageSender,
-        update: AgentMessageUpdate,
+        perspective: MessageOrigin,
+        update: MessageUpdate,
     ) -> ComponentUpdate<TranscriptEffect> {
         let change = self.model.apply_message(perspective, update);
-        if let Some(id) = change.removed {
+        for id in change.removed {
             self.forget_entry(id);
         }
         if !change.changed {
@@ -452,7 +405,7 @@ impl Transcript {
 
     fn agent_stream_closed(&mut self) -> ComponentUpdate<TranscriptEffect> {
         let previous_activity = self.activity();
-        if !self.model.agent_stream_closed() {
+        if !self.model.view_disconnected() {
             return ComponentUpdate::none();
         }
         let now = Instant::now();
@@ -469,33 +422,21 @@ impl Transcript {
     }
 
     fn activity(&self) -> TranscriptEffect {
+        let active = self.model.is_active();
         TranscriptEffect {
-            active: self.model.is_active(),
-            status: self.model.transient().map(|status| match status {
-                TransientStatus::Retrying(delay_ns) => {
-                    let remaining_ns = self
-                        .retry_timer
-                        .map_or(*delay_ns, |timer| timer.remaining_ns);
-                    format!("Retrying in {}…", format_duration(remaining_ns))
-                }
-                status => transient_label(status),
-            }),
+            active,
+            state: activity_state(self.model.transient(), active),
+            status: self.model.transient().map(transient_label),
         }
     }
 
     fn update_animation(&mut self, now: Instant) -> ComponentUpdate<TranscriptEffect> {
         let previous_activity = self.activity();
-        let retry_changed = self
-            .retry_timer
-            .as_mut()
-            .is_some_and(|timer| timer.refresh(now));
         let timer_changed = self.refresh_running_tool_durations(now);
-        self.last_duration_refresh = now;
-        let tool_changed = self.motion_enabled
-            && self
-                .tool_spinner
-                .as_mut()
-                .is_some_and(|spinner| spinner.advance(now));
+        let tool_changed = self
+            .tool_spinner
+            .as_mut()
+            .is_some_and(|spinner| spinner.advance(now));
         let logo_changed = self.is_empty() && self.empty_logo.advance(now);
         let images_changed = self.cache.poll_images(now);
         let activity = self.activity();
@@ -504,12 +445,7 @@ impl Transcript {
                 .then_some(activity)
                 .into_iter()
                 .collect(),
-            render: if retry_changed
-                || timer_changed
-                || tool_changed
-                || logo_changed
-                || images_changed
-            {
+            render: if timer_changed || tool_changed || logo_changed || images_changed {
                 RenderRequest::Streaming
             } else {
                 RenderRequest::None
@@ -962,12 +898,12 @@ impl Transcript {
             self.pinned_prompt = None;
             return 0;
         };
-        let Some(entry) = self.model.entry(entry_id) else {
+        let Some(entry) = self.model.entry(entry_id).cloned() else {
             self.pinned_prompt = None;
             return 0;
         };
         let available_height = area.height.saturating_sub(1).min(PINNED_PROMPT_MAX_HEIGHT);
-        let mut line_count = self.cache.layout(entry, area.width, theme).len();
+        let mut line_count = self.cache.layout(&entry, area.width, theme).len();
         if entry.trailing_spacer {
             line_count = line_count.saturating_sub(1);
         }
@@ -1294,18 +1230,27 @@ fn unix_milliseconds() -> u64 {
     u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
 }
 
+fn activity_state(status: Option<&TransientStatus>, active: bool) -> Option<ActivityState> {
+    match status {
+        Some(
+            TransientStatus::Tool(_)
+            | TransientStatus::Responding
+            | TransientStatus::WaitingForBackgroundWork,
+        ) => Some(ActivityState::Working),
+        Some(TransientStatus::Error(_)) => Some(ActivityState::Error),
+        Some(TransientStatus::Thinking | TransientStatus::Reconnecting) => {
+            Some(ActivityState::Thinking)
+        }
+        None => active.then_some(ActivityState::Thinking),
+    }
+}
+
 fn transient_label(status: &TransientStatus) -> String {
     match status {
         TransientStatus::Thinking => "Thinking…".to_owned(),
         TransientStatus::Responding => "Responding…".to_owned(),
-        TransientStatus::Warming => "Warming model…".to_owned(),
         TransientStatus::WaitingForBackgroundWork => "Waiting for background work…".to_owned(),
         TransientStatus::Tool(tool) => format!("Running {tool}…"),
-        TransientStatus::Compacting => "Compacting context…".to_owned(),
-        TransientStatus::Retrying(delay_ns) => {
-            format!("Retrying in {}…", format_duration(*delay_ns))
-        }
-        TransientStatus::Connecting => "Connecting…".to_owned(),
         TransientStatus::Reconnecting => "Reconnecting…".to_owned(),
         TransientStatus::Error(error) => error.clone(),
     }
@@ -1627,6 +1572,18 @@ impl Component for Transcript {
             return;
         }
         let mut plan = self.render_plan(area.width, area.height, theme);
+        let area = if matches!(self.scroll, ScrollState::Detached(_)) {
+            Rect {
+                height: area.height.saturating_sub(1),
+                ..area
+            }
+        } else {
+            area
+        };
+        if self.viewport_height != area.height {
+            self.viewport_height = area.height;
+            plan = self.render_plan(area.width, area.height, theme);
+        }
         let prompt_entry = self.pinned_prompt_entry(plan.anchors.first().copied());
         let prompt_height = self.prepare_pinned_prompt(prompt_entry, area, theme);
         let transcript_area = Rect {
@@ -1636,12 +1593,7 @@ impl Component for Transcript {
         };
         self.viewport_height = transcript_area.height;
         if prompt_height > 0 {
-            // The full-height plan already resolves scrolling and warms a larger overscan.
-            // Pinning reserves top rows without changing its first content anchor.
-            plan.anchors.truncate(usize::from(transcript_area.height));
-            plan.top_padding = transcript_area
-                .height
-                .saturating_sub(u16::try_from(plan.anchors.len()).unwrap_or(u16::MAX));
+            plan = self.render_plan(transcript_area.width, transcript_area.height, theme);
             self.render_pinned_prompt(frame, theme);
         }
         let RenderPlan {
@@ -1866,46 +1818,25 @@ fn render_entry(
             "◇ Reflection started",
             Style::default().fg(theme.muted()),
         ))]),
-        EntryKind::Interrupted { count } => {
-            let label = if *count == 1 {
-                "◇ Interrupted response".to_owned()
-            } else {
-                format!("◇ Interrupted {count} responses")
-            };
-            layout_without_links(vec![Line::from(Span::styled(
-                label,
-                Style::default().fg(theme.border()),
-            ))])
-        }
-        EntryKind::ContextCompacted {
-            duration_ns,
-            pages,
-            estimated_tokens,
-        } => {
-            let mut label = format!("◇ Context compacted · {}", format_duration(*duration_ns));
-            if let Some(pages) = pages {
-                label.push_str(&format!(" · {pages} pages"));
-            }
-            if let Some((before, after)) = estimated_tokens {
-                label.push_str(&format!(" · estimated {before} → {after} tokens"));
-            }
-            layout_without_links(vec![Line::from(Span::styled(
-                label,
-                Style::default().fg(theme.muted()),
-            ))])
-        }
         EntryKind::TurnCompleted { duration_ns } => {
             layout_without_links(vec![Line::from(Span::styled(
-                format!("◇ Turn completed · {}", format_turn_duration(*duration_ns)),
+                if *duration_ns == 0 {
+                    "◇ Turn ended".into()
+                } else {
+                    format!("◇ Turn ended · {}", format_turn_duration(*duration_ns))
+                },
                 Style::default().fg(theme.muted()),
             ))])
         }
-        EntryKind::ContextCompactionFailed { message } => {
-            layout_without_links(vec![Line::from(Span::styled(
-                format!("◇ Context compaction failed · {message}"),
-                Style::default().fg(theme.thinking_high()),
-            ))])
-        }
+        EntryKind::HostStatus { text, verified } => layout_without_links(markdown::wrap_plain(
+            &format!("◇ Host · {text}"),
+            width,
+            Style::default().fg(if *verified {
+                theme.effort(crate::app::config::ReasoningEffort::Low)
+            } else {
+                theme.muted()
+            }),
+        )),
         EntryKind::Error { message } => layout_without_links(markdown::wrap_plain(
             &format!("× {message}"),
             width,
@@ -2060,29 +1991,49 @@ fn line_width(text: &str) -> usize {
 mod tests {
     use super::{
         Anchor, Component, ExpandableCommand, RenderRequest, ScrollCommand, ScrollState,
-        Transcript, TranscriptEvent, render_user, unix_milliseconds,
+        Transcript, TranscriptEvent, activity_state, render_user, unix_milliseconds,
     };
     use crate::{
         app::config::{ReasoningEffort, ReasoningMode},
-        sessions::record::{LocalEvent, SessionStarted, TranscriptRecord, TurnId},
-        tui::{theme::Theme, transcript::EntryKind},
+        tui::{
+            children::{MessageOrigin, MessageUpdate},
+            components::activity::ActivityState,
+            fixtures::{self, DisplaySample},
+            theme::Theme,
+            transcript::{
+                EntryKind, LocalEvent, SessionStarted, TranscriptRecord, TransientStatus, TurnId,
+            },
+        },
     };
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
-    use nanocodex::{
-        Model,
-        agent::events::{AgentEvent, AgentEventKind},
-    };
-    use orvek_subagents::{AgentMessageUpdate, MessageSender};
+    use orvek_harness::inference::Model;
     use ratatui::{Terminal, backend::TestBackend, layout::Position, style::Color};
-    use serde_json::{json, value::to_raw_value};
+    use serde_json::json;
     use std::{
         fs::File,
         path::Path,
         sync::Arc,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn transient_work_projects_to_reusable_task_states() {
+        assert_eq!(
+            activity_state(Some(&TransientStatus::Thinking), true),
+            Some(ActivityState::Thinking)
+        );
+        assert_eq!(
+            activity_state(Some(&TransientStatus::Tool("shell".to_owned())), true),
+            Some(ActivityState::Working)
+        );
+        assert_eq!(
+            activity_state(Some(&TransientStatus::Responding), true),
+            Some(ActivityState::Working)
+        );
+        assert_eq!(activity_state(None, false), None);
+    }
 
     #[test]
     fn user_messages_normalize_carriage_returns() {
@@ -2132,13 +2083,13 @@ mod tests {
         )
     }
 
-    fn agent(sequence: u64, kind: AgentEventKind) -> Arc<TranscriptRecord> {
+    fn agent(sequence: u64, kind: DisplaySample) -> Arc<TranscriptRecord> {
         agent_with_payload(sequence, kind, json!({}))
     }
 
     fn agent_with_payload(
         sequence: u64,
-        kind: AgentEventKind,
+        kind: DisplaySample,
         payload: serde_json::Value,
     ) -> Arc<TranscriptRecord> {
         agent_with_payload_at(sequence, sequence, kind, payload)
@@ -2147,26 +2098,21 @@ mod tests {
     fn agent_with_payload_at(
         sequence: u64,
         recorded_at_unix_ms: u64,
-        kind: AgentEventKind,
+        kind: DisplaySample,
         payload: serde_json::Value,
     ) -> Arc<TranscriptRecord> {
-        Arc::new(TranscriptRecord::from_agent(
+        Arc::new(fixtures::record(
             sequence,
             recorded_at_unix_ms,
-            AgentEvent {
-                protocol_version: 1,
-                request_id: Arc::from("test"),
-                seq: sequence,
-                kind,
-                payload: to_raw_value(&payload).unwrap().into(),
-            },
+            kind,
+            payload,
         ))
     }
 
     fn shell(transcript: &mut Transcript, sequence: u64, output: &str) {
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             sequence,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": format!("call-{sequence}"),
                 "tool": "exec_command",
@@ -2175,7 +2121,7 @@ mod tests {
         )));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             sequence + 1,
-            AgentEventKind::ToolResult,
+            DisplaySample::ToolReturn,
             json!({
                 "call_id": format!("call-{sequence}"),
                 "tool": "exec_command",
@@ -2195,29 +2141,30 @@ mod tests {
     }
 
     fn directed_message(transcript: &mut Transcript) {
-        let update = serde_json::from_value::<AgentMessageUpdate>(json!({
-            "message_id": 1,
-            "thread": {
-                "id": 1,
-                "participants": [
-                    {"kind": "root"},
-                    {"kind": "agent", "agent_id": 1}
-                ],
-                "messages": [{
+        let update =
+            serde_json::from_value::<MessageUpdate>(crate::tui::fixtures::native_ids(json!({
+                "message_id": 1,
+                "thread": {
                     "id": 1,
-                    "thread_id": 1,
-                    "from": {"kind": "root"},
-                    "to": 1,
-                    "priority": "deferred",
-                    "purpose": "coordinate",
-                    "body": "verify the ordering"
-                }]
-            },
-            "delivery": {"state": "delivered", "disposition": "started"}
-        }))
-        .unwrap();
+                    "participants": [
+                        {"kind": "root"},
+                        {"kind": "agent", "child_id": 1}
+                    ],
+                    "messages": [{
+                        "id": 1,
+                        "thread_id": 1,
+                        "from": {"kind": "root"},
+                        "to": 1,
+                        "priority": "deferred",
+                        "purpose": "coordinate",
+                        "body": "verify the ordering"
+                    }]
+                },
+                "delivery": {"state": "delivered", "disposition": "started"}
+            })))
+            .unwrap();
         transcript.update(TranscriptEvent::DirectedMessage {
-            perspective: MessageSender::Root,
+            perspective: MessageOrigin::Root,
             update,
         });
     }
@@ -2277,7 +2224,7 @@ mod tests {
         transcript.set_workspace(workspace);
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             1,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -2473,10 +2420,7 @@ mod tests {
         let mut transcript = Transcript::new();
         transcript.update(TranscriptEvent::Record(user(1, "completed")));
         transcript.update(TranscriptEvent::Record(user(2, "still running")));
-        transcript.update(TranscriptEvent::Record(agent(
-            3,
-            AgentEventKind::RunStarted,
-        )));
+        transcript.update(TranscriptEvent::Record(agent(3, DisplaySample::Start)));
         transcript.update(TranscriptEvent::Record(fork_started(4, 3)));
 
         assert!(!transcript.model.is_active());
@@ -2545,7 +2489,7 @@ mod tests {
         )));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             2,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -2594,7 +2538,7 @@ mod tests {
         transcript.update(TranscriptEvent::Record(user(1, "pinned prompt")));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             2,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -2631,13 +2575,10 @@ mod tests {
     fn active_stream_does_not_pin_while_following() {
         let mut transcript = Transcript::new();
         transcript.update(TranscriptEvent::Record(user(1, "streaming prompt")));
-        transcript.update(TranscriptEvent::Record(agent(
-            2,
-            AgentEventKind::RunStarted,
-        )));
+        transcript.update(TranscriptEvent::Record(agent(2, DisplaySample::Start)));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             3,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -2661,7 +2602,7 @@ mod tests {
         )));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             2,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -2724,7 +2665,7 @@ mod tests {
         )));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             2,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -2769,7 +2710,7 @@ mod tests {
         transcript.update(TranscriptEvent::Record(user(1, "pinned prompt")));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             2,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -2830,7 +2771,7 @@ mod tests {
             )));
             transcript.update(TranscriptEvent::Record(agent_with_payload(
                 turn * 2,
-                AgentEventKind::AssistantMessage,
+                DisplaySample::Text,
                 json!({
                     "model_call_index": turn,
                     "item_id": format!("answer-{turn}"),
@@ -2878,7 +2819,7 @@ mod tests {
         transcript.update(TranscriptEvent::Record(user(2, "second prompt")));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             3,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -2957,13 +2898,13 @@ mod tests {
         transcript.update(TranscriptEvent::Record(agent_with_payload_at(
             1,
             1_000,
-            AgentEventKind::RunStarted,
+            DisplaySample::Start,
             json!({}),
         )));
         transcript.update(TranscriptEvent::Record(agent_with_payload_at(
             2,
             66_432,
-            AgentEventKind::RunCompleted,
+            DisplaySample::End,
             json!({"duration_ns": 65_432_000_000_u64}),
         )));
 
@@ -2973,7 +2914,7 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(rendered.contains("◇ Turn completed · 1m 5s"));
+        assert!(rendered.contains("◇ Turn ended · 1m 5s"));
     }
 
     #[test]
@@ -3051,7 +2992,7 @@ mod tests {
         let mut transcript = Transcript::new();
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             1,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "commentary",
@@ -3061,7 +3002,7 @@ mod tests {
         )));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             2,
-            AgentEventKind::ReasoningSummaryDelta,
+            DisplaySample::Reasoning,
             json!({"model_call_index": 1, "text": "reasoning body"}),
         )));
 
@@ -3082,10 +3023,13 @@ mod tests {
     #[test]
     fn adjacent_bold_reasoning_steps_render_on_separate_rows() {
         let mut transcript = Transcript::new();
-        for (sequence, text) in [(1, "**Planning retrieval**"), (2, "**Confirming output**")] {
+        for (sequence, text) in [
+            (1, "**Planning retrieval**"),
+            (2, "\n\n**Confirming output**"),
+        ] {
             transcript.update(TranscriptEvent::Record(agent_with_payload(
                 sequence,
-                AgentEventKind::ReasoningSummaryDelta,
+                DisplaySample::Reasoning,
                 json!({"model_call_index": 1, "text": text}),
             )));
         }
@@ -3111,6 +3055,58 @@ mod tests {
     }
 
     #[test]
+    fn streaming_delta_previews_before_the_confirmed_answer_replaces_it() {
+        // Mirrors the host's real preview path: `WatchFrame::Preview` deltas
+        // project to `ViewChange::Assistant { replace: false, confirmed: false }`
+        // before the confirmed, replacing `ViewChange::Assistant` lands.
+        let mut transcript = Transcript::new();
+        transcript.update(TranscriptEvent::Record(agent_with_payload(
+            1,
+            DisplaySample::TextDelta,
+            json!({
+                "model_call_index": 1,
+                "item_id": "answer",
+                "phase": "final_answer",
+                "text": "Draft",
+            }),
+        )));
+        let preview = render(&mut transcript, 40, 4)
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(preview.contains("Draft"));
+        assert!(matches!(
+            &transcript.model.entries()[0].kind,
+            EntryKind::Assistant { text, complete } if text == "Draft" && !complete
+        ));
+
+        transcript.update(TranscriptEvent::Record(agent_with_payload(
+            2,
+            DisplaySample::Text,
+            json!({
+                "model_call_index": 1,
+                "item_id": "answer",
+                "phase": "final_answer",
+                "text": "Final answer",
+            }),
+        )));
+        let confirmed = render(&mut transcript, 40, 4)
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(confirmed.contains("Final answer"));
+        assert!(!confirmed.contains("Draft"));
+        assert!(matches!(
+            &transcript.model.entries()[0].kind,
+            EntryKind::Assistant { text, complete } if text == "Final answer" && *complete
+        ));
+    }
+
+    #[test]
     fn empty_logo_is_replaced_as_soon_as_transcript_content_arrives() {
         let mut transcript = Transcript::new();
 
@@ -3120,9 +3116,7 @@ mod tests {
                 .buffer()
                 .content()
                 .iter()
-                .map(|cell| cell.symbol())
-                .collect::<String>()
-                .contains("████")
+                .any(|cell| cell.symbol() == "█")
         );
         let deadline = transcript
             .animation_deadline()
@@ -3136,40 +3130,35 @@ mod tests {
 
         transcript.update(TranscriptEvent::Record(user(1, "hello")));
         let populated = render(&mut transcript, 41, 14);
+        let populated = populated
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(populated.contains("hello"));
+        assert!(!populated.contains('█'));
+        assert!(transcript.animation_deadline().is_none());
+    }
+
+    #[test]
+    fn absent_host_retry_timing_remains_unknown() {
+        let mut transcript = Transcript::new();
+        transcript.update(TranscriptEvent::Record(user(1, "hello")));
+        transcript.update(TranscriptEvent::Record(agent_with_payload(
+            2,
+            DisplaySample::Retry,
+            json!({"delay_ns":2_000_000_000u64}),
+        )));
+        assert!(transcript.activity().status.is_none());
         assert!(
-            !populated
+            render(&mut transcript, 90, 8)
                 .buffer()
                 .content()
                 .iter()
                 .map(|cell| cell.symbol())
                 .collect::<String>()
-                .contains("████")
-        );
-        assert!(transcript.animation_deadline().is_none());
-    }
-
-    #[test]
-    fn retry_status_counts_down_during_backoff() {
-        let mut transcript = Transcript::new();
-        transcript.update(TranscriptEvent::Record(user(1, "hello")));
-        transcript.update(TranscriptEvent::Record(agent_with_payload(
-            2,
-            AgentEventKind::ModelAttemptRetrying,
-            json!({"delay_ns": 2_000_000_000_u64, "error": "temporary"}),
-        )));
-
-        assert_eq!(
-            transcript.activity().status.as_deref(),
-            Some("Retrying in 2.0s…")
-        );
-        let deadline = transcript
-            .animation_deadline()
-            .expect("retry backoff should schedule countdown frames");
-        transcript.update(TranscriptEvent::AnimationFrame(deadline));
-
-        assert_ne!(
-            transcript.activity().status.as_deref(),
-            Some("Retrying in 2.0s…")
+                .contains("Provider retry timing was not recorded by the host")
         );
     }
 
@@ -3301,7 +3290,7 @@ mod tests {
         let mut transcript = Transcript::new();
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             1,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "plan-1",
                 "tool": "update_plan",
@@ -3363,7 +3352,7 @@ mod tests {
         let mut transcript = Transcript::new();
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             1,
-            AgentEventKind::AssistantMessage,
+            DisplaySample::Text,
             json!({
                 "model_call_index": 1,
                 "item_id": "answer",
@@ -3570,10 +3559,7 @@ mod tests {
     #[test]
     fn generic_activity_is_only_rendered_by_the_composer() {
         let mut transcript = Transcript::new();
-        transcript.update(TranscriptEvent::Record(agent(
-            1,
-            AgentEventKind::RunStarted,
-        )));
+        transcript.update(TranscriptEvent::Record(agent(1, DisplaySample::Start)));
 
         let backend = render(&mut transcript, 30, 4);
         let rendered = backend
@@ -3591,7 +3577,7 @@ mod tests {
         let mut transcript = Transcript::new();
         let update = transcript.update(TranscriptEvent::Record(agent_with_payload(
             1,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "call-1",
                 "tool": "exec_command",
@@ -3629,7 +3615,7 @@ mod tests {
         transcript.update(TranscriptEvent::Record(agent_with_payload_at(
             1,
             unix_milliseconds().saturating_sub(10_000),
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "call-1",
                 "tool": "exec_command",
@@ -3664,7 +3650,7 @@ mod tests {
 
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             2,
-            AgentEventKind::ToolResult,
+            DisplaySample::ToolReturn,
             json!({
                 "call_id": "call-1",
                 "tool": "exec_command",
@@ -3694,7 +3680,7 @@ mod tests {
         let mut transcript = Transcript::new();
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             1,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "workflow",
                 "tool": "exec",
@@ -3703,7 +3689,7 @@ mod tests {
         )));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             2,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "workflow/code-1",
                 "tool": "exec_command",
@@ -3726,7 +3712,7 @@ mod tests {
 
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             3,
-            AgentEventKind::ToolResult,
+            DisplaySample::ToolReturn,
             json!({
                 "call_id": "workflow/code-1",
                 "tool": "exec_command",
@@ -3764,11 +3750,11 @@ mod tests {
     }
 
     #[test]
-    fn code_workflow_promotes_a_standalone_tool_when_the_second_child_arrives() {
+    fn slash_separated_call_ids_do_not_invent_a_host_parent_relation() {
         let mut transcript = Transcript::new();
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             1,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "workflow",
                 "tool": "exec",
@@ -3777,7 +3763,7 @@ mod tests {
         )));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             2,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "workflow/code-1",
                 "tool": "exec_command",
@@ -3797,7 +3783,7 @@ mod tests {
 
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             3,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "workflow/code-2",
                 "tool": "memory",
@@ -3813,21 +3799,18 @@ mod tests {
             .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
             .collect::<Vec<_>>();
         let batch = rows.join("");
-        assert!(batch.contains("Batch"));
-        assert_eq!(batch.matches("├─").count(), 1);
-        assert_eq!(batch.matches("└─").count(), 1);
-        let batch_row = rows.iter().position(|row| row.contains("Batch")).unwrap();
-        assert!(rows[batch_row + 1].contains("├─"));
-        assert!(rows[batch_row + 2].contains("└─"));
-        assert!(rows[batch_row + 3].trim().is_empty());
+        assert!(!batch.contains("Batch"));
+        assert!(batch.contains("Shell"));
+        assert!(batch.contains("Memory"));
+        assert_eq!(transcript.model.entries().len(), 3);
     }
 
     #[test]
-    fn final_multiline_workflow_child_connects_through_its_last_row() {
+    fn multiline_tool_failure_is_rendered_without_inferred_parentage() {
         let mut transcript = Transcript::new();
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             1,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "workflow",
                 "tool": "exec",
@@ -3836,7 +3819,7 @@ mod tests {
         )));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             2,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "workflow/code-1",
                 "tool": "memory",
@@ -3845,7 +3828,7 @@ mod tests {
         )));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             3,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "workflow/code-2",
                 "tool": "custom_operation",
@@ -3854,7 +3837,7 @@ mod tests {
         )));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             4,
-            AgentEventKind::ToolResult,
+            DisplaySample::ToolReturn,
             json!({
                 "call_id": "workflow/code-2",
                 "tool": "custom_operation",
@@ -3873,24 +3856,10 @@ mod tests {
             .chunks(60)
             .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
             .collect::<Vec<_>>();
-        let tool_row = rows
-            .iter()
-            .position(|row| row.contains("Custom operation"))
-            .unwrap();
-        let spacer = rows[tool_row..]
-            .iter()
-            .position(|row| row.trim().is_empty())
-            .map(|offset| tool_row + offset)
-            .unwrap();
-        let final_tool_row = spacer - 1;
-
-        assert!(rows[tool_row].starts_with("  ├─"));
-        assert!(
-            rows[tool_row + 1..final_tool_row]
-                .iter()
-                .all(|row| row.starts_with("  │ "))
-        );
-        assert!(rows[final_tool_row].starts_with("  └─"));
+        let rendered = rows.join("\n");
+        assert!(rendered.contains("Custom operation"));
+        assert!(rendered.contains("Self"));
+        assert!(!rows.iter().any(|row| row.starts_with("  ├─")));
     }
 
     #[test]
@@ -3898,7 +3867,7 @@ mod tests {
         let mut transcript = Transcript::new();
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             1,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "workflow",
                 "tool": "exec",
@@ -3907,7 +3876,7 @@ mod tests {
         )));
         transcript.update(TranscriptEvent::Record(agent_with_payload(
             2,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "workflow/code-1",
                 "tool": "exec_command",
@@ -3931,30 +3900,28 @@ mod tests {
         transcript.update(TranscriptEvent::Record(agent_with_payload_at(
             1,
             recorded_at,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "shell",
                 "tool": "exec_command",
                 "arguments": {"cmd": "cargo test", "workdir": "/work"},
             }),
         )));
-        transcript.update(TranscriptEvent::Record(agent_with_payload_at(
-            2,
-            recorded_at,
-            AgentEventKind::ToolResult,
-            json!({
-                "call_id": "shell",
-                "tool": "exec_command",
-                "status": "completed",
-                "duration_ns": 1_u64,
-                "result": "Wall time: 0.0000 seconds\nProcess running with session ID 7\nOutput:\nfirst output line\nsecond output line",
-                "structured_result": {
-                    "output": "first output line\nsecond output line",
-                    "session_id": 7,
-                    "wall_time_seconds": 0.0,
+        transcript.update(TranscriptEvent::Record(Arc::new(
+            TranscriptRecord::from_host(
+                2,
+                recorded_at,
+                orvek_harness::session::SessionCursor {
+                    version: 1,
+                    session: Default::default(),
+                    revision: 2,
                 },
-                "metadata": null,
-            }),
+                crate::tui::host_projection::ViewChange::ToolResult {
+                    request: None,
+                    call_id: "shell".into(),
+                    output: json!({"output":"first output line\nsecond output line"}).to_string(),
+                },
+            ),
         )));
         let id = transcript
             .model
@@ -3984,7 +3951,7 @@ mod tests {
         let mut transcript = Transcript::new();
         let update = transcript.update(TranscriptEvent::Record(agent_with_payload(
             1,
-            AgentEventKind::ToolCall,
+            DisplaySample::ToolStart,
             json!({
                 "call_id": "call-1",
                 "tool": "wait",

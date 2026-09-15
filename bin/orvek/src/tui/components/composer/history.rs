@@ -1,5 +1,7 @@
 //! Session-local prompt history and restoration of the draft being edited.
 
+use crate::tui::session::MAX_RECENT_PROMPTS;
+
 #[derive(Default)]
 pub(super) struct PromptHistory {
     entries: Vec<String>,
@@ -13,6 +15,9 @@ struct Browsing {
 
 impl PromptHistory {
     pub(super) fn record(&mut self, prompt: String) {
+        if self.entries.len() == MAX_RECENT_PROMPTS {
+            self.entries.remove(0);
+        }
         self.entries.push(prompt);
         self.browsing = None;
     }
@@ -50,5 +55,27 @@ impl PromptHistory {
 
     pub(super) fn detach(&mut self) {
         self.browsing = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_RECENT_PROMPTS, PromptHistory};
+
+    #[test]
+    fn prompt_history_keeps_only_the_latest_entries() {
+        let mut history = PromptHistory::default();
+        for index in 0..=MAX_RECENT_PROMPTS {
+            history.record(format!("prompt {index}"));
+        }
+
+        assert_eq!(history.entries.len(), MAX_RECENT_PROMPTS);
+        for expected in (1..=MAX_RECENT_PROMPTS).rev() {
+            assert_eq!(
+                history.previous("draft"),
+                Some(format!("prompt {expected}"))
+            );
+        }
+        assert!(history.previous("draft").is_none());
     }
 }

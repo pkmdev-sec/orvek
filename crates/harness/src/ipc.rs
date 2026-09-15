@@ -5,7 +5,10 @@ use crate::{
     contract::Contract,
     controller::{Host, TaskRun},
     inference::ModelSettings,
-    session::{JournalRecord, SessionConfig, SessionCursor, SessionId, SessionState},
+    session::{
+        JournalRecord, SessionAdmissionProfile, SessionAdmissionRequest, SessionCursor, SessionId,
+        SessionState,
+    },
     state::{Outcome, TaskId},
     verification::CheckProgram,
 };
@@ -26,7 +29,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -134,7 +137,7 @@ pub enum Command {
     ImportLegacy {
         database: PathBuf,
         source_session: String,
-        config: SessionConfig,
+        request: SessionAdmissionRequest,
     },
     LegacyPage {
         session: SessionId,
@@ -180,11 +183,6 @@ pub enum Command {
         id: SessionId,
         parent: SessionCursor,
     },
-    ConfigureSession {
-        id: SessionId,
-        expected_revision: u64,
-        model: ModelSettings,
-    },
     History {
         cursor: SessionCursor,
         start: usize,
@@ -192,7 +190,7 @@ pub enum Command {
     },
     CreateSession {
         id: SessionId,
-        config: SessionConfig,
+        request: SessionAdmissionRequest,
     },
     Session {
         id: SessionId,
@@ -244,6 +242,10 @@ pub enum WatchFrame {
     PreviewGap {
         dropped: u64,
     },
+    Subagent {
+        session: SessionId,
+        event: crate::controller::SubagentEvent,
+    },
     Ready {
         after: u64,
     },
@@ -257,6 +259,8 @@ pub struct SessionView {
     pub fork_cursor: SessionCursor,
     pub workspace: PathBuf,
     pub model: ModelSettings,
+    pub context_window_tokens: u64,
+    pub admission: Option<SessionAdmissionView>,
     pub parent: Option<SessionCursor>,
     pub current_task: Option<TaskId>,
     pub active_request: Option<Uuid>,
@@ -269,15 +273,42 @@ pub struct SessionView {
     pub imported: Option<crate::session::ImportedSource>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionAdmissionView {
+    pub version: u32,
+    pub binding: crate::evolution::HarnessBinding,
+    pub provenance: crate::evolution::HarnessProvenance,
+    pub authority: Digest,
+    pub request_digest: Digest,
+}
+
+impl From<&SessionAdmissionProfile> for SessionAdmissionView {
+    fn from(profile: &SessionAdmissionProfile) -> Self {
+        Self {
+            version: profile.version(),
+            binding: profile.binding(),
+            provenance: profile.provenance(),
+            authority: profile.authority(),
+            request_digest: profile.request_digest(),
+        }
+    }
+}
+
 impl From<(SessionState, u64)> for SessionView {
     fn from((state, journal_sequence): (SessionState, u64)) -> Self {
+        let workspace = state.workspace().clone();
+        let model = state.model();
+        let context_window_tokens = state.context_window_tokens();
+        let admission = state.admission().map(SessionAdmissionView::from);
         Self {
             fork_cursor: state.fork_cursor(),
             branch: state.branch,
             id: state.id,
             revision: state.revision,
-            workspace: state.config.workspace,
-            model: state.config.model,
+            workspace,
+            model,
+            context_window_tokens,
+            admission,
             parent: state.parent,
             current_task: state.current_task,
             active_request: state.active_request,
@@ -317,7 +348,7 @@ pub enum Response {
     },
     Sessions(Vec<SessionView>),
     History(serde_json::Value),
-    Session(SessionView),
+    Session(Box<SessionView>),
     Task {
         id: TaskId,
         revision: u64,
@@ -467,7 +498,7 @@ async fn execute(
         }
         Command::HandoffSession { id, parent } => {
             host.handoff_session(id, parent).await?;
-            Response::Session(host.session_snapshot(id).await?.into())
+            Response::Session(Box::new(host.session_snapshot(id).await?.into()))
         }
         Command::InspectTaskReview { task } => {
             let (view, review) = host.inspect_task_review(task, shutdown).await?;
@@ -542,12 +573,12 @@ async fn execute(
         Command::ImportLegacy {
             database,
             source_session,
-            config,
+            request: admission,
         } => {
             let session = host
-                .import_legacy_request(request.id, database, source_session, config)
+                .import_legacy_request(request.id, database, source_session, admission)
                 .await?;
-            Response::Session(host.session_snapshot(session.id).await?.into())
+            Response::Session(Box::new(host.session_snapshot(session.id).await?.into()))
         }
         Command::LegacyPage {
             session,
@@ -617,16 +648,7 @@ async fn execute(
         }
         Command::ForkSession { id, parent } => {
             host.fork_session(id, parent).await?;
-            Response::Session(host.session_snapshot(id).await?.into())
-        }
-        Command::ConfigureSession {
-            id,
-            expected_revision,
-            model,
-        } => {
-            host.configure_session(id, expected_revision, request.id, model)
-                .await?;
-            Response::Session(host.session_snapshot(id).await?.into())
+            Response::Session(Box::new(host.session_snapshot(id).await?.into()))
         }
         Command::History {
             cursor,
@@ -634,11 +656,16 @@ async fn execute(
             limit,
         } => Response::History(host.history_page(cursor, start, limit).await?),
         Command::Watch { .. } => unreachable!("watch requests have a streaming handler"),
-        Command::CreateSession { id, config } => {
-            host.create_session_with_id(id, config).await?;
-            Response::Session(host.session_snapshot(id).await?.into())
+        Command::CreateSession {
+            id,
+            request: admission,
+        } => {
+            host.create_session_with_id(id, admission).await?;
+            Response::Session(Box::new(host.session_snapshot(id).await?.into()))
         }
-        Command::Session { id } => Response::Session(host.session_snapshot(id).await?.into()),
+        Command::Session { id } => {
+            Response::Session(Box::new(host.session_snapshot(id).await?.into()))
+        }
         Command::Task { id } => {
             let state = host.task(id).await?;
             Response::Task {
@@ -752,6 +779,7 @@ async fn watch(
     shutdown: CancellationToken,
 ) -> io::Result<()> {
     let mut previews = host.subscribe_previews();
+    let mut subagents = host.subscribe_subagents();
     let mut unexpected = [0u8; 1];
     send_watch(stream, &WatchFrame::Ready { after }).await?;
     loop {
@@ -784,6 +812,19 @@ async fn watch(
                 Ok(crate::controller::HostUpdate::PreviewGap { .. }) => send_watch(stream, &WatchFrame::PreviewGap { dropped: 1 }).await?,
                 Ok(_) => {},
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => send_watch(stream, &WatchFrame::PreviewGap { dropped }).await?,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
+            },
+            subagent_event = subagents.recv() => match subagent_event {
+                Ok(event) => {
+                    let session = match &event {
+                        crate::controller::SubagentEvent::Spawned { session, .. }
+                        | crate::controller::SubagentEvent::Returned { session, .. }
+                        | crate::controller::SubagentEvent::Failed { session, .. }
+                        | crate::controller::SubagentEvent::Cancelled { session, .. } => *session,
+                    };
+                    send_watch(stream, &WatchFrame::Subagent { session, event }).await?
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
             }
         }

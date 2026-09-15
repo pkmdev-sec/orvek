@@ -1,12 +1,12 @@
+use orvek_harness::{
+    Digest, Store,
+    artifacts::{ArtifactStore, PublicArtifactRef},
+    review::{self, ReviewError, ReviewLimits, ReviewRange, ReviewSide},
+};
 use std::{
     fs,
     os::unix::fs::{PermissionsExt, symlink},
     process::Command,
-};
-use orvek_harness::{
-    Digest,
-    artifacts::ArtifactStore,
-    review::{self, ReviewError, ReviewLimits, ReviewRange, ReviewSide},
 };
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -19,8 +19,10 @@ impl Repo {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
         fs::create_dir(temp.path().join("repo")).unwrap();
-        let artifacts =
-            ArtifactStore::open(&temp.path().join("artifacts"), 128 * 1024 * 1024).unwrap();
+        let artifacts = Store::open_with_artifact_limit(temp.path(), 128 * 1024 * 1024)
+            .unwrap()
+            .public_artifacts()
+            .clone();
         let repo = Self { temp, artifacts };
         repo.git(&["init", "-b", "main"]);
         repo.git(&["config", "user.name", "Fixture"]);
@@ -60,7 +62,9 @@ impl Repo {
         let file = review::file(&self.artifacts, id, side, path)
             .unwrap()
             .unwrap();
-        self.artifacts.read(file.content).unwrap()
+        self.artifacts
+            .resolve(PublicArtifactRef::from_digest(file.content))
+            .unwrap()
     }
     async fn inspect(&self, range: ReviewRange) -> review::ReviewInspection {
         review::inspect(
@@ -109,7 +113,12 @@ async fn staged_and_committed_reads_stay_bound_to_their_range() {
         repo.bytes(staged.manifest, ReviewSide::After, "text.txt"),
         b"staged\n"
     );
-    let patch = String::from_utf8(repo.artifacts.read(commit.patch).unwrap()).unwrap();
+    let patch = String::from_utf8(
+        repo.artifacts
+            .resolve(PublicArtifactRef::from_digest(commit.patch))
+            .unwrap(),
+    )
+    .unwrap();
     assert!(patch.contains("+staged"));
     assert!(!patch.contains("working"));
     let catalog = review::catalog(&repo.path(), &CancellationToken::new())
@@ -168,7 +177,12 @@ async fn working_binary_quoted_paths_modes_links_and_deletions_are_frozen() {
     .unwrap();
     assert_eq!(file.mode, 0o100755);
     assert_eq!(file.permissions, Some(0o751));
-    let patch = String::from_utf8(repo.artifacts.read(inspection.patch).unwrap()).unwrap();
+    let patch = String::from_utf8(
+        repo.artifacts
+            .resolve(PublicArtifactRef::from_digest(inspection.patch))
+            .unwrap(),
+    )
+    .unwrap();
     assert!(patch.contains("GIT binary patch"));
     assert!(patch.contains("new file mode 100755"));
     assert!(!patch.contains("PRIVATE OUTSIDE"));
@@ -264,7 +278,14 @@ async fn limits_cancellation_and_corrupt_manifests_fail_explicitly() {
         Err(ReviewError::Cancelled)
     ));
     let inspection = repo.inspect(ReviewRange::Staged { base: None }).await;
-    fs::write(repo.artifacts.path(inspection.manifest), b"{}").unwrap();
+    fs::write(
+        repo.temp
+            .path()
+            .join("artifacts")
+            .join(inspection.manifest.to_string()),
+        b"{}",
+    )
+    .unwrap();
     assert!(matches!(
         review::manifest(&repo.artifacts, inspection.manifest),
         Err(ReviewError::Corrupt)
@@ -367,13 +388,13 @@ async fn split_index_and_revision_operators_are_supported_without_source_writes(
 async fn inherited_git_environment_is_ignored() {
     let repo = Repo::new();
     repo.write("text.txt", b"changed\n");
+    let repo_path = repo.path().to_owned();
+    let artifact_host = repo.temp.path().to_owned();
+    drop(repo.artifacts);
     let status = Command::new(std::env::current_exe().unwrap())
         .args(["--ignored", "--exact", "environment_fixture_child"])
-        .env("ORVEK_REVIEW_TEST_REPO", repo.path())
-        .env(
-            "ORVEK_REVIEW_TEST_ARTIFACTS",
-            repo.temp.path().join("artifacts"),
-        )
+        .env("ORVEK_REVIEW_TEST_REPO", repo_path)
+        .env("ORVEK_REVIEW_TEST_ARTIFACTS", artifact_host)
         .env("GIT_DIR", "/definitely/not/a/repository")
         .env("GIT_INDEX_FILE", "/definitely/not/an/index")
         .env("GIT_CONFIG_COUNT", "1")
@@ -393,11 +414,13 @@ async fn inherited_git_environment_is_ignored() {
 #[ignore = "subprocess fixture for inherited environment isolation"]
 async fn environment_fixture_child() {
     let path = std::env::var_os("ORVEK_REVIEW_TEST_REPO").unwrap();
-    let artifacts = ArtifactStore::open(
+    let artifacts = Store::open_with_artifact_limit(
         &std::path::PathBuf::from(std::env::var_os("ORVEK_REVIEW_TEST_ARTIFACTS").unwrap()),
         128 * 1024 * 1024,
     )
-    .unwrap();
+    .unwrap()
+    .public_artifacts()
+    .clone();
     let view = review::inspect(
         std::path::Path::new(&path),
         ReviewRange::WorkingTree { base: None },
@@ -409,7 +432,12 @@ async fn environment_fixture_child() {
     let file = review::file(&artifacts, view.manifest, ReviewSide::After, "text.txt")
         .unwrap()
         .unwrap();
-    assert_eq!(artifacts.read(file.content).unwrap(), b"changed\n");
+    assert_eq!(
+        artifacts
+            .resolve(PublicArtifactRef::from_digest(file.content))
+            .unwrap(),
+        b"changed\n"
+    );
 }
 
 #[tokio::test]
@@ -462,7 +490,12 @@ async fn immutable_snapshot_review_never_reads_current_source_and_retains_metada
     assert!(
         matches!(manifest.range,ReviewRange::Snapshots {before:base,after:candidate} if base==before.publish(&repo.artifacts).unwrap()&&candidate==after.publish(&repo.artifacts).unwrap())
     );
-    let patch = String::from_utf8(repo.artifacts.read(view.patch).unwrap()).unwrap();
+    let patch = String::from_utf8(
+        repo.artifacts
+            .resolve(PublicArtifactRef::from_digest(view.patch))
+            .unwrap(),
+    )
+    .unwrap();
     assert!(patch.contains("+line 39"));
     assert!(patch.contains("new file mode 100755"));
 }
@@ -485,7 +518,12 @@ async fn snapshot_review_full_context_tamper_limits_and_paths_are_checked() {
         review::inspect_snapshots(&before, &after, &repo.artifacts, &CancellationToken::new())
             .await
             .unwrap();
-    let patch = String::from_utf8(repo.artifacts.read(view.patch).unwrap()).unwrap();
+    let patch = String::from_utf8(
+        repo.artifacts
+            .resolve(PublicArtifactRef::from_digest(view.patch))
+            .unwrap(),
+    )
+    .unwrap();
     assert!(patch.contains(" line 0\n"));
     assert!(patch.contains(" line 39\n"));
     let limits = ReviewLimits {
@@ -526,7 +564,11 @@ async fn snapshot_review_full_context_tamper_limits_and_paths_are_checked() {
     let Entry::File { content, .. } = after.entries["text.txt"] else {
         panic!()
     };
-    fs::write(repo.artifacts.path(content), b"tampered").unwrap();
+    fs::write(
+        repo.temp.path().join("artifacts").join(content.to_string()),
+        b"tampered",
+    )
+    .unwrap();
     assert!(matches!(
         review::inspect_snapshots(&before, &after, &repo.artifacts, &CancellationToken::new())
             .await,

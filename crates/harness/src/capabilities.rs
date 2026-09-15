@@ -9,9 +9,14 @@
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod files;
 
+pub mod host;
+
 use crate::{
     Digest,
-    runtime::{DockerExecutor, ExecutionRequest, ExecutionResult, ExecutionStatus, RuntimeError},
+    runtime::{
+        DockerExecutor, ExecutionPolicy, ExecutionRequest, ExecutionResult, ExecutionStatus,
+        RuntimeError,
+    },
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
@@ -161,6 +166,7 @@ struct ExecArgs {
 }
 
 /// The sole command backend is the strict Docker runtime supplied by the host.
+#[derive(Clone)]
 pub struct WorkspaceTools {
     executor: Arc<DockerExecutor>,
 }
@@ -240,7 +246,7 @@ impl WorkspaceTools {
         };
         let result = self
             .executor
-            .run(
+            .run_with_policy(
                 &ExecutionRequest {
                     job_id: context.job_id,
                     workspace: context.workspace.clone(),
@@ -248,6 +254,11 @@ impl WorkspaceTools {
                     readonly: context.readonly || !context.can_write,
                     timeout_ms: context.timeout_ms,
                     output_bytes: data_budget(&context).max(1) as u64,
+                },
+                if context.readonly || !context.can_write {
+                    ExecutionPolicy::Protected
+                } else {
+                    ExecutionPolicy::Workspace
                 },
                 cancellation,
             )

@@ -2,21 +2,21 @@
 
 mod assets;
 mod diff;
+#[cfg(test)]
+mod fixture;
 mod server;
 
 pub(crate) use assets::{AssetAvailability, ReviewAssets};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 pub(crate) use diff::ReviewRange;
 use futures_util::future::BoxFuture;
+use orvek_harness::Digest;
 use server::{
     PreparedReview, ReviewBootstrap, ReviewDecision, ReviewOutcome, ReviewPage, ReviewServer,
     ScopeLoadError,
 };
-use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -25,7 +25,11 @@ const MAX_QUESTION_ANSWER_BYTES: usize = 256 * 1024;
 const MAX_PREPARATION_ATTEMPTS: usize = 3;
 
 pub(crate) type ReviewAgent = Arc<
-    dyn Fn(String, CancellationToken) -> BoxFuture<'static, Result<String, ReviewAgentError>>
+    dyn Fn(
+            String,
+            orvek_harness::Digest,
+            CancellationToken,
+        ) -> BoxFuture<'static, Result<String, ReviewAgentError>>
         + Send
         + Sync,
 >;
@@ -39,6 +43,8 @@ pub(crate) enum ReviewAgentError {
 pub(crate) struct ReviewService;
 
 struct ReviewBackend {
+    client: crate::app::host::HostClient,
+    task: Option<orvek_harness::state::TaskId>,
     workspace: PathBuf,
     review_agent: ReviewAgent,
     #[cfg(test)]
@@ -49,8 +55,28 @@ pub(crate) struct ReviewHandle {
     server: ReviewServer,
 }
 
+pub(crate) struct ReviewText {
+    pub(crate) markdown: String,
+    pub(crate) manifest: Digest,
+    pub(crate) source_identity: Digest,
+    feedback: Option<Digest>,
+}
+
+impl ReviewText {
+    pub(crate) fn with_feedback(mut self, digest: Digest) -> Self {
+        self.feedback = Some(digest);
+        self
+    }
+
+    pub(crate) fn feedback(&self) -> Option<Digest> {
+        self.feedback
+    }
+}
+
 impl ReviewService {
     pub(crate) async fn start(
+        client: crate::app::host::HostClient,
+        task: Option<orvek_harness::state::TaskId>,
         review_agent: ReviewAgent,
         workspace: &Path,
         assets: ReviewAssets,
@@ -58,14 +84,15 @@ impl ReviewService {
         let preparation_shutdown = CancellationToken::new();
         let _cancel_preparation_on_drop = CancelOnDrop(preparation_shutdown.clone());
         let backend = Arc::new(ReviewBackend {
+            client,
+            task,
             workspace: workspace.to_path_buf(),
             review_agent,
             #[cfg(test)]
             current_version_error: None,
         });
         let prepared = backend.prepare(preparation_shutdown).await?;
-        let repository = prepared.bootstrap.repository.clone();
-        let token = review_token(&repository, SystemTime::now());
+        let token = review_token();
         let server = ReviewServer::start(prepared, backend, token, assets).await?;
         Ok(ReviewHandle { server })
     }
@@ -76,9 +103,18 @@ impl ReviewHandle {
         self.server.url()
     }
 
-    pub(crate) async fn wait(self) -> Result<Option<String>, ReviewError> {
+    pub(crate) async fn wait(self) -> Result<Option<ReviewText>, ReviewError> {
         match self.server.wait().await? {
-            ReviewOutcome::Decision(decision) => Ok(Some(decision.to_markdown())),
+            ReviewOutcome::Decision(decision) => Ok(Some(ReviewText {
+                markdown: decision.to_markdown(),
+                manifest: decision
+                    .manifest
+                    .expect("server records the reviewed manifest"),
+                source_identity: decision
+                    .source_identity
+                    .expect("server records the reviewed source identity"),
+                feedback: None,
+            })),
             ReviewOutcome::Cancelled => Ok(None),
         }
     }
@@ -103,7 +139,7 @@ impl ReviewBackend {
     async fn prepare(&self, shutdown: CancellationToken) -> Result<PreparedReview, ReviewError> {
         for _ in 0..MAX_PREPARATION_ATTEMPTS {
             let context = tokio::select! {
-                result = diff::load(&self.workspace) => result?,
+                result = diff::load(&self.client,&self.workspace,self.task) => result?,
                 () = shutdown.cancelled() => return Err(ReviewError::Cancelled),
             };
             let default_range = context.default_range();
@@ -151,7 +187,7 @@ impl ReviewBackend {
         }
 
         tokio::select! {
-            result = diff::current_version(&self.workspace) => {
+            result = diff::current_version(&self.client,&self.workspace,self.task) => {
                 result.map_err(|error| ScopeLoadError::Failed(error.to_string()))
             }
             () = shutdown.cancelled() => Err(ScopeLoadError::Cancelled),
@@ -207,10 +243,10 @@ impl ReviewBackend {
         let messages = serde_json::to_string(&question.messages)
             .map_err(|error| ScopeLoadError::Failed(error.to_string()))?;
         let prompt = format!(
-            "Delegate this task to a sub-agent so the host agent does not absorb the investigation context. Ask the sub-agent to answer the reviewer's latest question about `{path}:{lines}` on the {side} side of `{label}`. {repository} It must inspect the repository, diff, history, selected lines, and surrounding code needed for an accurate answer without modifying the workspace. The complete conversation is JSON: {messages}. Return the sub-agent's answer as concise Markdown with direct `path:line` citations where useful. Return only the answer to the reviewer, with no preamble about delegation.",
+            "Use the admitted read-only review tools to answer the reviewer's latest question about `{path}:{lines}` on the {side} side of `{label}`. {repository} Inspect the frozen diff, selected lines, and surrounding code needed for an accurate answer. The complete conversation is JSON: {messages}. Return a concise Markdown answer with direct `path:line` citations where useful. Return only the answer to the reviewer.",
             path = question.path,
         );
-        let answer = match (self.review_agent)(prompt, shutdown).await {
+        let answer = match (self.review_agent)(prompt, context.manifest, shutdown).await {
             Ok(answer) => answer,
             Err(ReviewAgentError::Cancelled) => return Err(ScopeLoadError::Cancelled),
             Err(ReviewAgentError::Failed(error)) => return Err(ScopeLoadError::Failed(error)),
@@ -238,9 +274,9 @@ async fn generate_overview(
 ) -> Result<String, ReviewError> {
     let repository = repository_scope(context);
     let prompt = format!(
-        "Delegate this task to a sub-agent so the host agent does not absorb the investigation context. Ask the sub-agent to create a self-contained HTML overview of the features in `{label}` for a human reviewer. {repository} It must use repository tools to examine the diff, history, actual source files, and surrounding code needed to understand the change without modifying the workspace. Scale the depth and presentation to the change: a small change can be restrained and compact, while a large or architectural change warrants a substantial walkthrough. Explain the purpose, user-visible behavior, architecture and data flow, important files, and areas that deserve reviewer attention. Whenever directing the reviewer's attention to code, cite direct `path:line` or `path:start-end` locations. Give the overview a visual identity appropriate to this particular change instead of making it look like rendered Markdown. It may include a `<style>` element, classes, responsive layouts, and inline SVG. Use diagrams or other visualizations when they materially improve understanding, but do not force them into every overview. The iframe document exposes `data-theme=\"light\"`, `data-theme=\"dark\"`, or `data-theme=\"system\"` on its root; define an intentional palette for both light and dark appearances, including a `prefers-color-scheme` fallback for system mode. Return the sub-agent's result as only the HTML fragment, not a full code review or a Markdown fence. Keep it accessible and responsive. Do not include scripts, event handlers, external resources, or raster images.",
+        "Use the admitted read-only review tools to create a self-contained HTML overview of the features in `{label}` for a human reviewer. {repository} Examine the frozen diff, source files, and surrounding code needed to understand the change. Scale the depth and presentation to the change: a small change can be restrained and compact, while a large or architectural change warrants a substantial walkthrough. Explain the purpose, user-visible behavior, architecture and data flow, important files, and areas that deserve reviewer attention. Whenever directing the reviewer's attention to code, cite direct `path:line` or `path:start-end` locations. Give the overview a visual identity appropriate to this particular change instead of making it look like rendered Markdown. It may include a `<style>` element, classes, responsive layouts, and inline SVG. Use diagrams or other visualizations when they materially improve understanding, but do not force them into every overview. The iframe document exposes `data-theme=\"light\"`, `data-theme=\"dark\"`, or `data-theme=\"system\"` on its root; define an intentional palette for both light and dark appearances, including a `prefers-color-scheme` fallback for system mode. Return only the HTML fragment, not a full code review or a Markdown fence. Keep it accessible and responsive. Do not include scripts, event handlers, external resources, or raster images.",
     );
-    let result = match review_agent(prompt, shutdown).await {
+    let result = match review_agent(prompt, context.manifest, shutdown).await {
         Ok(result) => result,
         Err(ReviewAgentError::Cancelled) => return Err(ReviewError::Cancelled),
         Err(ReviewAgentError::Failed(error)) => return Err(ReviewError::Overview(error)),
@@ -258,11 +294,17 @@ async fn generate_overview(
 fn repository_scope(context: &diff::OverviewContext) -> String {
     let repository = context.repository.to_string_lossy();
     match &context.range {
+        diff::OverviewRange::Task { task } => format!(
+            "Inspect only the frozen task {task} review manifest {} through admitted read_review_file calls.",
+            context.manifest
+        ),
         diff::OverviewRange::Commits { base, head } => format!(
-            "Inspect the Git commit range `{base}..{head}` in the repository at `{repository}`."
+            "The frozen review manifest {} covers commit range `{base}..{head}` in `{repository}`. Read its selected sides through admitted read_review_file calls.",
+            context.manifest
         ),
         diff::OverviewRange::WorkingTree { base } => format!(
-            "Inspect the changes from Git commit `{base}` through the working tree, including untracked files, in the repository at `{repository}`."
+            "The frozen review manifest {} covers commit `{base}` through the captured working tree in `{repository}`. Read its selected sides through admitted read_review_file calls; live files may have changed.",
+            context.manifest
         ),
     }
 }
@@ -276,17 +318,8 @@ fn strip_html_fence(value: &str) -> &str {
         .unwrap_or(value)
 }
 
-fn review_token(seed: &str, now: SystemTime) -> String {
-    let timestamp = now
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
-        .to_le_bytes();
-    let mut digest = Sha256::new();
-    digest.update(seed);
-    digest.update(timestamp);
-    digest.update(std::process::id().to_le_bytes());
-    URL_SAFE_NO_PAD.encode(digest.finalize())
+fn review_token() -> crate::app::secret::SecretString {
+    crate::app::secret::SecretString::new(uuid::Uuid::new_v4().simple().to_string())
 }
 
 impl ReviewDecision {
@@ -340,6 +373,8 @@ pub(crate) enum ReviewError {
     Overview(String),
     #[error("failed to validate the review workspace: {0}")]
     WorkspaceValidation(String),
+    #[error("host feedback recording failed: {0}")]
+    Feedback(String),
     #[error("review overview generation was cancelled")]
     Cancelled,
     #[error("the agent returned an empty review overview")]
@@ -393,7 +428,12 @@ mod tests {
             vec!["config", "commit.gpgSign", "false"],
         ] {
             assert!(
-                Command::new("git")
+                Command::new("/usr/bin/git")
+                    .env_clear()
+                    .env("PATH", "/usr/bin:/bin")
+                    .env("HOME", repository.path())
+                    .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                    .env("GIT_CONFIG_NOSYSTEM", "1")
                     .args(arguments)
                     .current_dir(repository.path())
                     .status()
@@ -407,7 +447,12 @@ mod tests {
             vec!["commit", "--quiet", "-m", "initial"],
         ] {
             assert!(
-                Command::new("git")
+                Command::new("/usr/bin/git")
+                    .env_clear()
+                    .env("PATH", "/usr/bin:/bin")
+                    .env("HOME", repository.path())
+                    .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                    .env("GIT_CONFIG_NOSYSTEM", "1")
                     .args(arguments)
                     .current_dir(repository.path())
                     .status()
@@ -416,8 +461,10 @@ mod tests {
             );
         }
         let backend = ReviewBackend {
+            client: super::fixture::client().await,
+            task: None,
             workspace: repository.path().to_owned(),
-            review_agent: Arc::new(|_, _| Box::pin(async { Ok(String::new()) })),
+            review_agent: Arc::new(|_, _, _| Box::pin(async { Ok(String::new()) })),
             current_version_error: Some("git metadata became unavailable".to_owned()),
         };
 
@@ -435,7 +482,7 @@ mod tests {
         let observed_prompt = Arc::new(Mutex::new(String::new()));
         let generator: ReviewAgent = Arc::new({
             let observed_prompt = Arc::clone(&observed_prompt);
-            move |prompt, _shutdown| {
+            move |prompt, _manifest, _shutdown| {
                 let observed_prompt = Arc::clone(&observed_prompt);
                 Box::pin(async move {
                     *observed_prompt.lock().unwrap() = prompt;
@@ -448,6 +495,7 @@ mod tests {
             generator,
             "Full branch",
             &OverviewContext {
+                manifest: orvek_harness::Digest::of(b"fixture-review"),
                 repository: "/workspace/repo".into(),
                 range: OverviewRange::Commits {
                     base: "0123456789abcdef".to_owned(),
@@ -461,11 +509,12 @@ mod tests {
 
         assert_eq!(overview, "<section>Overview</section>");
         let prompt = observed_prompt.lock().unwrap();
-        assert!(prompt.contains("Delegate this task to a sub-agent"));
+        assert!(prompt.contains("Use the admitted read-only review tools"));
+        assert!(!prompt.contains("sub-agent"));
         assert!(prompt.contains("self-contained HTML overview"));
         assert!(prompt.contains("/workspace/repo"));
         assert!(prompt.contains("0123456789abcdef..fedcba9876543210"));
-        assert!(prompt.contains("actual source files"));
+        assert!(prompt.contains("source files"));
         assert!(prompt.contains("`path:line` or `path:start-end`"));
         assert!(prompt.contains("Scale the depth and presentation"));
         assert!(prompt.contains("inline SVG"));
@@ -489,6 +538,8 @@ mod tests {
                 end_line: 14,
                 body: "Handle the error.\nThis can fail.".to_owned(),
             }],
+            manifest: None,
+            source_identity: None,
         };
 
         assert_eq!(

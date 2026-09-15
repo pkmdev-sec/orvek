@@ -3,18 +3,15 @@
 use super::{
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
+    typography::{CHOICE_MARKER, ChoiceStyle},
 };
-use crate::tui::{
-    format::truncate_display,
-    theme::{Theme, ThemeMode},
-};
-use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
+use crate::tui::theme::{Theme, ThemeMode};
+use crossterm::event::{Event, KeyCode, KeyEventKind, MouseEventKind};
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{List, ListItem, ListState},
 };
 
 const KEY_BINDINGS: [(&str, &str); 3] = [("↑↓", "change"), ("enter", "apply"), ("esc", "cancel")];
@@ -31,8 +28,7 @@ pub(super) enum ThemeSelectorEffect {
 
 pub(super) struct ThemeSelector {
     selected: usize,
-    current: ThemeMode,
-    targets: [Rect; 3],
+    navigation_area: Rect,
 }
 
 impl ThemeSelector {
@@ -43,9 +39,20 @@ impl ThemeSelector {
             .expect("all theme modes are selectable");
         Self {
             selected,
-            current: initial,
-            targets: [Rect::default(); 3],
+            navigation_area: Rect::default(),
         }
+    }
+
+    fn select_bounded(&mut self, delta: isize) -> ComponentUpdate<ThemeSelectorEffect> {
+        let next = self
+            .selected
+            .saturating_add_signed(delta)
+            .min(ThemeMode::ALL.len().saturating_sub(1));
+        if next == self.selected {
+            return ComponentUpdate::none();
+        }
+        self.selected = next;
+        ComponentUpdate::render(RenderRequest::Immediate)
     }
 
     fn update_key(
@@ -56,6 +63,16 @@ impl ThemeSelector {
             return ComponentUpdate::none();
         }
         match key.code {
+            KeyCode::PageUp => self.select_bounded(
+                -(isize::try_from(self.navigation_area.height)
+                    .unwrap_or(1)
+                    .max(1)),
+            ),
+            KeyCode::PageDown => self.select_bounded(
+                isize::try_from(self.navigation_area.height)
+                    .unwrap_or(1)
+                    .max(1),
+            ),
             KeyCode::Up | KeyCode::Left => {
                 self.selected = self.selected.saturating_sub(1);
                 ComponentUpdate::render(RenderRequest::Immediate)
@@ -85,96 +102,52 @@ impl Component for ThemeSelector {
         match event {
             ThemeSelectorEvent::Terminal(Event::Key(key)) => self.update_key(key),
             ThemeSelectorEvent::Terminal(Event::Mouse(mouse))
-                if mouse.kind == MouseEventKind::Down(MouseButton::Left) =>
+                if self
+                    .navigation_area
+                    .contains(Position::new(mouse.column, mouse.row)) =>
             {
-                let Some(index) = self
-                    .targets
-                    .iter()
-                    .position(|target| target.contains(Position::new(mouse.column, mouse.row)))
-                else {
-                    return ComponentUpdate::none();
-                };
-                self.selected = index;
-                ComponentUpdate::render(RenderRequest::Immediate)
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.select_bounded(-1),
+                    MouseEventKind::ScrollDown => self.select_bounded(1),
+                    _ => ComponentUpdate::none(),
+                }
             }
             ThemeSelectorEvent::Terminal(_) => ComponentUpdate::none(),
         }
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        self.targets = [Rect::default(); 3];
-        let body = Floating::new("Theme", 48, 11, &KEY_BINDINGS)
-            .render(frame, area, theme)
-            .body;
-        if body.is_empty() {
+        self.navigation_area = Rect::default();
+        if area.is_empty() {
             return;
         }
-        let row = |offset| Rect::new(body.x, body.y + offset, body.width, 1).intersection(body);
-        frame.render_widget(
-            Paragraph::new(format!(
-                "  Selected: {}",
-                ThemeMode::ALL[self.selected].as_str()
-            ))
-            .style(Style::default().fg(theme.accent())),
-            row(0),
-        );
-        frame.render_widget(
-            Paragraph::new(format!("  Current: {}", self.current.as_str()))
-                .style(Style::default().fg(theme.muted())),
-            row(1),
-        );
-        let capacity = body.height.saturating_sub(3).min(3);
-        let offset = self
-            .selected
-            .saturating_sub(usize::from(capacity).saturating_sub(1));
-        for visible in 0..capacity {
-            let index = offset + usize::from(visible);
-            if index >= ThemeMode::ALL.len() {
-                break;
-            }
-            let mode = ThemeMode::ALL[index];
-            let selected = index == self.selected;
-            let detail = match mode {
-                ThemeMode::Auto => "Follow the operating system",
-                ThemeMode::Light => "Use the light palette",
-                ThemeMode::Dark => "Use the dark palette",
-            };
-            let area = row(3 + visible);
-            self.targets[index] = area;
-            let label = format!("{}{:<6}", if selected { "› " } else { "  " }, mode.as_str());
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(
-                        label,
-                        Style::default()
-                            .fg(if selected {
-                                theme.accent()
-                            } else {
-                                theme.text()
-                            })
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        truncate_display(detail, usize::from(body.width).saturating_sub(8)),
-                        Style::default().fg(theme.muted()),
-                    ),
-                ])),
-                area,
-            );
-        }
-        if body.height >= 8 {
-            let mut sample = theme.clone();
-            sample.set_mode(ThemeMode::ALL[self.selected]);
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled("  Palette preview: ", Style::default().fg(theme.muted())),
-                    Span::styled("Text ", Style::default().fg(sample.text())),
-                    Span::styled("Accent ", Style::default().fg(sample.accent())),
-                    Span::styled("Muted", Style::default().fg(sample.muted())),
-                ])),
-                row(7),
-            );
-        }
+        let layout = Floating::new("Theme", 38, 7, &KEY_BINDINGS).render(frame, area, theme);
+        self.navigation_area = layout.body;
+        let items = ThemeMode::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(position, mode)| {
+                let typography = ChoiceStyle::new(position == self.selected, true);
+                let detail = match mode {
+                    ThemeMode::Auto => "Follow the operating system",
+                    ThemeMode::Light => "Always use the light palette",
+                    ThemeMode::Dark => "Always use the dark palette",
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("{:<6}", mode.as_str()), typography.primary(theme)),
+                    Span::styled(detail, typography.detail(theme)),
+                ]))
+            });
+        let list = List::new(items)
+            .highlight_symbol(CHOICE_MARKER)
+            .highlight_style(ChoiceStyle::new(true, true).highlight(theme));
+        let mut state = ListState::default().with_selected(Some(self.selected));
+        frame.render_stateful_widget(list, layout.body, &mut state);
+        let cursor_y = layout.body.y + u16::try_from(self.selected).unwrap_or(u16::MAX);
+        frame.set_cursor_position(Position::new(
+            layout.body.x,
+            cursor_y.min(layout.body.bottom().saturating_sub(1)),
+        ));
     }
 }
 
@@ -208,39 +181,99 @@ mod tests {
         );
     }
     #[test]
-    fn mouse_changes_only_the_pending_theme_and_tiny_layouts_are_safe() {
-        use crate::tui::theme::Theme;
-        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-        use ratatui::{Terminal, backend::TestBackend};
-        let mut selector = ThemeSelector::new(ThemeMode::Auto);
-        let mut terminal = Terminal::new(TestBackend::new(48, 11)).unwrap();
+    fn rendered_picker_bounds_wheel_and_page_navigation() {
+        let mut picker = ThemeSelector::new(ThemeMode::Auto);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 12)).unwrap();
         terminal
-            .draw(|frame| selector.render(frame, frame.area(), &Theme::default()))
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
             .unwrap();
-        let target = selector.targets[2];
-        let update = selector.update(ThemeSelectorEvent::Terminal(Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: target.x,
-            row: target.y,
-            modifiers: KeyModifiers::NONE,
-        })));
-        assert!(update.effects.is_empty());
-        assert_eq!(selector.current, ThemeMode::Auto);
+        let body = picker.navigation_area;
+        assert!(!body.is_empty());
+        let mouse = |kind, column, row| {
+            ThemeSelectorEvent::Terminal(Event::Mouse(crossterm::event::MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }))
+        };
+        picker.update(mouse(crossterm::event::MouseEventKind::ScrollDown, 0, 0));
+        assert_eq!(picker.selected, 0);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 1);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollUp,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 0);
+        picker.update(ThemeSelectorEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::PageDown,
+            KeyModifiers::NONE,
+        ))));
         assert_eq!(
-            selector.update(key(KeyCode::Enter)).effects,
-            [ThemeSelectorEffect::Apply(ThemeMode::Dark)]
+            picker.selected,
+            crate::tui::theme::ThemeMode::ALL
+                .len()
+                .saturating_sub(1)
+                .min(usize::from(body.height).max(1))
         );
-        for width in 0..20 {
-            for height in 0..12 {
-                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-                terminal
-                    .draw(|frame| selector.render(frame, frame.area(), &Theme::default()))
-                    .unwrap();
-            }
+        for _ in 0..40 {
+            picker.update(ThemeSelectorEvent::Terminal(Event::Key(KeyEvent::new(
+                KeyCode::PageDown,
+                KeyModifiers::NONE,
+            ))));
         }
-        assert_eq!(
-            selector.update(key(KeyCode::Esc)).effects,
-            [ThemeSelectorEffect::Dismiss]
-        );
+        let last = crate::tui::theme::ThemeMode::ALL.len().saturating_sub(1);
+        assert_eq!(picker.selected, last);
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, last);
+        terminal
+            .draw(|frame| picker.render(frame, frame.area(), &crate::tui::theme::Theme::default()))
+            .unwrap();
+        assert_eq!(picker.selected, last);
+        let buffer = terminal.backend().buffer();
+        assert!((body.y..body.bottom()).any(|row| {
+            let text = (body.x..body.right())
+                .map(|column| buffer[(column, row)].symbol())
+                .collect::<String>();
+            text.contains("› ") && text.contains("dark")
+        }));
+        for _ in 0..40 {
+            picker.update(ThemeSelectorEvent::Terminal(Event::Key(KeyEvent::new(
+                KeyCode::PageUp,
+                KeyModifiers::NONE,
+            ))));
+        }
+        assert_eq!(picker.selected, 0);
+        terminal
+            .draw(|frame| {
+                picker.render(
+                    frame,
+                    ratatui::layout::Rect::default(),
+                    &crate::tui::theme::Theme::default(),
+                )
+            })
+            .unwrap();
+        picker.update(mouse(
+            crossterm::event::MouseEventKind::ScrollDown,
+            body.x,
+            body.y,
+        ));
+        assert_eq!(picker.selected, 0);
     }
 }

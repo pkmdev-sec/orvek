@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
 use orvek_harness::{
     Digest,
     workspace::{Entry, Snapshot, SnapshotPolicy, WorkspaceError},
 };
+use std::collections::BTreeMap;
 fn file(text: &str, mode: u32) -> Entry {
     Entry::File {
         content: Digest::of(text.as_bytes()),

@@ -27,6 +27,7 @@ impl Default for SnapshotPolicy {
                 ".orvek".into(),
                 "target".into(),
                 "node_modules".into(),
+                ".venv".into(),
                 ".env".into(),
             ],
             max_files: 100_000,
@@ -359,12 +360,11 @@ impl Scanner<'_> {
             let entry = entry.map_err(error)?;
             let name = entry.file_name();
             if name.to_bytes() != b"." && name.to_bytes() != b".." {
-                if depth == 0
-                    && self
-                        .policy
-                        .excluded_roots
-                        .iter()
-                        .any(|excluded| excluded.as_bytes() == name.to_bytes())
+                if self
+                    .policy
+                    .excluded_roots
+                    .iter()
+                    .any(|excluded| excluded.as_bytes() == name.to_bytes())
                 {
                     continue;
                 }
@@ -382,9 +382,6 @@ impl Scanner<'_> {
                 .to_str()
                 .ok_or_else(|| WorkspaceError::UnsafePath(path.clone()))?
                 .to_owned();
-            if depth == 0 && self.policy.excluded_roots.contains(&key) {
-                continue;
-            }
             if self.entries.len() >= self.policy.max_files {
                 return Err(WorkspaceError::Limit);
             }

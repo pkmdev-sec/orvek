@@ -1,4 +1,6 @@
-"""Build task-side installation commands for the Orvek Harbor adapter."""
+"""Build and locate installation artifacts for the Orvek Harbor adapter."""
+
+from pathlib import Path
 
 
 def cli_tools_install_command(*, install_node: bool) -> str:
@@ -28,3 +30,26 @@ def cli_tools_install_command(*, install_node: bool) -> str:
         "fi; "
         f"{command_checks}"
     )
+
+
+def executor_helper_path(binary_path: Path, image_architecture: str) -> Path:
+    """Return the local executor helper matching Docker's image architecture."""
+    suffixes = {
+        "amd64": "x86_64",
+        "x86_64": "x86_64",
+        "arm64": "aarch64",
+        "aarch64": "aarch64",
+    }
+    try:
+        suffix = suffixes[image_architecture]
+    except KeyError as error:
+        raise RuntimeError(
+            f"unsupported Harbor task architecture: {image_architecture}"
+        ) from error
+    helper = binary_path.with_name(f"orvek-executor-linux-{suffix}")
+    if not helper.is_file():
+        raise RuntimeError(
+            f"missing architecture-matched executor helper at {helper}; "
+            "run `just build-harbor-agent`"
+        )
+    return helper.resolve()

@@ -3,13 +3,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, fmt, str::FromStr};
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(
+    Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum Model {
     #[default]
     Sol,
     Terra,
     Luna,
+    #[serde(alias = "glm-5.3")]
+    Glm,
+    #[serde(alias = "gpt-5.3-codex-spark")]
+    Spark,
 }
 
 impl Model {
@@ -18,6 +24,8 @@ impl Model {
             Self::Sol => "gpt-5.6-sol",
             Self::Terra => "gpt-5.6-terra",
             Self::Luna => "gpt-5.6-luna",
+            Self::Glm => "glm-5.3",
+            Self::Spark => "gpt-5.3-codex-spark",
         }
     }
 }
@@ -35,6 +43,8 @@ impl FromStr for Model {
             "sol" | "gpt-5.6-sol" => Ok(Self::Sol),
             "terra" | "gpt-5.6-terra" => Ok(Self::Terra),
             "luna" | "gpt-5.6-luna" => Ok(Self::Luna),
+            "glm" | "glm-5.3" => Ok(Self::Glm),
+            "spark" | "gpt-5.3-codex-spark" => Ok(Self::Spark),
             _ => Err(FailureKind::InvalidRequest),
         }
     }
@@ -230,8 +240,8 @@ fn validate_input(item: &Value) -> Result<(), FailureKind> {
                 && item.get("output").is_some_and(Value::is_string)
         }
         "reasoning" => {
-            item.get("encrypted_content").is_some_and(Value::is_string)
-                && item.get("summary").is_some_and(Value::is_array)
+            item.get("summary").is_some_and(Value::is_array)
+                && item.get("encrypted_content").is_none_or(Value::is_string)
         }
         _ => false,
     };
@@ -420,12 +430,14 @@ impl Decoder {
                     .ok_or(FailureKind::MalformedResponse)?;
                 let id = string(response, "id")?;
                 self.bind_id(id)?;
-                let expected = kind
-                    .strip_prefix("response.")
-                    .ok_or(FailureKind::MalformedResponse)?;
-                if string(response, "status")? != expected {
-                    return Err(FailureKind::MalformedResponse);
-                }
+                // Some OpenAI-compatible bridges always name the terminal
+                // event `response.completed` and carry the real outcome in
+                // `status`. Trust the status whenever it names a terminal
+                // outcome instead of requiring it to match the event name.
+                let expected = match string(response, "status")? {
+                    status @ ("completed" | "failed" | "incomplete") => status,
+                    _ => return Err(FailureKind::MalformedResponse),
+                };
                 let history_items = response
                     .get("output")
                     .and_then(Value::as_array)
@@ -442,7 +454,7 @@ impl Decoder {
                 for (index, completed_item) in &self.items {
                     let index =
                         usize::try_from(*index).map_err(|_| FailureKind::MalformedResponse)?;
-                    if history_items.get(index) != Some(completed_item) {
+                    if !terminal_item_confirms(completed_item, history_items.get(index)) {
                         return Err(FailureKind::MalformedResponse);
                     }
                 }
@@ -490,6 +502,36 @@ impl Decoder {
         self.response_id = Some(id.into());
         Ok(())
     }
+}
+
+fn terminal_item_confirms(completed: &Value, terminal: Option<&Value>) -> bool {
+    let Some(terminal) = terminal else {
+        return false;
+    };
+    if completed == terminal {
+        return true;
+    }
+    if completed.get("type").and_then(Value::as_str) != Some("reasoning")
+        || terminal.get("type").and_then(Value::as_str) != Some("reasoning")
+    {
+        return false;
+    }
+    let (Some(completed), Some(terminal)) = (completed.as_object(), terminal.as_object()) else {
+        return false;
+    };
+    completed.len() == terminal.len()
+        && completed.iter().all(|(key, value)| {
+            let Some(terminal_value) = terminal.get(key) else {
+                return false;
+            };
+            if key == "encrypted_content" {
+                return value.as_str().is_some_and(|value| !value.is_empty())
+                    && terminal_value
+                        .as_str()
+                        .is_some_and(|value| !value.is_empty());
+            }
+            value == terminal_value
+        })
 }
 
 fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str, FailureKind> {
@@ -545,5 +587,218 @@ fn normalize(item: &Value) -> Result<OutputItem, FailureKind> {
             }))
         }
         _ => Ok(OutputItem::Opaque { item: item.clone() }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Decoder, Model, terminal_item_confirms};
+    use serde_json::json;
+
+    #[test]
+    fn glm_model_round_trips_through_its_wire_name() {
+        use std::str::FromStr;
+
+        for name in ["glm", "glm-5.3"] {
+            let model = Model::from_str(name).unwrap();
+            assert_eq!(model, Model::Glm);
+            assert_eq!(model.as_str(), "glm-5.3");
+        }
+        let parsed: Result<Model, _> = "glm-5.3".parse();
+        assert_eq!(parsed.unwrap().as_str(), "glm-5.3");
+        assert!("glm-4".parse::<Model>().is_err());
+    }
+
+    #[test]
+    fn bridge_shaped_reasoning_items_are_valid_input() {
+        use serde_json::json;
+
+        let bridge = json!({
+            "type": "reasoning",
+            "id": "rs-1",
+            "summary": [{"type": "summary_text", "text": "thinking"}],
+            "content": []
+        });
+        assert!(super::validate_input(&bridge).is_ok());
+
+        let encrypted = json!({
+            "type": "reasoning",
+            "id": "rs-2",
+            "encrypted_content": "ciphertext",
+            "summary": [],
+            "content": []
+        });
+        assert!(super::validate_input(&encrypted).is_ok());
+
+        let malformed = json!({"type": "reasoning", "id": "rs-3"});
+        assert!(super::validate_input(&malformed).is_err());
+    }
+
+    #[test]
+    fn terminal_reencrypted_reasoning_confirms_the_completed_item() {
+        let mut decoder = Decoder::default();
+        let completed_reasoning = json!({
+            "type": "reasoning",
+            "id": "reasoning-1",
+            "encrypted_content": "first-ciphertext",
+            "summary": [{"type": "summary_text", "text": "same summary"}],
+            "content": [],
+        });
+        decoder
+            .event(
+                &serde_json::to_vec(&json!({
+                    "type": "response.output_item.done",
+                    "output_index": 0,
+                    "item": completed_reasoning,
+                }))
+                .unwrap(),
+                &mut |_| {},
+            )
+            .unwrap();
+
+        let terminal = json!({
+            "type": "response.completed",
+            "response": {
+                "id": "response-1",
+                "status": "completed",
+                "error": null,
+                "incomplete_details": null,
+                "output": [{
+                    "type": "reasoning",
+                    "id": "reasoning-1",
+                    "encrypted_content": "terminal-ciphertext",
+                    "summary": [{"type": "summary_text", "text": "same summary"}],
+                    "content": [],
+                }],
+                "usage": {"input_tokens": 5, "output_tokens": 1, "total_tokens": 6},
+            },
+        });
+
+        assert!(
+            decoder
+                .event(&serde_json::to_vec(&terminal).unwrap(), &mut |_| {})
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn bridge_reasoning_item_keeps_its_output_index_in_the_terminal() {
+        let mut decoder = Decoder::default();
+        let reasoning = json!({
+            "id": "rs-1", "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "thinking"}], "content": [],
+        });
+        let message = json!({
+            "id": "msg-1", "type": "message", "role": "assistant", "status": "completed",
+            "content": [{"type": "output_text", "text": "{\"kind\":\"information\"}"}],
+        });
+        decoder
+            .event(
+                &serde_json::to_vec(&json!({
+                    "type": "response.output_item.done", "output_index": 0, "item": reasoning,
+                }))
+                .unwrap(),
+                &mut |_| {},
+            )
+            .unwrap();
+        decoder
+            .event(
+                &serde_json::to_vec(&json!({
+                    "type": "response.output_item.done", "output_index": 1, "item": message,
+                }))
+                .unwrap(),
+                &mut |_| {},
+            )
+            .unwrap();
+
+        let terminal = json!({
+            "type": "response.completed",
+            "response": {
+                "id": "response-1", "status": "completed",
+                "output": [
+                    {"id": "rs-1", "type": "reasoning",
+                     "summary": [{"type": "summary_text", "text": "thinking"}], "content": []},
+                    {"id": "msg-1", "type": "message", "role": "assistant", "status": "completed",
+                     "content": [{"type": "output_text", "text": "{\"kind\":\"information\"}"}]},
+                ],
+                "usage": {"input_tokens": 41, "output_tokens": 200, "total_tokens": 241},
+            },
+        });
+        assert!(
+            decoder
+                .event(&serde_json::to_vec(&terminal).unwrap(), &mut |_| {})
+                .unwrap()
+        );
+        let provider = decoder.terminal.expect("terminal response");
+        assert_eq!(provider.status, crate::inference::ResponseStatus::Completed);
+    }
+
+    #[test]
+    fn bridge_terminal_event_name_yields_to_the_status() {
+        let mut decoder = Decoder::default();
+        let done = json!({
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": {
+                "id": "msg-1",
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": "{\"kind\":\"infor"}],
+            },
+        });
+        decoder
+            .event(&serde_json::to_vec(&done).unwrap(), &mut |_| {})
+            .unwrap();
+
+        // The z.ai bridge names every terminal event `response.completed`
+        // and reports a truncation through `status` and `incomplete_details`.
+        let terminal = json!({
+            "type": "response.completed",
+            "response": {
+                "id": "response-1",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [{
+                    "id": "msg-1",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "{\"kind\":\"infor"}],
+                }],
+                "usage": {"input_tokens": 41, "output_tokens": 200, "total_tokens": 241},
+            },
+        });
+
+        assert!(
+            decoder
+                .event(&serde_json::to_vec(&terminal).unwrap(), &mut |_| {})
+                .unwrap()
+        );
+        let provider = decoder.terminal.expect("terminal response");
+        assert_eq!(
+            provider.status,
+            crate::inference::ResponseStatus::Incomplete
+        );
+    }
+
+    #[test]
+    fn terminal_reencrypted_reasoning_rejects_semantic_changes() {
+        let completed = json!({
+            "type": "reasoning",
+            "id": "reasoning-1",
+            "encrypted_content": "first-ciphertext",
+            "summary": [{"type": "summary_text", "text": "original summary"}],
+            "content": [],
+        });
+        let changed = json!({
+            "type": "reasoning",
+            "id": "reasoning-1",
+            "encrypted_content": "terminal-ciphertext",
+            "summary": [{"type": "summary_text", "text": "changed summary"}],
+            "content": [],
+        });
+
+        assert!(!terminal_item_confirms(&completed, Some(&changed)));
     }
 }

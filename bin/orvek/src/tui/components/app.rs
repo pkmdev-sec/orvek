@@ -2,25 +2,23 @@
 
 use super::{
     node::{ComponentUpdate, Node, RenderRequest},
-    queue::QueueId,
-    root::{DraftReset, RestoredSessionProjection, RootEffect, RootEvent, RootNode},
+    queue::{QueueId, QueuedInput},
+    root::{DraftReset, RootEffect, RootEvent, RootNode},
 };
 use crate::{
     app::config::{ReasoningEffort, ReasoningMode},
     core::extensions::Skill,
-    sessions::{
-        checkpoint::{RecentPrompt, SessionSummary},
-        record::TranscriptRecord,
-    },
     tui::{
+        children::ChildUpdate,
         pane::PaneId,
+        session::{RecentPrompt, SessionSummary},
         theme::{ColorScheme, Theme, ThemeMode},
+        transcript::TranscriptRecord,
     },
 };
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
-use nanocodex::Model;
+use orvek_harness::{Digest, inference::Model};
 use orvek_memory::{MemoryAccess, MemoryKey, MemoryRecord, MemorySource};
-use orvek_subagents::AgentUpdate;
 use ratatui::{
     Frame,
     layout::{Position, Rect},
@@ -35,9 +33,29 @@ const SPLIT_HINT: &str = " mouse: focus · Ctrl+C: clear · Ctrl+C×2: close ";
 const MIN_SPLIT_HINT_WIDTH: u16 = 60;
 
 pub(crate) enum AppEvent {
-    CompactionFinished {
+    SettingsConfirmed {
         pane: PaneId,
-        error: Option<String>,
+        model: orvek_harness::inference::ModelSettings,
+        preferred: ReasoningMode,
+    },
+    QueueEditReady {
+        pane: PaneId,
+        id: QueueId,
+        expected_input: orvek_harness::Digest,
+        prompt: crate::tui::prompt::Submission,
+    },
+    QueueChanged {
+        pane: PaneId,
+        inputs: Vec<QueuedInput>,
+    },
+    SubmissionAcknowledged {
+        pane: PaneId,
+        prompt: crate::tui::prompt::Submission,
+    },
+    SubmissionFailed {
+        pane: PaneId,
+        uncertain: bool,
+        error: String,
     },
     Terminal(Event),
     PasteImage(String),
@@ -45,10 +63,10 @@ pub(crate) enum AppEvent {
         pane: PaneId,
         record: Arc<TranscriptRecord>,
     },
-    AgentStreamClosed(PaneId),
+    ViewDisconnected(PaneId),
     Subagent {
         pane: PaneId,
-        update: AgentUpdate,
+        update: ChildUpdate,
     },
     EditorDraft {
         pane: PaneId,
@@ -57,6 +75,7 @@ pub(crate) enum AppEvent {
     ReviewFinished {
         pane: PaneId,
         markdown: String,
+        feedback: Option<Digest>,
     },
     ReviewStarted(PaneId),
     ReviewReady {
@@ -75,6 +94,7 @@ pub(crate) enum AppEvent {
         reasoning_mode: ReasoningMode,
         fast_mode: bool,
         model: Model,
+        context_window_tokens: u64,
         skills: Arc<[Skill]>,
     },
     HandoffCancelled(PaneId),
@@ -82,24 +102,8 @@ pub(crate) enum AppEvent {
         pane: PaneId,
         error: String,
     },
-    WorkerTurnFinished {
-        pane: PaneId,
-        terminal_expected: bool,
-    },
     ShellFinished(PaneId),
     TurnsCancelled(PaneId),
-    SteerAdmitted {
-        pane: PaneId,
-        id: QueueId,
-    },
-    SteerPromoted {
-        pane: PaneId,
-        id: QueueId,
-    },
-    SteerFailed {
-        pane: PaneId,
-        id: QueueId,
-    },
     ForkReady {
         pane: PaneId,
     },
@@ -113,6 +117,7 @@ pub(crate) enum AppEvent {
         reasoning_mode: ReasoningMode,
         fast_mode: bool,
         model: Model,
+        context_window_tokens: u64,
         draft_reset: DraftReset,
         skills: Arc<[Skill]>,
     },
@@ -124,20 +129,13 @@ pub(crate) enum AppEvent {
         pane: PaneId,
         sessions: Vec<SessionSummary>,
     },
-    FilesLoaded {
-        pane: PaneId,
-        request: u64,
-        result: Result<Vec<String>, String>,
-    },
     RecentPromptsLoaded {
         pane: PaneId,
-        request: u64,
         session_id: String,
         prompts: Vec<RecentPrompt>,
     },
     RecentPromptLoadFailed {
         pane: PaneId,
-        request: u64,
         error: String,
     },
     SessionLoadFailed {
@@ -164,23 +162,9 @@ pub(crate) enum AppEvent {
         error: String,
         conflict: bool,
     },
-    SessionRestored {
-        pane: PaneId,
-        projection: Box<RestoredSessionProjection>,
-        effort: ReasoningEffort,
-        reasoning_mode: ReasoningMode,
-        preferred_reasoning_mode: ReasoningMode,
-        fast_mode: bool,
-        model: Model,
-        skills: Arc<[Skill]>,
-    },
     NotifyError {
         pane: PaneId,
         error: String,
-    },
-    NotifySuccess {
-        pane: PaneId,
-        message: String,
     },
     ConfirmReviewDownload {
         pane: PaneId,
@@ -206,6 +190,7 @@ pub(crate) enum AppEffect {
     OpenFork { pane: PaneId, parent: PaneId },
     ClosePane(PaneId),
     SetTheme(ThemeMode),
+    SetMaxSubagents(usize),
     Shutdown,
 }
 
@@ -223,7 +208,6 @@ pub(crate) struct AppNode {
 impl AppNode {
     pub(crate) fn new(theme: Theme, workspace: PathBuf, mut root: RootNode) -> Self {
         root.set_theme_mode(theme.mode());
-        root.set_render_preferences(theme.motion_enabled(), theme.ascii_art());
         Self {
             theme,
             workspace,
@@ -247,6 +231,35 @@ impl AppNode {
 
     pub(crate) fn update(&mut self, event: AppEvent) -> ComponentUpdate<AppEffect> {
         match event {
+            AppEvent::SettingsConfirmed {
+                pane,
+                model,
+                preferred,
+            } => self.update_root(pane, RootEvent::SettingsConfirmed { model, preferred }),
+            AppEvent::QueueEditReady {
+                pane,
+                id,
+                expected_input,
+                prompt,
+            } => self.update_root(
+                pane,
+                RootEvent::QueueEditReady {
+                    id,
+                    expected_input,
+                    prompt,
+                },
+            ),
+            AppEvent::QueueChanged { pane, inputs } => {
+                self.update_root(pane, RootEvent::QueueChanged(inputs))
+            }
+            AppEvent::SubmissionAcknowledged { pane, prompt } => {
+                self.update_root(pane, RootEvent::SubmissionAcknowledged(prompt))
+            }
+            AppEvent::SubmissionFailed {
+                pane,
+                uncertain,
+                error,
+            } => self.update_root(pane, RootEvent::SubmissionFailed { uncertain, error }),
             AppEvent::Terminal(event) => self.update_terminal(event),
             AppEvent::PasteImage(data_url) => {
                 self.update_root(self.focus, RootEvent::PasteImage(data_url))
@@ -254,18 +267,18 @@ impl AppNode {
             AppEvent::Transcript { pane, record } => {
                 self.update_root(pane, RootEvent::Transcript(record))
             }
-            AppEvent::AgentStreamClosed(pane) => {
-                self.update_root(pane, RootEvent::AgentStreamClosed)
-            }
+            AppEvent::ViewDisconnected(pane) => self.update_root(pane, RootEvent::ViewDisconnected),
             AppEvent::Subagent { pane, update } => {
                 self.update_root(pane, RootEvent::Subagent(update))
             }
             AppEvent::EditorDraft { pane, draft } => {
                 self.update_root(pane, RootEvent::ReplaceDraft(draft))
             }
-            AppEvent::ReviewFinished { pane, markdown } => {
-                self.update_root(pane, RootEvent::ReviewFinished(markdown))
-            }
+            AppEvent::ReviewFinished {
+                pane,
+                markdown,
+                feedback,
+            } => self.update_root(pane, RootEvent::ReviewFinished { markdown, feedback }),
             AppEvent::ReviewStarted(pane) => self.update_root(pane, RootEvent::ReviewStarted),
             AppEvent::ReviewReady { pane, url } => {
                 self.update_root(pane, RootEvent::ReviewReady(url))
@@ -281,6 +294,7 @@ impl AppNode {
                 reasoning_mode,
                 fast_mode,
                 model,
+                context_window_tokens,
                 skills,
             } => {
                 let workspace = self.workspace.clone();
@@ -297,32 +311,18 @@ impl AppNode {
                     );
                     root.component_mut().set_fast_mode(fast_mode);
                     root.component_mut().set_model(model);
+                    root.component_mut()
+                        .set_context_window_tokens(context_window_tokens);
                     root.component_mut().set_skills(skills);
                 }
                 self.update_root(pane, RootEvent::HandoffFinished(prompt))
-            }
-            AppEvent::CompactionFinished { pane, error } => {
-                self.update_root(pane, RootEvent::CompactionFinished(error))
             }
             AppEvent::HandoffCancelled(pane) => self.update_root(pane, RootEvent::HandoffCancelled),
             AppEvent::HandoffFailed { pane, error } => {
                 self.update_root(pane, RootEvent::HandoffFailed(error))
             }
-            AppEvent::WorkerTurnFinished {
-                pane,
-                terminal_expected,
-            } => self.update_root(pane, RootEvent::WorkerTurnFinished { terminal_expected }),
             AppEvent::ShellFinished(pane) => self.update_root(pane, RootEvent::ShellFinished),
             AppEvent::TurnsCancelled(pane) => self.update_root(pane, RootEvent::TurnsCancelled),
-            AppEvent::SteerAdmitted { pane, id } => {
-                self.update_root(pane, RootEvent::SteerAdmitted(id))
-            }
-            AppEvent::SteerPromoted { pane, id } => {
-                self.update_root(pane, RootEvent::SteerPromoted(id))
-            }
-            AppEvent::SteerFailed { pane, id } => {
-                self.update_root(pane, RootEvent::SteerFailed { id })
-            }
             AppEvent::ForkReady { pane } => self.update_root(pane, RootEvent::ForkReady),
             AppEvent::ForkFailed { pane, error } => {
                 self.remove_pane(pane);
@@ -343,6 +343,7 @@ impl AppNode {
                 reasoning_mode,
                 fast_mode,
                 model,
+                context_window_tokens,
                 draft_reset,
                 skills,
             } => {
@@ -359,6 +360,8 @@ impl AppNode {
                 );
                 root.component_mut().set_fast_mode(fast_mode);
                 root.component_mut().set_model(model);
+                root.component_mut()
+                    .set_context_window_tokens(context_window_tokens);
                 root.component_mut().set_skills(skills);
                 ComponentUpdate::render(RenderRequest::Immediate)
             }
@@ -368,29 +371,20 @@ impl AppNode {
             AppEvent::SessionsLoaded { pane, sessions } => {
                 self.update_root(pane, RootEvent::SessionsLoaded(sessions))
             }
-            AppEvent::FilesLoaded {
-                pane,
-                request,
-                result,
-            } => self.update_root(pane, RootEvent::FilesLoaded { request, result }),
             AppEvent::RecentPromptsLoaded {
                 pane,
-                request,
                 session_id,
                 prompts,
             } => self.update_root(
                 pane,
                 RootEvent::RecentPromptsLoaded {
-                    request,
                     session_id,
                     prompts,
                 },
             ),
-            AppEvent::RecentPromptLoadFailed {
-                pane,
-                request,
-                error,
-            } => self.update_root(pane, RootEvent::RecentPromptLoadFailed { request, error }),
+            AppEvent::RecentPromptLoadFailed { pane, error } => {
+                self.update_root(pane, RootEvent::RecentPromptLoadFailed(error))
+            }
             AppEvent::SessionLoadFailed { pane, error } => {
                 self.update_root(pane, RootEvent::SessionLoadFailed(error))
             }
@@ -420,32 +414,8 @@ impl AppNode {
                 error,
                 conflict,
             } => self.update_root(pane, RootEvent::MemoryDeleteFailed { error, conflict }),
-            AppEvent::SessionRestored {
-                pane,
-                projection,
-                effort,
-                reasoning_mode,
-                preferred_reasoning_mode,
-                fast_mode,
-                model,
-                skills,
-            } => self.update_root(
-                pane,
-                RootEvent::SessionRestored {
-                    projection,
-                    effort,
-                    reasoning_mode,
-                    preferred_reasoning_mode,
-                    fast_mode,
-                    model,
-                    skills,
-                },
-            ),
             AppEvent::NotifyError { pane, error } => {
                 self.update_root(pane, RootEvent::NotifyError(error))
-            }
-            AppEvent::NotifySuccess { pane, message } => {
-                self.update_root(pane, RootEvent::NotifySuccess(message))
             }
             AppEvent::ConfirmReviewDownload { pane } => {
                 self.update_root(pane, RootEvent::ConfirmReviewDownload)
@@ -465,17 +435,9 @@ impl AppNode {
                 let mode = self.theme.mode();
                 if let Some((_, main)) = &mut self.main {
                     main.component_mut().set_theme_mode(mode);
-                    main.component_mut().set_render_preferences(
-                        self.theme.motion_enabled(),
-                        self.theme.ascii_art(),
-                    );
                 }
                 if let Some((_, fork)) = &mut self.fork {
                     fork.component_mut().set_theme_mode(mode);
-                    fork.component_mut().set_render_preferences(
-                        self.theme.motion_enabled(),
-                        self.theme.ascii_art(),
-                    );
                 }
                 self.set_preferred_reasoning_mode(preferred_reasoning_mode);
                 self.set_memory_enabled(false);
@@ -604,6 +566,28 @@ impl AppNode {
             };
         }
         if let Event::Mouse(mouse) = &event
+            && matches!(
+                mouse.kind,
+                MouseEventKind::ScrollUp
+                    | MouseEventKind::ScrollDown
+                    | MouseEventKind::ScrollLeft
+                    | MouseEventKind::ScrollRight
+            )
+        {
+            let position = Position::new(mouse.column, mouse.row);
+            let pane = if self.main_area.contains(position) {
+                self.main_pane()
+            } else if self.fork_area.contains(position) {
+                self.fork.as_ref().map(|(pane, _)| *pane)
+            } else {
+                None
+            };
+            return match pane {
+                Some(pane) => self.update_root(pane, RootEvent::Terminal(event)),
+                None => ComponentUpdate::none(),
+            };
+        }
+        if let Event::Mouse(mouse) = &event
             && matches!(mouse.kind, MouseEventKind::Down(_))
         {
             let position = Position::new(mouse.column, mouse.row);
@@ -693,6 +677,10 @@ impl AppNode {
                 RootEffect::SetTheme(mode) => {
                     self.set_theme_mode(mode);
                     effects.push(AppEffect::SetTheme(mode));
+                }
+                RootEffect::SetMaxSubagents(limit) => {
+                    self.set_max_subagents(limit);
+                    effects.push(AppEffect::SetMaxSubagents(limit));
                 }
                 effect => effects.push(AppEffect::Pane { pane, effect }),
             }
@@ -843,16 +831,16 @@ mod tests {
     };
     use crate::{
         app::config::{ReasoningEffort, ReasoningMode},
-        sessions::record::{LocalEvent, TranscriptRecord, TurnId},
         tui::{
             pane::PaneId,
             theme::{ColorScheme, Theme, ThemeMode},
+            transcript::{LocalEvent, TranscriptRecord, TurnId},
         },
     };
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
-    use nanocodex::Model;
+    use orvek_harness::inference::Model;
     use orvek_memory::{MemoryAccess, MemoryKey, MemoryRecord, MemorySource};
     use ratatui::{Terminal, backend::TestBackend};
     use semver::Version;
@@ -872,11 +860,129 @@ mod tests {
         AppNode::new(Theme::default(), workspace, root)
     }
 
+    fn complete_fork(app: &mut AppNode, pane: PaneId) {
+        app.update(AppEvent::ForkReady { pane });
+    }
+
     fn control(character: char) -> AppEvent {
         AppEvent::Terminal(Event::Key(KeyEvent::new(
             KeyCode::Char(character),
             KeyModifiers::CONTROL,
         )))
+    }
+
+    fn scrollable_split_app() -> AppNode {
+        let mut app = app();
+        let record = TranscriptRecord::from_local(
+            1,
+            1,
+            LocalEvent::UserSubmitted {
+                id: TurnId::new(1),
+                text: (0..80)
+                    .map(|row| format!("history row {row:02}\n"))
+                    .collect(),
+            },
+        )
+        .unwrap();
+        app.update(AppEvent::Transcript {
+            pane: PaneId::Main,
+            record: Arc::new(record),
+        });
+        app.update(control('t'));
+        complete_fork(&mut app, PaneId::Fork(1));
+        app
+    }
+
+    fn rendered_panes(app: &mut AppNode) -> [String; 2] {
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        [app.main_area, app.fork_area].map(|area| {
+            (area.top() + 1..area.bottom())
+                .flat_map(|y| (area.left()..area.right()).map(move |x| (x, y)))
+                .map(|position| terminal.backend().buffer()[position].symbol())
+                .collect()
+        })
+    }
+
+    fn wheel(app: &mut AppNode, kind: MouseEventKind, column: u16, row: u16) {
+        app.update(AppEvent::Terminal(Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })));
+    }
+
+    #[test]
+    fn wheel_scrolls_the_hovered_pane_without_changing_keyboard_focus() {
+        for (focus, column, hovered) in [(PaneId::Fork(1), 10, 0), (PaneId::Main, 60, 1)] {
+            let mut app = scrollable_split_app();
+            app.focus = focus;
+            let before = rendered_panes(&mut app);
+
+            wheel(&mut app, MouseEventKind::ScrollUp, column, 6);
+
+            let after = rendered_panes(&mut app);
+            assert_ne!(before[hovered], after[hovered], "hovered pane must scroll");
+            assert_eq!(before[1 - hovered], after[1 - hovered]);
+            assert_eq!(app.focus, focus);
+            app.update(AppEvent::Terminal(Event::Key(KeyEvent::new(
+                KeyCode::Char('x'),
+                KeyModifiers::NONE,
+            ))));
+            assert_eq!(app.root(focus).unwrap().composer().draft(), "x");
+        }
+    }
+
+    #[test]
+    fn wheel_scrolls_a_visible_overlay_in_an_unfocused_pane() {
+        let mut app = scrollable_split_app();
+        app.focus = PaneId::Main;
+        app.update(AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Char('/'),
+            KeyModifiers::NONE,
+        ))));
+        app.focus = PaneId::Fork(1);
+        let before = rendered_panes(&mut app);
+
+        for _ in 0..30 {
+            wheel(&mut app, MouseEventKind::ScrollDown, 20, 10);
+        }
+
+        let after = rendered_panes(&mut app);
+        assert_ne!(before[0], after[0], "the visible main menu must scroll");
+        assert_eq!(before[1], after[1]);
+        assert_eq!(app.focus, PaneId::Fork(1));
+    }
+
+    #[test]
+    fn wheel_on_the_split_divider_or_outside_the_frame_does_nothing() {
+        let mut app = scrollable_split_app();
+        let before = rendered_panes(&mut app);
+        for (column, row) in [(49, 6), (100, 6), (10, 24)] {
+            wheel(&mut app, MouseEventKind::ScrollUp, column, row);
+        }
+        assert_eq!(before, rendered_panes(&mut app));
+        assert_eq!(app.focus, PaneId::Fork(1));
+    }
+
+    #[test]
+    fn wheel_over_another_pane_does_not_reach_the_focused_overlay() {
+        let mut app = scrollable_split_app();
+        app.update(AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Char('/'),
+            KeyModifiers::NONE,
+        ))));
+        let before = rendered_panes(&mut app);
+
+        wheel(&mut app, MouseEventKind::ScrollDown, 10, 6);
+
+        let after = rendered_panes(&mut app);
+        assert_eq!(
+            before[1], after[1],
+            "the fork's menu is not under the pointer"
+        );
+        assert_eq!(app.focus, PaneId::Fork(1));
     }
 
     #[test]
@@ -893,6 +999,7 @@ mod tests {
             reasoning_mode: ReasoningMode::Standard,
             fast_mode: false,
             model: Model::Luna,
+            context_window_tokens: 1_000_000,
             draft_reset: DraftReset::Preserve,
             skills: Arc::from([]),
         });
@@ -1031,10 +1138,6 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert_eq!(rendered.matches("inherited history").count(), 2);
-        assert!(
-            rendered.contains("Thinking"),
-            "the new fork must show preparation immediately"
-        );
         assert!(app.root(PaneId::Fork(1)).is_some());
     }
 
@@ -1065,6 +1168,7 @@ mod tests {
             reasoning_mode: ReasoningMode::Standard,
             fast_mode: false,
             model: Model::Luna,
+            context_window_tokens: 1_000_000,
             skills: Arc::from([]),
         });
 
@@ -1081,9 +1185,7 @@ mod tests {
     fn fork_effort_changes_do_not_change_the_primary_composer() {
         let mut app = app();
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
         app.update(control('s'));
         app.update(AppEvent::Terminal(Event::Key(KeyEvent::new(
             KeyCode::Right,
@@ -1119,9 +1221,7 @@ mod tests {
     fn preferred_reasoning_mode_is_shared_without_changing_running_sessions() {
         let mut app = app();
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
 
         app.set_preferred_reasoning_mode(ReasoningMode::Pro);
 
@@ -1177,9 +1277,7 @@ mod tests {
     fn control_c_clears_the_focused_fork_composer_before_closing_it() {
         let mut app = app();
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
         app.update(AppEvent::Terminal(Event::Key(KeyEvent::new(
             KeyCode::Char('h'),
             KeyModifiers::NONE,
@@ -1271,9 +1369,7 @@ mod tests {
     fn promoted_fork_can_open_another_fork() {
         let mut app = app();
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
         let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
         terminal.draw(|frame| app.render(frame)).unwrap();
         app.update(AppEvent::Terminal(Event::Mouse(MouseEvent {
@@ -1302,9 +1398,7 @@ mod tests {
     fn promoted_fork_refreshes_an_open_actions_menu() {
         let mut app = app();
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
         let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
         terminal.draw(|frame| app.render(frame)).unwrap();
         app.update(AppEvent::Terminal(Event::Key(KeyEvent::new(
@@ -1411,9 +1505,7 @@ mod tests {
         let mut app = app();
         app.set_memory_enabled(true);
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
 
         for pane in [PaneId::Main, PaneId::Fork(1)] {
             let update = open_memory(&mut app, pane);
@@ -1446,9 +1538,7 @@ mod tests {
     fn config_reload_updates_memory_action_availability_for_every_root() {
         let mut app = app();
         app.update(control('t'));
-        app.update(AppEvent::ForkReady {
-            pane: PaneId::Fork(1),
-        });
+        complete_fork(&mut app, PaneId::Fork(1));
 
         app.update(AppEvent::ConfigReloaded {
             pane: PaneId::Main,

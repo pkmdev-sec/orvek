@@ -334,9 +334,9 @@ fn validate_manifest(
         });
     }
     let current_version = env!("CARGO_PKG_VERSION");
-    let compatible_orvek = manifest.orvek.version == current_version
+    let compatible_tact = manifest.orvek.version == current_version
         || (kind.allows_symlinks() && manifest.orvek.version == "development");
-    if !compatible_orvek {
+    if !compatible_tact {
         return Err(AssetError::OrvekVersion {
             expected: current_version,
             actual: manifest.orvek.version,
@@ -813,7 +813,7 @@ mod tests {
     #[test]
     fn availability_accepts_the_documented_development_symlink_install() {
         let _environment = ENVIRONMENT.lock().unwrap();
-        let orvek_home = tempfile::tempdir().unwrap();
+        let tact_home = tempfile::tempdir().unwrap();
         let bundle = tempfile::tempdir().unwrap();
         write_valid_assets(bundle.path());
         let manifest_path = bundle.path().join("manifest.json");
@@ -821,10 +821,10 @@ mod tests {
             serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
         manifest["orvek"]["version"] = "development".into();
         fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-        let destination = super::install_path(orvek_home.path());
+        let destination = super::install_path(tact_home.path());
         fs::create_dir_all(destination.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(bundle.path(), &destination).unwrap();
-        let _home = EnvironmentGuard::set("ORVEK_HOME", orvek_home.path());
+        let _home = EnvironmentGuard::set("ORVEK_HOME", tact_home.path());
         let _override = EnvironmentGuard::remove(super::REVIEW_ASSETS_ENV);
 
         assert!(matches!(

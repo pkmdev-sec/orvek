@@ -81,13 +81,38 @@ fn harbor_builder_matches_the_workspace_rust_version_and_pins_its_image() {
         HARBOR_DOCKERFILE,
         &format!("FROM rust:{major_minor}-alpine@sha256:"),
     );
+    assert_contains(HARBOR_DOCKERFILE, "--package orvek-executor");
+    assert_contains(HARBOR_DOCKERFILE, "--features stub");
+    assert_contains(HARBOR_DOCKERFILE, "orvek-executor-linux-${executor_arch}");
 }
 
 #[test]
 fn harbor_context_contains_every_workspace_member() {
+    for source_tree in [
+        "bin/orvek/src",
+        "crates/executor/src",
+        "crates/harness/src",
+        "crates/memory/src",
+        "crates/subagents/src",
+        "examples/orvek-memory-cloudflare/src",
+    ] {
+        assert_contains(JUSTFILE, source_tree);
+    }
     assert_contains(
         JUSTFILE,
-        "for source_tree in bin/orvek/src crates/memory/src crates/subagents/src examples/orvek-memory-cloudflare/src; do",
+        "cp crates/executor/Cargo.toml crates/executor/README.md \"$build_context/crates/executor/\"",
+    );
+    assert_contains(
+        JUSTFILE,
+        "cp -R crates/executor/src \"$build_context/crates/executor/src\"",
+    );
+    assert_contains(
+        JUSTFILE,
+        "cp crates/harness/Cargo.toml \"$build_context/crates/harness/\"",
+    );
+    assert_contains(
+        JUSTFILE,
+        "cp -R crates/harness/src \"$build_context/crates/harness/src\"",
     );
     assert_contains(
         JUSTFILE,
@@ -112,6 +137,9 @@ fn harbor_context_contains_every_workspace_member() {
     assert!(!JUSTFILE.contains(
         "cp -R examples/orvek-memory-cloudflare \"$build_context/examples/orvek-memory-cloudflare\""
     ));
+    assert_contains(JUSTFILE, "if [[ -n \"{{platform}}\" ]]; then");
+    assert_contains(JUSTFILE, "--platform \"{{platform}}\"");
+    assert!(!JUSTFILE.contains("${platform_args[@]}"));
 }
 
 #[test]

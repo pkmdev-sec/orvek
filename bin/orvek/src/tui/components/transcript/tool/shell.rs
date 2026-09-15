@@ -14,7 +14,8 @@ pub(super) fn present(tool: &ToolEntry, width: u16, theme: &Theme, expanded: boo
     }
     let command = tool
         .arguments
-        .get("cmd")
+        .get("command")
+        .or_else(|| tool.arguments.get("cmd"))
         .and_then(Value::as_str)
         .unwrap_or("<command unavailable>");
     let mut presentation =
@@ -26,7 +27,12 @@ pub(super) fn present(tool: &ToolEntry, width: u16, theme: &Theme, expanded: boo
         return presentation;
     }
 
-    if let Some(workdir) = tool.arguments.get("workdir").and_then(Value::as_str) {
+    if let Some(workdir) = tool
+        .arguments
+        .get("cwd")
+        .or_else(|| tool.arguments.get("workdir"))
+        .and_then(Value::as_str)
+    {
         presentation = presentation.unselectable_details(super::super::markdown::wrap_plain(
             &format!("cwd {}", shorten_home(Path::new(workdir))),
             width,
@@ -76,7 +82,7 @@ fn command_spans(command: &str) -> Vec<Span<'static>> {
     let assets = super::super::highlight::assets();
     let syntax = super::super::highlight::syntax_for_token(&assets.syntaxes, "sh");
     let syntax_theme = super::super::highlight::theme();
-    let mut highlighter = HighlightLines::new(syntax, syntax_theme);
+    let mut highlighter = HighlightLines::new(syntax, &syntax_theme);
     let mut spans = vec![Span::styled("$ ", Style::default().fg(Color::Yellow))];
 
     for (index, line) in command.split('\n').enumerate() {

@@ -1,14 +1,14 @@
-use rusqlite::{Connection, params};
-use serde_json::{Value, json};
-use std::fs;
 use orvek_harness::{
-    Digest,
-    artifacts::ArtifactStore,
+    Digest, Store,
+    artifacts::{ArtifactStore, PublicArtifactRef},
     import::{
         ImportCursor, ImportLimits, ImportManifest, LegacyArchive, PageLimits, PublicationLimits,
         PublishError, prepare_import, read_import_page,
     },
 };
+use rusqlite::{Connection, params};
+use serde_json::{Value, json};
+use std::fs;
 
 struct Fixture {
     root: tempfile::TempDir,
@@ -28,7 +28,10 @@ impl Fixture {
                 [b"opaque archive bytes".as_slice()],
             )
             .unwrap();
-        let store = ArtifactStore::open(&root.path().join("artifacts"), 128 * 1024 * 1024).unwrap();
+        let store = Store::open_with_artifact_limit(root.path(), 128 * 1024 * 1024)
+            .unwrap()
+            .public_artifacts()
+            .clone();
         Self {
             root,
             database,
@@ -120,21 +123,53 @@ fn publication_preserves_originals_and_retries_without_reusing_old_authority() {
     );
     assert_eq!(fs::read(&fixture.database).unwrap(), source_before);
     assert_eq!(
-        fixture.store.read(first.source_snapshot).unwrap(),
+        fixture
+            .store
+            .resolve(PublicArtifactRef::from_digest(first.source_snapshot))
+            .unwrap(),
         archive.snapshot_bytes()
     );
-    assert_eq!(fixture.store.read(Digest::of(&prompt)).unwrap(), prompt);
-    assert_eq!(fixture.store.read(Digest::of(&success)).unwrap(), success);
-    let manifest: ImportManifest =
-        serde_json::from_slice(&fixture.store.read(first.manifest).unwrap()).unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .resolve(PublicArtifactRef::from_digest(Digest::of(&prompt)))
+            .unwrap(),
+        prompt
+    );
+    assert_eq!(
+        fixture
+            .store
+            .resolve(PublicArtifactRef::from_digest(Digest::of(&success)))
+            .unwrap(),
+        success
+    );
+    let manifest: ImportManifest = serde_json::from_slice(
+        &fixture
+            .store
+            .resolve(PublicArtifactRef::from_digest(first.manifest))
+            .unwrap(),
+    )
+    .unwrap();
     let resume_refs = manifest.resume.unwrap();
     assert_eq!(
-        fixture.store.read(resume_refs.compressed).unwrap(),
+        fixture
+            .store
+            .resolve(PublicArtifactRef::from_digest(resume_refs.compressed))
+            .unwrap(),
         compressed
     );
-    assert_eq!(fixture.store.read(resume_refs.decoded).unwrap(), resume);
     assert_eq!(
-        fixture.store.read(resume_refs.snapshot).unwrap(),
+        fixture
+            .store
+            .resolve(PublicArtifactRef::from_digest(resume_refs.decoded))
+            .unwrap(),
+        resume
+    );
+    assert_eq!(
+        fixture
+            .store
+            .resolve(PublicArtifactRef::from_digest(resume_refs.snapshot))
+            .unwrap(),
         br#"{"version":2,"authority":"root","tools":[{"name":"delete_everything"}]}"#
     );
     assert_eq!(first.history.len(), 1);
@@ -264,7 +299,12 @@ fn oversized_rows_remain_retrievable_and_page_truncation_is_explicit() {
     assert!(page.records[0].truncated);
     assert!(page.records[0].raw_json.is_none());
     assert_eq!(
-        fixture.store.read(page.records[0].reference.raw).unwrap(),
+        fixture
+            .store
+            .resolve(PublicArtifactRef::from_digest(
+                page.records[0].reference.raw
+            ))
+            .unwrap(),
         large
     );
     assert!(page.next.is_none());
@@ -342,13 +382,19 @@ fn limits_corruption_versions_and_cross_manifest_cursors_cannot_return_valid_pag
         ),
         Err(PublishError::Cursor)
     ));
-    let mut manifest: ImportManifest =
-        serde_json::from_slice(&fixture.store.read(prepared.manifest).unwrap()).unwrap();
+    let mut manifest: ImportManifest = serde_json::from_slice(
+        &fixture
+            .store
+            .resolve(PublicArtifactRef::from_digest(prepared.manifest))
+            .unwrap(),
+    )
+    .unwrap();
     manifest.version = 99;
     let unsupported = fixture
         .store
-        .put(&serde_json::to_vec(&manifest).unwrap())
-        .unwrap();
+        .write(&serde_json::to_vec(&manifest).unwrap())
+        .unwrap()
+        .digest();
     assert!(matches!(
         read_import_page(&fixture.store, unsupported, None, PageLimits::default()),
         Err(PublishError::UnsupportedVersion)
@@ -357,13 +403,22 @@ fn limits_corruption_versions_and_cross_manifest_cursors_cannot_return_valid_pag
     manifest.indexes[0].first = 1;
     let malformed = fixture
         .store
-        .put(&serde_json::to_vec(&manifest).unwrap())
-        .unwrap();
+        .write(&serde_json::to_vec(&manifest).unwrap())
+        .unwrap()
+        .digest();
     assert!(matches!(
         read_import_page(&fixture.store, malformed, None, PageLimits::default()),
         Err(PublishError::Corrupt)
     ));
-    fs::write(fixture.store.path(prepared.manifest), b"tampered").unwrap();
+    fs::write(
+        fixture
+            .root
+            .path()
+            .join("artifacts")
+            .join(prepared.manifest.to_string()),
+        b"tampered",
+    )
+    .unwrap();
     assert!(matches!(
         read_import_page(
             &fixture.store,
@@ -394,19 +449,31 @@ fn publication_pages_reject_rewritten_lineage_boundaries() {
         PublicationLimits::default(),
     )
     .unwrap();
-    let mut manifest: ImportManifest =
-        serde_json::from_slice(&fixture.store.read(prepared.manifest).unwrap()).unwrap();
-    let mut lineage: Value =
-        serde_json::from_slice(&fixture.store.read(manifest.lineage).unwrap()).unwrap();
+    let mut manifest: ImportManifest = serde_json::from_slice(
+        &fixture
+            .store
+            .resolve(PublicArtifactRef::from_digest(prepared.manifest))
+            .unwrap(),
+    )
+    .unwrap();
+    let mut lineage: Value = serde_json::from_slice(
+        &fixture
+            .store
+            .resolve(PublicArtifactRef::from_digest(manifest.lineage))
+            .unwrap(),
+    )
+    .unwrap();
     lineage[0]["through_sequence"] = 999.into();
     manifest.lineage = fixture
         .store
-        .put(&serde_json::to_vec(&lineage).unwrap())
-        .unwrap();
+        .write(&serde_json::to_vec(&lineage).unwrap())
+        .unwrap()
+        .digest();
     let changed = fixture
         .store
-        .put(&serde_json::to_vec(&manifest).unwrap())
-        .unwrap();
+        .write(&serde_json::to_vec(&manifest).unwrap())
+        .unwrap()
+        .digest();
     assert!(matches!(
         read_import_page(&fixture.store, changed, None, PageLimits::default()),
         Err(PublishError::Corrupt)

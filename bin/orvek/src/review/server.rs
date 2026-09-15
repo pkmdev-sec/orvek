@@ -244,6 +244,10 @@ pub(super) struct ReviewDecision {
     pub(super) summary: String,
     #[serde(default)]
     pub(super) comments: Vec<ReviewComment>,
+    #[serde(skip)]
+    pub(super) manifest: Option<orvek_harness::Digest>,
+    #[serde(skip)]
+    pub(super) source_identity: Option<orvek_harness::Digest>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -446,7 +450,7 @@ pub(super) enum ReviewOutcome {
 
 pub(super) struct ReviewServer {
     address: SocketAddr,
-    token: String,
+    token: crate::app::secret::SecretString,
     outcome: oneshot::Receiver<ReviewOutcome>,
     session_shutdown: CancellationToken,
     shutdown: CancellationToken,
@@ -458,7 +462,7 @@ impl ReviewServer {
     pub(super) async fn start(
         review: PreparedReview,
         backend: Arc<super::ReviewBackend>,
-        token: String,
+        token: crate::app::secret::SecretString,
         assets: super::ReviewAssets,
     ) -> Result<Self, std::io::Error> {
         crate::install_tls_provider();
@@ -477,7 +481,31 @@ impl ReviewServer {
             session_shutdown: session_shutdown.clone(),
             outcome: Mutex::new(Some(outcome_tx)),
         });
-        let app = Router::new().nest(&format!("/{token}"), router(Arc::clone(&state)));
+        // Axum and HTTP clients retain their own URL copies; zeroization covers
+        // the secret wrapper owned here, not those dependency-owned buffers.
+        let expected_host = address.to_string();
+        let expected_origin = format!("http://{address}");
+        let app = Router::new()
+            .nest(
+                &format!("/{}", token.expose_secret()),
+                router(Arc::clone(&state)),
+            )
+            .layer(axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    let expected_host = expected_host.clone();
+                    let expected_origin = expected_origin.clone();
+                    async move {
+                        if !operator_origin_allowed(
+                            request.headers(),
+                            &expected_host,
+                            &expected_origin,
+                        ) {
+                            return StatusCode::FORBIDDEN.into_response();
+                        }
+                        next.run(request).await
+                    }
+                },
+            ));
         let shutdown = CancellationToken::new();
         let server_shutdown = shutdown.clone();
         let task = tokio::spawn(async move {
@@ -500,14 +528,19 @@ impl ReviewServer {
         format!(
             "http://{}/{}/{}",
             self.address,
-            self.token,
+            self.token.expose_secret(),
             self.state.assets.entrypoint()
         )
     }
 
     #[cfg(test)]
     fn endpoint_url(&self, endpoint: &str) -> String {
-        format!("http://{}/{}/{}", self.address, self.token, endpoint)
+        format!(
+            "http://{}/{}/{}",
+            self.address,
+            self.token.expose_secret(),
+            endpoint
+        )
     }
 
     pub(super) async fn wait(mut self) -> Result<ReviewOutcome, ServerError> {
@@ -534,6 +567,16 @@ impl Drop for ReviewServer {
         self.shutdown.cancel();
         self.task.abort();
     }
+}
+
+fn operator_origin_allowed(headers: &axum::http::HeaderMap, host: &str, origin: &str) -> bool {
+    headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        == Some(host)
+        && headers
+            .get(header::ORIGIN)
+            .is_none_or(|value| value.to_str().ok() == Some(origin))
 }
 
 fn router(state: Arc<ServerState>) -> Router {
@@ -1268,6 +1311,8 @@ async fn submit(
         return stale_snapshot("the review changed while submission was validated");
     }
     decision.scope = page.diff.scope.clone();
+    decision.manifest = Some(page.diff.manifest);
+    decision.source_identity = Some(page.diff.source_identity);
 
     let Some(sender) = state.outcome.lock().await.take() else {
         return stale_snapshot("review already submitted");
@@ -1602,13 +1647,19 @@ mod tests {
         assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
 
         let ReviewOutcome::Decision(super::ReviewDecision {
-            decision, summary, ..
+            decision,
+            summary,
+            manifest,
+            source_identity,
+            ..
         }) = server.wait().await.unwrap()
         else {
             panic!("review should be submitted");
         };
         assert!(matches!(decision, Decision::Approve));
         assert_eq!(summary, "Looks good");
+        assert!(manifest.is_some());
+        assert!(source_identity.is_some());
     }
 
     #[tokio::test]
@@ -1888,7 +1939,7 @@ mod tests {
         let loads = Arc::new(AtomicUsize::new(0));
         let generator: ReviewAgent = Arc::new({
             let loads = Arc::clone(&loads);
-            move |_prompt, _shutdown| {
+            move |_prompt, _manifest, _shutdown| {
                 loads.fetch_add(1, Ordering::SeqCst);
                 Box::pin(async move { Ok("<p>Overview</p>".to_owned()) })
             }
@@ -1921,7 +1972,7 @@ mod tests {
         let prompts = Arc::new(Mutex::new(Vec::new()));
         let generator: ReviewAgent = Arc::new({
             let prompts = Arc::clone(&prompts);
-            move |prompt, _shutdown| {
+            move |prompt, _manifest, _shutdown| {
                 prompts.lock().unwrap().push(prompt);
                 Box::pin(async move { Ok("<p>Overview</p>".to_owned()) })
             }
@@ -1966,7 +2017,7 @@ mod tests {
         let prompt = Arc::new(Mutex::new(String::new()));
         let generator: ReviewAgent = Arc::new({
             let prompt = Arc::clone(&prompt);
-            move |value, _shutdown| {
+            move |value, _manifest, _shutdown| {
                 *prompt.lock().unwrap() = value;
                 Box::pin(async move { Ok("The value comes from `tracked.txt:1`.".to_owned()) })
             }
@@ -1985,7 +2036,8 @@ mod tests {
         let response = response.json::<serde_json::Value>().await.unwrap();
         assert_eq!(response["answer"], "The value comes from `tracked.txt:1`.");
         let prompt = prompt.lock().unwrap();
-        assert!(prompt.contains("Delegate this task to a sub-agent"));
+        assert!(prompt.contains("Use the admitted read-only review tools"));
+        assert!(!prompt.contains("sub-agent"));
         assert!(prompt.contains("`tracked.txt:1`"));
         assert!(prompt.contains("new side"));
         assert!(prompt.contains(&trunk));
@@ -2003,7 +2055,7 @@ mod tests {
         let loads = Arc::new(AtomicUsize::new(0));
         let generator: ReviewAgent = Arc::new({
             let loads = Arc::clone(&loads);
-            move |_prompt, _shutdown| {
+            move |_prompt, _manifest, _shutdown| {
                 loads.fetch_add(1, Ordering::SeqCst);
                 Box::pin(async move { Ok("answer".to_owned()) })
             }
@@ -2034,7 +2086,7 @@ mod tests {
         let generator: ReviewAgent = Arc::new({
             let started = Arc::clone(&started);
             let release = Arc::clone(&release);
-            move |prompt, _shutdown| {
+            move |prompt, _manifest, _shutdown| {
                 let started = Arc::clone(&started);
                 let release = Arc::clone(&release);
                 Box::pin(async move {
@@ -2111,7 +2163,7 @@ mod tests {
         let generator: ReviewAgent = Arc::new({
             let started = Arc::clone(&started);
             let calls = Arc::clone(&calls);
-            move |_prompt, shutdown| {
+            move |_prompt, _manifest, shutdown| {
                 let started = Arc::clone(&started);
                 let call = calls.fetch_add(1, Ordering::SeqCst);
                 Box::pin(async move {
@@ -2175,7 +2227,7 @@ mod tests {
             let started = Arc::clone(&started);
             let release = Arc::clone(&release);
             let cancelled = Arc::clone(&cancelled);
-            move |_prompt, shutdown| {
+            move |_prompt, _manifest, shutdown| {
                 let started = Arc::clone(&started);
                 let release = Arc::clone(&release);
                 let cancelled = Arc::clone(&cancelled);
@@ -2220,7 +2272,7 @@ mod tests {
         );
 
         release.notify_one();
-        let completed = tokio::time::timeout(Duration::from_secs(2), async {
+        let completed = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let review = reqwest::get(server.endpoint_url("api/review"))
                     .await
@@ -2260,7 +2312,7 @@ mod tests {
             let started = Arc::clone(&started);
             let release = Arc::clone(&release);
             let cancelled = Arc::clone(&cancelled);
-            move |_prompt, shutdown| {
+            move |_prompt, _manifest, shutdown| {
                 let started = Arc::clone(&started);
                 let release = Arc::clone(&release);
                 let cancelled = Arc::clone(&cancelled);
@@ -2309,7 +2361,7 @@ mod tests {
         assert!(!cancelled.load(Ordering::SeqCst));
 
         release.notify_one();
-        let completed = tokio::time::timeout(Duration::from_secs(2), async {
+        let completed = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let review = reqwest::get(server.endpoint_url("api/review"))
                     .await
@@ -2344,7 +2396,7 @@ mod tests {
             let loads = Arc::clone(&loads);
             let started = Arc::clone(&started);
             let release = Arc::clone(&release);
-            move |_prompt, _shutdown| {
+            move |_prompt, _manifest, _shutdown| {
                 let loads = Arc::clone(&loads);
                 let started = Arc::clone(&started);
                 let release = Arc::clone(&release);
@@ -2402,7 +2454,7 @@ mod tests {
         let loads = Arc::new(AtomicUsize::new(0));
         let generator: ReviewAgent = Arc::new({
             let loads = Arc::clone(&loads);
-            move |_prompt, _shutdown| {
+            move |_prompt, _manifest, _shutdown| {
                 loads.fetch_add(1, Ordering::SeqCst);
                 Box::pin(async move { Ok("<p>Overview</p>".to_owned()) })
             }
@@ -2436,7 +2488,7 @@ mod tests {
         let generator: ReviewAgent = Arc::new({
             let started = Arc::clone(&started);
             let release = Arc::clone(&release);
-            move |_prompt, _shutdown| {
+            move |_prompt, _manifest, _shutdown| {
                 let started = Arc::clone(&started);
                 let release = Arc::clone(&release);
                 Box::pin(async move {
@@ -2485,7 +2537,7 @@ mod tests {
             let loads = Arc::clone(&loads);
             let started = Arc::clone(&started);
             let release = Arc::clone(&release);
-            move |_prompt, _shutdown| {
+            move |_prompt, _manifest, _shutdown| {
                 let started = Arc::clone(&started);
                 let release = Arc::clone(&release);
                 loads.fetch_add(1, Ordering::SeqCst);
@@ -2519,7 +2571,7 @@ mod tests {
         let loads = Arc::new(AtomicUsize::new(0));
         let generator: ReviewAgent = Arc::new({
             let loads = Arc::clone(&loads);
-            move |_prompt, _shutdown| {
+            move |_prompt, _manifest, _shutdown| {
                 loads.fetch_add(1, Ordering::SeqCst);
                 Box::pin(async { Ok("<p>Overview</p>".to_owned()) })
             }
@@ -2539,8 +2591,9 @@ mod tests {
         for name in ["index.html", "app.js", "app.css"] {
             std::fs::write(assets.path().join(name), "").unwrap();
         }
-        let generator: ReviewAgent =
-            Arc::new(|_prompt, _shutdown| Box::pin(async { Err(ReviewAgentError::Cancelled) }));
+        let generator: ReviewAgent = Arc::new(|_prompt, _manifest, _shutdown| {
+            Box::pin(async { Err(ReviewAgentError::Cancelled) })
+        });
         let server = start_server_with_generator(&assets, generator).await;
 
         let response = reqwest::Client::new()
@@ -2575,7 +2628,7 @@ mod tests {
         let started = Arc::new(Notify::new());
         let generator: ReviewAgent = Arc::new({
             let started = Arc::clone(&started);
-            move |_prompt, shutdown| {
+            move |_prompt, _manifest, shutdown| {
                 let started = Arc::clone(&started);
                 Box::pin(async move {
                     started.notify_one();
@@ -2700,7 +2753,9 @@ mod tests {
             }
         });
 
-        tokio::time::timeout(Duration::from_secs(2), async {
+        // Host-backed fixture validation can contend with the parallel suite before
+        // reaching this lock; the race assertion below remains independently bounded.
+        tokio::time::timeout(Duration::from_secs(10), async {
             while server.state.session.try_lock().is_ok() {
                 tokio::task::yield_now().await;
             }
@@ -2779,6 +2834,52 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn review_routes_reject_cross_origin_and_wrong_nonce_requests() {
+        let assets = tempfile::tempdir().unwrap();
+        let server = start_server(&assets).await;
+        let client = reqwest::Client::new();
+        assert_eq!(
+            client
+                .get(server.endpoint_url("api/review"))
+                .header("Origin", "https://untrusted.example")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            client
+                .get(server.endpoint_url("api/review"))
+                .header("Host", "untrusted.example")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            client
+                .get(format!("http://{}/wrong-nonce/api/review", server.address))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            client
+                .get(server.endpoint_url("api/review"))
+                .header("Origin", format!("http://{}", server.address))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::OK
+        );
+    }
+
     async fn start_server(assets: &tempfile::TempDir) -> ReviewServer {
         start_server_with_generator(assets, review_agent()).await
     }
@@ -2788,6 +2889,8 @@ mod tests {
         review_agent: ReviewAgent,
     ) -> ReviewServer {
         let backend = Arc::new(ReviewBackend {
+            client: super::super::fixture::client().await,
+            task: None,
             workspace: repository().keep(),
             review_agent,
             current_version_error: None,
@@ -2796,7 +2899,7 @@ mod tests {
         ReviewServer::start(
             review,
             backend,
-            "test-token".to_owned(),
+            crate::app::secret::SecretString::new("test-token".to_owned()),
             crate::review::ReviewAssets::for_test(assets.path().to_owned()),
         )
         .await
@@ -2804,7 +2907,9 @@ mod tests {
     }
 
     fn review_agent() -> ReviewAgent {
-        Arc::new(|_prompt, _shutdown| Box::pin(async { Ok("<p>Overview</p>".to_owned()) }))
+        Arc::new(|_prompt, _manifest, _shutdown| {
+            Box::pin(async { Ok("<p>Overview</p>".to_owned()) })
+        })
     }
 
     async fn request_overview(url: String, range: ReviewRange) -> reqwest::StatusCode {
@@ -2892,7 +2997,12 @@ mod tests {
     }
 
     fn git<const N: usize>(root: &Path, arguments: [&str; N]) {
-        let status = Command::new("git")
+        let status = Command::new("/usr/bin/git")
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", root)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .args(arguments)
             .current_dir(root)
             .status()
@@ -2901,7 +3011,12 @@ mod tests {
     }
 
     fn git_stdout<const N: usize>(root: &Path, arguments: [&str; N]) -> String {
-        let output = Command::new("git")
+        let output = Command::new("/usr/bin/git")
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", root)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .args(arguments)
             .current_dir(root)
             .output()

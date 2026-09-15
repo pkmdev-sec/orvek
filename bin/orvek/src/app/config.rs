@@ -1,14 +1,11 @@
 //! Configuration loading, precedence, and effective runtime settings.
 
 use crate::{
-    app::{
-        compaction::CompactionConfig,
-        error::{ConfigError, McpUrlError, RemoteMemoryConfigError, Result},
-    },
+    app::error::{ConfigError, McpUrlError, RemoteMemoryConfigError, Result},
     tui::theme::{Theme, ThemeMode},
 };
 use clap::ValueEnum;
-use nanocodex::Thinking;
+use orvek_harness::inference::{Model, Thinking};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -17,6 +14,7 @@ use std::{
     fmt, fs,
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
 };
 use tempfile::NamedTempFile;
@@ -70,11 +68,32 @@ impl ReasoningMode {
     }
 }
 
-impl From<ReasoningMode> for nanocodex::ReasoningMode {
+impl From<ReasoningMode> for orvek_harness::inference::ReasoningMode {
     fn from(mode: ReasoningMode) -> Self {
         match mode {
             ReasoningMode::Standard => Self::Standard,
             ReasoningMode::Pro => Self::Pro,
+        }
+    }
+}
+
+impl From<orvek_harness::inference::Thinking> for ReasoningEffort {
+    fn from(value: orvek_harness::inference::Thinking) -> Self {
+        use orvek_harness::inference::Thinking;
+        match value {
+            Thinking::Low => Self::Low,
+            Thinking::Medium => Self::Medium,
+            Thinking::High => Self::High,
+            Thinking::Xhigh => Self::Xhigh,
+            Thinking::Max => Self::Max,
+        }
+    }
+}
+impl From<orvek_harness::inference::ReasoningMode> for ReasoningMode {
+    fn from(value: orvek_harness::inference::ReasoningMode) -> Self {
+        match value {
+            orvek_harness::inference::ReasoningMode::Standard => Self::Standard,
+            orvek_harness::inference::ReasoningMode::Pro => Self::Pro,
         }
     }
 }
@@ -84,10 +103,9 @@ impl From<ReasoningMode> for nanocodex::ReasoningMode {
 pub(crate) struct Config {
     #[serde(skip)]
     path: PathBuf,
-    #[serde(skip)]
-    codex_home: Option<PathBuf>,
     auth: AuthConfig,
     agent: AgentConfig,
+    models: BTreeMap<Model, ModelRouteConfig>,
     mcp_servers: BTreeMap<String, McpServerConfig>,
     skills: SkillsConfig,
     memory: MemoryConfig,
@@ -95,6 +113,18 @@ pub(crate) struct Config {
     theme: Theme,
     #[serde(skip)]
     reload: ReloadSource,
+}
+
+/// Effective per-model provider overrides. A model entry without a route is
+/// rejected so a typo cannot silently fall back to the default endpoint.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ModelRouteConfig {
+    #[serde(serialize_with = "serialize_optional_string")]
+    pub(crate) api_base_url: Option<String>,
+    #[serde(serialize_with = "serialize_optional_string")]
+    pub(crate) websocket_url: Option<String>,
+    #[serde(serialize_with = "serialize_optional_string")]
+    pub(crate) api_key_env: Option<String>,
 }
 
 /// Configuration for one MCP server transport.
@@ -136,19 +166,39 @@ pub(crate) struct McpEnvironment(BTreeMap<String, McpSecretString>);
 pub(crate) struct AuthConfig {
     mode: AuthMode,
     file: PathBuf,
+    api_key_env: Option<String>,
 }
 
-/// Effective Nanocodex configuration.
+/// Execution backend for primary task work.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ExecutionMode {
+    /// Primary tools run on this machine with user permissions; ordinary
+    /// completion is reported without a verification certificate.
+    #[default]
+    Host,
+    /// Previous isolated workflow: private snapshot, Docker commands,
+    /// contract-gated verified delivery.
+    Sandbox,
+}
+
+impl ExecutionMode {
+    pub(crate) const fn is_sandbox(self) -> bool {
+        matches!(self, Self::Sandbox)
+    }
+}
+
+/// Effective model and capability configuration.
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct AgentConfig {
-    compaction: CompactionConfig,
-    #[serde(skip)]
-    compaction_override: Option<crate::app::compaction::Strategy>,
     workspace: PathBuf,
+    execution: ExecutionMode,
+    model: Model,
     thinking: ReasoningEffort,
     reasoning_mode: ReasoningMode,
     fast_mode: bool,
     max_subagents: usize,
+    context_window_tokens: u64,
     #[serde(serialize_with = "serialize_optional_string")]
     instructions: Option<String>,
     #[serde(serialize_with = "serialize_optional_string")]
@@ -198,9 +248,14 @@ pub(crate) struct SubagentsConfig {
     allow_luna: bool,
 }
 
+impl SubagentsConfig {
+    pub(crate) const fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ConfigOverrides {
-    pub(crate) compaction_strategy: Option<crate::app::compaction::Strategy>,
     pub(crate) path: Option<PathBuf>,
     pub(crate) auth_mode: Option<AuthMode>,
     pub(crate) auth_file: Option<PathBuf>,
@@ -234,11 +289,21 @@ pub(crate) struct ConfigReload {
 struct ConfigFile {
     auth: AuthConfigFile,
     agent: AgentConfigFile,
+    models: BTreeMap<String, ModelRouteFile>,
     mcp_servers: BTreeMap<String, McpServerConfigFile>,
     skills: SkillsConfigFile,
     memory: MemoryConfigFile,
     subagents: SubagentsConfigFile,
     theme: Theme,
+}
+
+/// Per-model provider overrides from the `[models]` table.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ModelRouteFile {
+    api_base_url: Option<String>,
+    websocket_url: Option<String>,
+    api_key_env: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -319,17 +384,21 @@ struct McpHttpConfigFile {
 struct AuthConfigFile {
     mode: Option<AuthMode>,
     file: Option<PathBuf>,
+    api_key_env: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct AgentConfigFile {
-    compaction: CompactionConfig,
     workspace: Option<PathBuf>,
+    execution: Option<ExecutionMode>,
+    model: Option<Model>,
     thinking: Option<ReasoningEffort>,
     reasoning_mode: Option<ReasoningMode>,
     fast_mode: Option<bool>,
     max_subagents: Option<usize>,
+    context_window_tokens: Option<u64>,
+    compaction: LegacyCompactionConfigFile,
     instructions: Option<String>,
     append_instructions: Option<String>,
     web_search: Option<bool>,
@@ -337,6 +406,17 @@ struct AgentConfigFile {
     websocket_url: Option<String>,
     api_base_url: Option<String>,
     completion_hook: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct LegacyCompactionConfigFile {
+    strategy: Option<String>,
+    fallback: Option<String>,
+    profile: Option<String>,
+    input_budget_tokens: Option<u64>,
+    max_generated_pages: Option<usize>,
+    max_request_bytes: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -404,30 +484,59 @@ impl Config {
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
         let skills = SkillsConfig::new(file.skills, config_dir, &environment);
-        if let Some(strategy) = overrides.compaction_strategy {
-            file.agent.compaction.strategy = strategy;
-        }
-        file.agent
-            .compaction
-            .validate()
-            .map_err(ConfigError::Compaction)?;
         let memory = MemoryConfig::new(file.memory, config_dir).map_err(ConfigError::from)?;
-        let codex_home = environment
-            .codex_home
-            .clone()
-            .or_else(|| environment.home.as_ref().map(|home| home.join(".codex")));
+        if file
+            .agent
+            .compaction
+            .strategy
+            .as_deref()
+            .is_some_and(|strategy| strategy != "provider")
+        {
+            return Err(ConfigError::UnsupportedCompactionStrategy(
+                file.agent.compaction.strategy.unwrap_or_default(),
+            )
+            .into());
+        }
+        let context_window_tokens = file
+            .agent
+            .context_window_tokens
+            .or(file.agent.compaction.input_budget_tokens)
+            .unwrap_or(orvek_harness::context::MAX_WINDOW_TOKENS);
+        if !(orvek_harness::context::MIN_WINDOW_TOKENS..=orvek_harness::context::MAX_WINDOW_TOKENS)
+            .contains(&context_window_tokens)
+        {
+            return Err(ConfigError::ContextWindowTokens(context_window_tokens).into());
+        }
+
+        let mut models = BTreeMap::new();
+        for (name, route) in file.models {
+            let model =
+                Model::from_str(&name).map_err(|_| ConfigError::UnknownModel(name.clone()))?;
+            if route.api_base_url.is_none() && route.websocket_url.is_none() {
+                return Err(ConfigError::ModelRouteWithoutEndpoint(name).into());
+            }
+            models.insert(
+                model,
+                ModelRouteConfig {
+                    api_base_url: optional_string(route.api_base_url),
+                    websocket_url: optional_string(route.websocket_url),
+                    api_key_env: optional_string(route.api_key_env),
+                },
+            );
+        }
 
         Ok(Self {
             path,
-            codex_home,
             auth: AuthConfig::new(
                 overrides.auth_mode.or(file.auth.mode).unwrap_or_default(),
                 auth_file,
+                optional_string(file.auth.api_key_env),
             ),
+            models,
             agent: AgentConfig {
-                compaction: file.agent.compaction,
-                compaction_override: overrides.compaction_strategy,
                 workspace,
+                execution: file.agent.execution.unwrap_or_default(),
+                model: file.agent.model.unwrap_or_default(),
                 thinking: overrides
                     .thinking
                     .or(file.agent.thinking)
@@ -441,6 +550,7 @@ impl Config {
                     .max_subagents
                     .or(file.agent.max_subagents)
                     .unwrap_or(DEFAULT_MAX_SUBAGENTS),
+                context_window_tokens,
                 instructions: optional_string(overrides.instructions.or(file.agent.instructions)),
                 append_instructions: optional_string(
                     overrides
@@ -512,12 +622,13 @@ impl Config {
         &self.auth
     }
 
-    pub(crate) fn codex_home(&self) -> Option<&Path> {
-        self.codex_home.as_deref()
-    }
-
     pub(crate) fn agent(&self) -> &AgentConfig {
         &self.agent
+    }
+
+    /// Per-model provider overrides from the `[models]` table.
+    pub(crate) fn model_routes(&self) -> &BTreeMap<Model, ModelRouteConfig> {
+        &self.models
     }
 
     pub(crate) fn mcp_servers(&self) -> &BTreeMap<String, McpServerConfig> {
@@ -553,16 +664,20 @@ impl Config {
             .map_err(Into::into)
     }
 
-    pub(crate) fn persist_thinking(&self, effort: ReasoningEffort) -> Result<()> {
-        Self::persist_thinking_at(&self.path, effort)
-    }
-
-    pub(crate) fn persist_reasoning_mode(&self, mode: ReasoningMode) -> Result<()> {
-        Self::persist_reasoning_mode_at(&self.path, mode)
-    }
-
-    pub(crate) fn persist_fast_mode(&self, enabled: bool) -> Result<()> {
-        Self::persist_fast_mode_at(&self.path, enabled)
+    pub(crate) fn persist_agent_settings(
+        &self,
+        effort: ReasoningEffort,
+        mode: ReasoningMode,
+        fast_mode: bool,
+    ) -> Result<()> {
+        let mut document = Self::read_document(&self.path)?;
+        if !document.contains_key("agent") {
+            document["agent"] = Item::Table(Table::new());
+        }
+        document["agent"]["thinking"] = value(effort.as_str());
+        document["agent"]["reasoning_mode"] = value(mode.as_str());
+        document["agent"]["fast_mode"] = value(fast_mode);
+        Self::write_document(&self.path, document)
     }
 
     pub(crate) fn persist_max_subagents(&self, limit: usize) -> Result<()> {
@@ -655,14 +770,17 @@ impl Config {
         Self::write_document(&self.path, document)
     }
 
+    #[cfg(test)]
     fn persist_thinking_at(path: &Path, effort: ReasoningEffort) -> Result<()> {
         Self::persist_setting(path, "agent", "thinking", effort.as_str())
     }
 
+    #[cfg(test)]
     fn persist_reasoning_mode_at(path: &Path, mode: ReasoningMode) -> Result<()> {
         Self::persist_setting(path, "agent", "reasoning_mode", mode.as_str())
     }
 
+    #[cfg(test)]
     fn persist_fast_mode_at(path: &Path, enabled: bool) -> Result<()> {
         let mut document = Self::read_document(path)?;
         if !document.contains_key("agent") {
@@ -962,12 +1080,22 @@ impl ConfigReload {
 }
 
 impl AuthConfig {
-    pub(crate) const fn new(mode: AuthMode, file: PathBuf) -> Self {
-        Self { mode, file }
+    pub(crate) const fn new(mode: AuthMode, file: PathBuf, api_key_env: Option<String>) -> Self {
+        Self {
+            mode,
+            file,
+            api_key_env,
+        }
     }
 
     pub(crate) const fn mode(&self) -> AuthMode {
         self.mode
+    }
+
+    /// Environment variable that holds the API key; OpenAI's by default so a
+    /// custom OpenAI-compatible endpoint only needs `api_base_url`.
+    pub(crate) fn api_key_env(&self) -> &str {
+        self.api_key_env.as_deref().unwrap_or("OPENAI_API_KEY")
     }
 
     pub(crate) fn file(&self) -> &Path {
@@ -976,14 +1104,16 @@ impl AuthConfig {
 }
 
 impl AgentConfig {
-    pub(crate) const fn compaction_override(&self) -> Option<crate::app::compaction::Strategy> {
-        self.compaction_override
-    }
-    pub(crate) const fn compaction(&self) -> &CompactionConfig {
-        &self.compaction
-    }
     pub(crate) fn workspace(&self) -> &Path {
         &self.workspace
+    }
+
+    pub(crate) const fn execution(&self) -> ExecutionMode {
+        self.execution
+    }
+
+    pub(crate) const fn model(&self) -> Model {
+        self.model
     }
 
     pub(crate) const fn thinking(&self) -> ReasoningEffort {
@@ -1002,12 +1132,8 @@ impl AgentConfig {
         self.max_subagents
     }
 
-    pub(crate) fn instructions(&self) -> Option<&str> {
-        self.instructions.as_deref()
-    }
-
-    pub(crate) fn append_instructions(&self) -> Option<&str> {
-        self.append_instructions.as_deref()
+    pub(crate) const fn context_window_tokens(&self) -> u64 {
+        self.context_window_tokens
     }
 
     pub(crate) const fn web_search(&self) -> bool {
@@ -1232,16 +1358,6 @@ fn repository_common_directory(path: &Path) -> Option<PathBuf> {
     None
 }
 
-impl SubagentsConfig {
-    pub(crate) const fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    pub(crate) const fn allow_luna(&self) -> bool {
-        self.allow_luna
-    }
-}
-
 impl ReasoningEffort {
     pub(crate) const ALL: [Self; 5] = [Self::Low, Self::Medium, Self::High, Self::Xhigh, Self::Max];
 
@@ -1450,7 +1566,7 @@ impl Config {
 mod tests {
     use super::{
         AuthMode, Config, ConfigOverrides, Environment, McpEnvironment, McpSecretString,
-        McpServerConfig, ReasoningEffort, ReasoningMode, RemoteMemoryConfigFile,
+        McpServerConfig, Model, ReasoningEffort, ReasoningMode, RemoteMemoryConfigFile,
         RemoteMemoryTokenFile, ThemeMode, validate_mcp_url,
     };
     use crate::app::error::{ConfigError, Error, McpUrlError, RemoteMemoryConfigError};
@@ -1532,6 +1648,45 @@ mod tests {
     }
 
     #[test]
+    fn execution_mode_defaults_to_host_and_accepts_sandbox() {
+        use crate::app::config::ExecutionMode;
+        let directory = tempdir().unwrap();
+        let home = directory.path().join("home");
+        let load = |contents: &str| {
+            let path = home.join(".orvek/config.toml");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, contents).unwrap();
+            Config::load_with(
+                ConfigOverrides::default(),
+                Environment {
+                    home: Some(home.clone()),
+                    ..Environment::default()
+                },
+                directory.path(),
+            )
+        };
+        assert_eq!(
+            load("[agent]\n").unwrap().agent.execution(),
+            ExecutionMode::Host
+        );
+        assert_eq!(
+            load("[agent]\nexecution = \"sandbox\"\n")
+                .unwrap()
+                .agent
+                .execution(),
+            ExecutionMode::Sandbox
+        );
+        assert!(
+            load("[agent]\nexecution = \"sandbox\"\n")
+                .unwrap()
+                .agent
+                .execution()
+                .is_sandbox()
+        );
+        assert!(load("[agent]\nexecution = \"bogus\"\n").is_err());
+    }
+
+    #[test]
     fn missing_default_file_materializes_all_defaults() {
         let directory = tempdir().unwrap();
         let home = directory.path().join("home");
@@ -1553,6 +1708,7 @@ mod tests {
         assert_eq!(config.agent.reasoning_mode, ReasoningMode::Standard);
         assert!(!config.agent.fast_mode);
         assert_eq!(config.agent.max_subagents, 32);
+        assert_eq!(config.agent.context_window_tokens, 1_000_000);
         assert!(config.agent.web_search);
         assert!(config.agent.image_generation);
         assert_eq!(config.theme.border(), Color::DarkGray);
@@ -1565,6 +1721,7 @@ mod tests {
             &[
                 "auth",
                 "agent",
+                "models",
                 "mcp_servers",
                 "skills",
                 "memory",
@@ -1577,10 +1734,13 @@ mod tests {
             &rendered["agent"],
             &[
                 "workspace",
+                "execution",
+                "model",
                 "thinking",
                 "reasoning_mode",
                 "fast_mode",
                 "max_subagents",
+                "context_window_tokens",
                 "instructions",
                 "append_instructions",
                 "web_search",
@@ -1588,7 +1748,6 @@ mod tests {
                 "websocket_url",
                 "api_base_url",
                 "completion_hook",
-                "compaction",
             ],
         );
         assert_table_fields(&rendered["mcp_servers"], &[]);
@@ -1599,10 +1758,7 @@ mod tests {
             &["endpoint", "namespace", "bearer_token", "workspace_roots"],
         );
         assert_table_fields(&rendered["subagents"], &["enabled", "allow_luna"]);
-        assert_table_fields(
-            &rendered["theme"],
-            &["mode", "motion", "glyphs", "light", "dark"],
-        );
+        assert_table_fields(&rendered["theme"], &["mode", "light", "dark"]);
         let palette_fields = [
             "text",
             "border",
@@ -1665,6 +1821,68 @@ mod tests {
         assert!(reloaded.agent.websocket_url.is_none());
         assert!(reloaded.agent.api_base_url.is_none());
         assert!(reloaded.memory().remote().is_none());
+    }
+
+    #[test]
+    fn glm_bridge_configuration_loads() {
+        let config = load_config(
+            "[auth]\nmode = \"api-key\"\napi_key_env = \"ZAI_API_KEY\"\n\n[agent]\nmodel = \"glm-5.3\"\napi_base_url = \"http://127.0.0.1:11436/v1\"\nthinking = \"xhigh\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(config.auth().api_key_env(), "ZAI_API_KEY");
+        assert_eq!(config.agent().model(), Model::Glm);
+        assert_eq!(config.agent().model().as_str(), "glm-5.3");
+        assert_eq!(
+            config.agent().api_base_url(),
+            Some("http://127.0.0.1:11436/v1")
+        );
+        assert!(config.agent().websocket_url().is_none());
+    }
+
+    #[test]
+    fn model_routes_parse_and_validate() {
+        let config = load_config(
+            "[models.spark]\napi_base_url = \"https://api.openai.com/v1\"\napi_key_env = \"OPENAI_API_KEY\"\n\n[models.glm]\napi_base_url = \"http://127.0.0.1:11436/v1\"\n",
+        )
+        .unwrap();
+
+        let routes = config.model_routes();
+        assert_eq!(routes.len(), 2);
+        let spark = &routes[&Model::Spark];
+        assert_eq!(
+            spark.api_base_url.as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+        assert_eq!(spark.api_key_env.as_deref(), Some("OPENAI_API_KEY"));
+        let glm = &routes[&Model::Glm];
+        assert_eq!(
+            glm.api_base_url.as_deref(),
+            Some("http://127.0.0.1:11436/v1")
+        );
+        assert!(glm.websocket_url.is_none());
+
+        let error = load_config("[models.spark]\napi_key_env = \"X\"\n").unwrap_err();
+        assert!(matches!(
+            error,
+            crate::app::error::Error::Config(
+                crate::app::error::ConfigError::ModelRouteWithoutEndpoint(_)
+            )
+        ));
+        let error =
+            load_config("[models.nope]\napi_base_url = \"https://x.example/v1\"\n").unwrap_err();
+        assert!(matches!(
+            error,
+            crate::app::error::Error::Config(crate::app::error::ConfigError::UnknownModel(_))
+        ));
+    }
+
+    #[test]
+    fn api_key_env_defaults_to_openai() {
+        let config = load_config("[agent]\nmodel = \"glm\"\n").unwrap();
+
+        assert_eq!(config.auth().api_key_env(), "OPENAI_API_KEY");
+        assert_eq!(config.agent().model(), Model::Glm);
     }
 
     #[test]
@@ -2106,8 +2324,6 @@ mod tests {
         for contents in ["", "[subagents]\n"] {
             let config = load_config(contents).unwrap();
 
-            assert!(config.subagents().enabled());
-            assert!(config.subagents().allow_luna());
             let rendered: toml::Value = toml::from_str(&config.to_toml().unwrap()).unwrap();
             assert_eq!(rendered["subagents"]["enabled"].as_bool(), Some(true));
             assert_eq!(rendered["subagents"]["allow_luna"].as_bool(), Some(true));
@@ -2118,7 +2334,6 @@ mod tests {
     fn subagents_can_be_disabled_from_the_config_file() {
         let config = load_config("[subagents]\nenabled = false\n").unwrap();
 
-        assert!(!config.subagents().enabled());
         let rendered: toml::Value = toml::from_str(&config.to_toml().unwrap()).unwrap();
         assert_eq!(rendered["subagents"]["enabled"].as_bool(), Some(false));
     }
@@ -2127,8 +2342,6 @@ mod tests {
     fn luna_subagents_can_be_disabled_from_the_config_file() {
         let config = load_config("[subagents]\nallow_luna = false\n").unwrap();
 
-        assert!(config.subagents().enabled());
-        assert!(!config.subagents().allow_luna());
         let rendered: toml::Value = toml::from_str(&config.to_toml().unwrap()).unwrap();
         assert_eq!(rendered["subagents"]["allow_luna"].as_bool(), Some(false));
     }
@@ -2272,39 +2485,6 @@ mod tests {
         assert!(config.skills.roots().is_empty());
         let rendered: toml::Value = toml::from_str(&config.to_toml().unwrap()).unwrap();
         assert_eq!(rendered["skills"]["enabled"].as_bool(), Some(false));
-    }
-
-    #[test]
-    fn codex_home_uses_environment_override_or_home_default() {
-        let directory = tempdir().unwrap();
-        let home = directory.path().join("home");
-        let default_codex_home = home.join(".codex");
-        let configured_codex_home = directory.path().join("configured-codex");
-        let overridden = Config::load_with(
-            ConfigOverrides::default(),
-            Environment {
-                codex_home: Some(configured_codex_home.clone()),
-                home: Some(home.clone()),
-                ..Environment::default()
-            },
-            directory.path(),
-        )
-        .unwrap();
-        let defaulted = Config::load_with(
-            ConfigOverrides::default(),
-            Environment {
-                home: Some(home.clone()),
-                ..Environment::default()
-            },
-            directory.path(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            overridden.codex_home(),
-            Some(configured_codex_home.as_path())
-        );
-        assert_eq!(defaulted.codex_home(), Some(default_codex_home.as_path()));
     }
 
     #[test]
@@ -2991,6 +3171,68 @@ mod tests {
     }
 
     #[test]
+    fn legacy_provider_compaction_config_sets_context_window() {
+        let directory = tempdir().unwrap();
+        let config_path = directory.path().join("config.toml");
+        fs::write(
+            &config_path,
+            "[agent.compaction]\nstrategy = \"provider\"\ninput_budget_tokens = 1000000\n",
+        )
+        .unwrap();
+
+        let config = Config::load_with(
+            ConfigOverrides {
+                path: Some(config_path),
+                ..ConfigOverrides::default()
+            },
+            Environment {
+                codex_home: Some(directory.path().join("codex")),
+                ..Environment::default()
+            },
+            directory.path(),
+        )
+        .unwrap();
+
+        assert_eq!(config.agent().context_window_tokens(), 1_000_000);
+        let rendered: toml::Value = toml::from_str(&config.to_toml().unwrap()).unwrap();
+        assert_eq!(
+            rendered["agent"]["context_window_tokens"].as_integer(),
+            Some(1_000_000)
+        );
+        assert!(rendered["agent"].get("compaction").is_none());
+    }
+
+    #[test]
+    fn removed_snapcompact_strategy_has_an_actionable_error() {
+        let directory = tempdir().unwrap();
+        let config_path = directory.path().join("config.toml");
+        fs::write(
+            &config_path,
+            "[agent.compaction]\nstrategy = \"snapcompact\"\ninput_budget_tokens = 1000000\n",
+        )
+        .unwrap();
+
+        let error = Config::load_with(
+            ConfigOverrides {
+                path: Some(config_path),
+                ..ConfigOverrides::default()
+            },
+            Environment {
+                codex_home: Some(directory.path().join("codex")),
+                ..Environment::default()
+            },
+            directory.path(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::Config(ConfigError::UnsupportedCompactionStrategy(strategy))
+                if strategy == "snapcompact"
+        ));
+    }
+
+    #[test]
     fn theme_overrides_are_loaded_and_serialized() {
         let directory = tempdir().unwrap();
         let config_path = directory.path().join("config.toml");
@@ -3103,6 +3345,47 @@ mod tests {
         assert_eq!(document["agent"]["fast_mode"].as_bool(), Some(true));
         assert_eq!(document["agent"]["web_search"].as_bool(), Some(false));
         assert_eq!(document["theme"]["accent"].as_str(), Some("#AABBCC"));
+    }
+
+    #[test]
+    fn persisting_agent_settings_updates_one_document() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"# Keep this comment.
+[agent]
+thinking = "low"
+reasoning_mode = "standard"
+fast_mode = false
+web_search = false
+"#,
+        )
+        .unwrap();
+        let config = Config::load_with(
+            ConfigOverrides {
+                path: Some(path.clone()),
+                ..ConfigOverrides::default()
+            },
+            Environment {
+                codex_home: Some(directory.path().join("codex")),
+                ..Environment::default()
+            },
+            directory.path(),
+        )
+        .unwrap();
+
+        config
+            .persist_agent_settings(ReasoningEffort::Xhigh, ReasoningMode::Pro, true)
+            .unwrap();
+
+        let contents = fs::read_to_string(path).unwrap();
+        let document = toml::from_str::<toml::Value>(&contents).unwrap();
+        assert!(contents.contains("# Keep this comment."));
+        assert_eq!(document["agent"]["thinking"].as_str(), Some("xhigh"));
+        assert_eq!(document["agent"]["reasoning_mode"].as_str(), Some("pro"));
+        assert_eq!(document["agent"]["fast_mode"].as_bool(), Some(true));
+        assert_eq!(document["agent"]["web_search"].as_bool(), Some(false));
     }
 
     #[test]
