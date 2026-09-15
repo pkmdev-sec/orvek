@@ -3,6 +3,7 @@ mod composition;
 mod evidence;
 mod harness;
 mod mining;
+pub mod promotion;
 mod proposal;
 mod registry;
 mod statistics;
@@ -40,6 +41,10 @@ pub use harness::{ManifestError, ValidatedHarnessRevision};
 pub use mining::{
     FactSource, FailureCluster, FailureSignature, MechanismSource, MiningEvidenceBundle,
     MiningLimits, mine_evidence, sanitize_untrusted_text,
+};
+pub use promotion::{
+    ActivationCertificate, ApprovalRequest, FinalAuditDataset, PromotionError, RollbackTarget,
+    validate_rollback,
 };
 pub use proposal::{
     BoundedProposal, DiversityDimension, ProposalAttempt, ProposalBatch, ProposalBatchRoot,

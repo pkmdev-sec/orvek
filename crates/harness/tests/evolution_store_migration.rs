@@ -83,7 +83,7 @@ fn version_one_store_migrates_without_changing_aggregates_or_journal_bytes() {
     drop(migrated);
 
     let connection = Connection::open(database).unwrap();
-    assert_eq!(schema_version(&connection), 6);
+    assert_eq!(schema_version(&connection), 7);
     assert_eq!(raw_events(&connection), original_events);
 }
 
@@ -122,7 +122,7 @@ fn version_three_store_migrates_without_changing_session_or_journal_bytes() {
     drop(Store::open(&state).unwrap());
 
     let connection = Connection::open(database).unwrap();
-    assert_eq!(schema_version(&connection), 6);
+    assert_eq!(schema_version(&connection), 7);
     assert_eq!(raw_events(&connection), original_events);
     let migrated_session: (i64, Vec<u8>, String) = connection
         .query_row(

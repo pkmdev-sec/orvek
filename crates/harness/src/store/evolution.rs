@@ -5,10 +5,10 @@ use crate::{
     CampaignEvent, CampaignId, CampaignState, CandidateId, CandidateStage, CohortId, CohortLedger,
     CompositeOutcome, CompositeStage, CompositionError, CompositionFailure,
     CompositionFailureReason, CompositionInput, DecisionCoordinates, Digest, EvaluationCohortSpec,
-    FinalAuditAccess, FinalAuditRef, FinalAuditReservation, HarnessBinding, HarnessProvenance,
-    LedgerLimit, LedgerStatus, MiningEvidenceRef, MiningEvidenceReservation, PolicyIdentity,
-    RoundId, RoundVerdict, RoundVerdictId, ScoreResultId, SelectedHarness, TargetProfile,
-    TerminalState, ValidatedHarnessRevision, VerifiedComposition, apply_campaign,
+    FinalAuditAccess, FinalAuditRef, FinalAuditReservation, FinalVerdict, HarnessBinding,
+    HarnessProvenance, LedgerLimit, LedgerStatus, MiningEvidenceRef, MiningEvidenceReservation,
+    PolicyIdentity, RoundId, RoundVerdict, RoundVerdictId, ScoreResultId, SelectedHarness,
+    TargetProfile, TerminalState, ValidatedHarnessRevision, VerifiedComposition, apply_campaign,
     artifacts::ArtifactError,
     compose_candidate, compose_candidates,
     evolution::{
@@ -749,6 +749,259 @@ impl Store {
             )),
             None => Err(StoreError::MissingCohort(cohort)),
         }
+    }
+
+    // ── Phase 13: certificates, approval, activation, rollback ────────────
+
+    /// Records the final audit verdict with an atomic final-audit ledger
+    /// debit; a verdict can never be appended through the generic path.
+    pub fn record_final_verdict(
+        &mut self,
+        id: CampaignId,
+        expected_revision: u64,
+        verdict: FinalVerdict,
+    ) -> Result<CampaignState, StoreError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored = load_campaign_state(&transaction, id)?;
+        require_campaign_revision(&stored.state, expected_revision)?;
+        let debit_queries = 1u64;
+        let debit_error_nanos = 1u64;
+        debit_cohort_ledger_in_transaction(
+            &transaction,
+            stored.state.cohort(),
+            CohortLedger::FinalAudit,
+            LedgerDebit {
+                campaign: id,
+                use_id: verdict.report().digest(),
+                queries: debit_queries,
+                error_nanos: debit_error_nanos,
+            },
+        )?;
+        let event = CampaignEvent::FinalVerdictRecorded { verdict };
+        let next = apply_campaign(Some(&stored.state), &event)?;
+        append_campaign_event_in_transaction(&transaction, &stored, &next, &event)?;
+        transaction.commit()?;
+        Ok(next)
+    }
+
+    /// Persists an immutable activation certificate.
+    pub fn persist_activation_certificate(
+        &mut self,
+        certificate: &crate::evolution::promotion::ActivationCertificate,
+    ) -> Result<(), StoreError> {
+        let dataset = certificate.dataset();
+        let payload = serde_json::to_vec(dataset)
+            .map_err(|_| StoreError::Integrity("certificate payload is not canonical"))?;
+        let created_at_ms = storage_integer(now_ms(), "certificate timestamp overflows storage")?;
+        self.connection.execute(
+            "INSERT INTO activation_certificates(
+                 digest,campaign,cohort,revision,expected_base,payload,created_at_ms
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                certificate.digest().to_string(),
+                dataset.campaign.to_string(),
+                dataset.cohort.to_string(),
+                dataset.verdict.revision().to_string(),
+                dataset.expected_base.to_string(),
+                payload,
+                created_at_ms,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Loads a certificate by digest, revalidating its payload binding.
+    pub fn read_activation_certificate(
+        &self,
+        digest: Digest,
+    ) -> Result<crate::evolution::promotion::ActivationCertificate, StoreError> {
+        let (payload,): (Vec<u8>,) = self.connection.query_row(
+            "SELECT payload FROM activation_certificates WHERE digest=?1",
+            params![digest.to_string()],
+            |row| Ok((row.get(0)?,)),
+        )?;
+        let dataset: crate::evolution::promotion::FinalAuditDataset =
+            serde_json::from_slice(&payload)
+                .map_err(|_| StoreError::Integrity("certificate payload is unreadable"))?;
+        let certificate = crate::evolution::promotion::ActivationCertificate::issue(dataset)
+            .map_err(|_| StoreError::Integrity("certificate digest does not bind its payload"))?;
+        if certificate.digest() != digest {
+            return Err(StoreError::Integrity(
+                "certificate digest does not bind its payload",
+            ));
+        }
+        Ok(certificate)
+    }
+
+    /// Records an operator approval bound to a stored certificate. The
+    /// decision revision must equal both the certificate revision and the
+    /// campaign's awaiting revision.
+    pub fn record_campaign_approval(
+        &mut self,
+        id: CampaignId,
+        expected_revision: u64,
+        decision: crate::evolution::ApprovalDecision,
+        certificate: Digest,
+    ) -> Result<CampaignState, StoreError> {
+        let revision = decision.revision();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored = load_campaign_state(&transaction, id)?;
+        require_campaign_revision(&stored.state, expected_revision)?;
+        let certificate_row: (String, String) = transaction.query_row(
+            "SELECT campaign,revision FROM activation_certificates WHERE digest=?1",
+            params![certificate.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if certificate_row.0 != id.to_string() || certificate_row.1 != revision.to_string() {
+            return Err(StoreError::Invalid(
+                "approval must reference this campaign's certificate revision",
+            ));
+        }
+        let event = crate::evolution::CampaignEvent::ApprovalRecorded { decision };
+        let approved = apply_campaign(Some(&stored.state), &event)?;
+        append_campaign_event_in_transaction(&transaction, &stored, &approved, &event)?;
+        transaction.commit()?;
+        Ok(approved)
+    }
+
+    /// Compare-and-swaps the target's active revision and journals the
+    /// activation. Only a committed CAS emits `Activated`; a lost race
+    /// records `Superseded` with the surviving revision.
+    pub fn activate_harness_revision(
+        &mut self,
+        id: CampaignId,
+        expected_revision: u64,
+        target: crate::evolution::TargetProfile,
+        certificate: Digest,
+        expected_active: Digest,
+    ) -> Result<(CampaignState, crate::evolution::ActivationOutcome), StoreError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored = load_campaign_state(&transaction, id)?;
+        require_campaign_revision(&stored.state, expected_revision)?;
+        let new_revision: Digest = {
+            let (campaign, revision): (String, String) = transaction.query_row(
+                "SELECT campaign,revision FROM activation_certificates WHERE digest=?1",
+                params![certificate.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            if campaign != id.to_string() {
+                return Err(StoreError::Invalid(
+                    "certificate belongs to a different campaign",
+                ));
+            }
+            revision
+                .parse()
+                .map_err(|_| StoreError::Integrity("certificate revision is not a digest"))?
+        };
+        // Compare-and-swap: exactly one approved campaign can move a pointer
+        // off its expected base; every loser records supersession.
+        let updated = transaction.execute(
+            "UPDATE harness_targets SET active_revision=?7,updated_at_ms=?8
+             WHERE model_digest=?1 AND protocol_digest=?2 AND environment_digest=?3
+               AND task_profile_digest=?4 AND channel=?5 AND active_revision=?6",
+            params![
+                target.model.to_string(),
+                target.protocol.to_string(),
+                target.environment.to_string(),
+                target.task_profile.to_string(),
+                target.channel.as_str(),
+                expected_active.to_string(),
+                new_revision.to_string(),
+                storage_integer(now_ms(), "activation timestamp overflows storage")?,
+            ],
+        )?;
+        let timestamp = storage_integer(now_ms(), "receipt timestamp overflows storage")?;
+        let receipt = crate::evolution::ActivationReceiptId::from_digest(Digest::of(
+            &serde_json::to_vec(&serde_json::json!({
+                "campaign": id.to_string(),
+                "certificate": certificate.to_string(),
+                "revision": new_revision.to_string(),
+                "expected_base": expected_active.to_string(),
+            }))
+            .expect("activation receipt payload serializes"),
+        ));
+        let outcome = if updated == 1 {
+            crate::evolution::ActivationOutcome::Activated {
+                revision: new_revision,
+                receipt,
+            }
+        } else {
+            let (active,): (String,) = transaction.query_row(
+                "SELECT active_revision FROM harness_targets
+                 WHERE model_digest=?1 AND protocol_digest=?2 AND environment_digest=?3
+                   AND task_profile_digest=?4 AND channel=?5",
+                params![
+                    target.model.to_string(),
+                    target.protocol.to_string(),
+                    target.environment.to_string(),
+                    target.task_profile.to_string(),
+                    target.channel.as_str(),
+                ],
+                |row| Ok((row.get(0)?,)),
+            )?;
+            let active: Digest = active
+                .parse()
+                .map_err(|_| StoreError::Integrity("active revision is not a digest"))?;
+            crate::evolution::ActivationOutcome::Superseded {
+                requested_revision: new_revision,
+                active_revision: active,
+                receipt,
+            }
+        };
+        let superseded = u8::from(matches!(
+            outcome,
+            crate::evolution::ActivationOutcome::Superseded { .. }
+        ));
+        transaction.execute(
+            "INSERT INTO activation_receipts(
+                 receipt,campaign,certificate,from_revision,to_revision,superseded,created_at_ms
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                receipt.to_string(),
+                id.to_string(),
+                certificate.to_string(),
+                expected_active.to_string(),
+                new_revision.to_string(),
+                superseded,
+                timestamp,
+            ],
+        )?;
+        let event = crate::evolution::CampaignEvent::ActivationRecorded { outcome };
+        let activated = apply_campaign(Some(&stored.state), &event)?;
+        append_campaign_event_in_transaction(&transaction, &stored, &activated, &event)?;
+        transaction.commit()?;
+        Ok((activated, outcome))
+    }
+
+    /// Returns the (from, to) revisions an activation receipt recorded.
+    pub fn activation_receipt_revisions(
+        &self,
+        receipt: crate::evolution::ActivationReceiptId,
+    ) -> Result<Option<(Digest, Digest)>, StoreError> {
+        let row: Option<(String, String)> = self
+            .connection
+            .query_row(
+                "SELECT from_revision,to_revision FROM activation_receipts WHERE receipt=?1",
+                params![receipt.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        row.map(|(from, to)| {
+            let from: Digest = from
+                .parse()
+                .map_err(|_| StoreError::Integrity("receipt from-revision is not a digest"))?;
+            let to: Digest = to
+                .parse()
+                .map_err(|_| StoreError::Integrity("receipt to-revision is not a digest"))?;
+            Ok((from, to))
+        })
+        .transpose()
     }
 
     /// Permanently retires an audit epoch. There is deliberately no reopen or

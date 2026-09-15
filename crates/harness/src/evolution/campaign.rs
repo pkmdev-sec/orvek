@@ -697,7 +697,7 @@ impl FinalVerdict {
         }
     }
 
-    const fn revision(self) -> Digest {
+    pub const fn revision(self) -> Digest {
         match self {
             Self::Verified { revision, .. }
             | Self::NotVerified { revision, .. }
@@ -705,7 +705,7 @@ impl FinalVerdict {
         }
     }
 
-    const fn report(self) -> AuditReportId {
+    pub const fn report(self) -> AuditReportId {
         match self {
             Self::Verified { report, .. }
             | Self::NotVerified { report, .. }
@@ -729,7 +729,7 @@ pub enum ApprovalDecision {
 }
 
 impl ApprovalDecision {
-    const fn revision(&self) -> Digest {
+    pub const fn revision(&self) -> Digest {
         match self {
             Self::Approved { revision, .. } | Self::Rejected { revision, .. } => *revision,
         }

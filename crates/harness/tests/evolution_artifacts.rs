@@ -384,7 +384,7 @@ fn version_two_stores_migrate_to_the_sealed_evidence_schema() {
     let version: i32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 6);
+    assert_eq!(version, 7);
 }
 
 fn register_cohort(store: &mut Store, namespace: &str) -> EvaluationCohortSpec {

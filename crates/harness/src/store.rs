@@ -28,7 +28,7 @@ use thiserror::Error;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-const SCHEMA_VERSION: i32 = 6;
+const SCHEMA_VERSION: i32 = 7;
 const MAX_EVENT_BYTES: usize = 512 * 1024;
 const MAX_JOURNAL_PAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_HOST_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
@@ -169,23 +169,31 @@ impl Store {
                 migrate_v3_to_v4(&connection)?;
                 migrate_v4_to_v5(&connection)?;
                 migrate_v5_to_v6(&connection)?;
+                migrate_v6_to_v7(&connection)?;
             }
             2 => {
                 migrate_v2_to_v3(&connection)?;
                 migrate_v3_to_v4(&connection)?;
                 migrate_v4_to_v5(&connection)?;
                 migrate_v5_to_v6(&connection)?;
+                migrate_v6_to_v7(&connection)?;
             }
             3 => {
                 migrate_v3_to_v4(&connection)?;
                 migrate_v4_to_v5(&connection)?;
                 migrate_v5_to_v6(&connection)?;
+                migrate_v6_to_v7(&connection)?;
             }
             4 => {
                 migrate_v4_to_v5(&connection)?;
                 migrate_v5_to_v6(&connection)?;
+                migrate_v6_to_v7(&connection)?;
             }
-            5 => migrate_v5_to_v6(&connection)?,
+            5 => {
+                migrate_v5_to_v6(&connection)?;
+                migrate_v6_to_v7(&connection)?;
+            }
+            6 => migrate_v6_to_v7(&connection)?,
             SCHEMA_VERSION => {}
             unsupported => return Err(StoreError::Schema(unsupported)),
         }
@@ -2384,6 +2392,52 @@ CREATE TABLE campaigns(
 CREATE INDEX campaigns_by_cohort ON campaigns(cohort,id);
 ";
 
+const EVOLUTION_PROMOTION_SCHEMA_V7: &str = "
+CREATE TABLE IF NOT EXISTS activation_certificates(
+    digest TEXT PRIMARY KEY CHECK(length(digest)=64),
+    campaign TEXT NOT NULL REFERENCES campaigns(id),
+    cohort TEXT NOT NULL,
+    revision TEXT NOT NULL CHECK(length(revision)=64),
+    expected_base TEXT NOT NULL CHECK(length(expected_base)=64),
+    payload BLOB NOT NULL,
+    created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0)
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS activation_certificates_no_update BEFORE UPDATE ON activation_certificates
+BEGIN SELECT RAISE(ABORT,'activation certificates are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS activation_certificates_no_delete BEFORE DELETE ON activation_certificates
+BEGIN SELECT RAISE(ABORT,'activation certificates are immutable'); END;
+
+CREATE TABLE IF NOT EXISTS activation_receipts(
+    receipt TEXT PRIMARY KEY CHECK(length(receipt)=64),
+    campaign TEXT NOT NULL REFERENCES campaigns(id),
+    certificate TEXT NOT NULL REFERENCES activation_certificates(digest),
+    from_revision TEXT NOT NULL CHECK(length(from_revision)=64),
+    to_revision TEXT NOT NULL CHECK(length(to_revision)=64),
+    superseded INTEGER NOT NULL CHECK(superseded IN (0,1)) DEFAULT 0,
+    created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0)
+) STRICT;
+CREATE INDEX IF NOT EXISTS activation_receipts_by_campaign
+    ON activation_receipts(campaign,created_at_ms);
+CREATE TRIGGER IF NOT EXISTS activation_receipts_no_update BEFORE UPDATE ON activation_receipts
+BEGIN SELECT RAISE(ABORT,'activation receipts are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS activation_receipts_no_delete BEFORE DELETE ON activation_receipts
+BEGIN SELECT RAISE(ABORT,'activation receipts are append-only'); END;
+
+CREATE TABLE IF NOT EXISTS rollback_receipts(
+    receipt TEXT PRIMARY KEY CHECK(length(receipt)=64),
+    campaign TEXT NOT NULL REFERENCES campaigns(id),
+    activation TEXT NOT NULL REFERENCES activation_receipts(receipt),
+    from_revision TEXT NOT NULL CHECK(length(from_revision)=64),
+    restored_revision TEXT NOT NULL CHECK(length(restored_revision)=64),
+    reason TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0)
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS rollback_receipts_no_update BEFORE UPDATE ON rollback_receipts
+BEGIN SELECT RAISE(ABORT,'rollback receipts are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS rollback_receipts_no_delete BEFORE DELETE ON rollback_receipts
+BEGIN SELECT RAISE(ABORT,'rollback receipts are append-only'); END;
+";
+
 const EVOLUTION_SCORING_SCHEMA_V6: &str = "
 ALTER TABLE evaluation_cohorts ADD COLUMN cohort_spec BLOB;
 ALTER TABLE evaluation_cohorts ADD COLUMN cohort_spec_digest TEXT
@@ -2430,7 +2484,8 @@ fn initialize_schema(connection: &Connection) -> Result<(), StoreError> {
          {EVOLUTION_ARTIFACT_SCHEMA_V3}
          {EVOLUTION_CAMPAIGN_SCHEMA_V5}
          {EVOLUTION_SCORING_SCHEMA_V6}
-         PRAGMA user_version=6;
+         {EVOLUTION_PROMOTION_SCHEMA_V7}
+         PRAGMA user_version=7;
          COMMIT;"
     ))?;
     Ok(())
@@ -2497,6 +2552,16 @@ fn migrate_v5_to_v6(connection: &Connection) -> Result<(), StoreError> {
         "BEGIN IMMEDIATE;
          {EVOLUTION_SCORING_SCHEMA_V6}
          PRAGMA user_version=6;
+         COMMIT;"
+    ))?;
+    Ok(())
+}
+
+fn migrate_v6_to_v7(connection: &Connection) -> Result<(), StoreError> {
+    connection.execute_batch(&format!(
+        "BEGIN IMMEDIATE;
+         {EVOLUTION_PROMOTION_SCHEMA_V7}
+         PRAGMA user_version=7;
          COMMIT;"
     ))?;
     Ok(())
