@@ -24,7 +24,8 @@ pub(crate) struct PreparedHandoff {
 }
 pub(crate) struct HandoffFailure {
     pub(crate) prompt: Option<String>,
-    pub(crate) error: Error,
+    // Boxed to keep the `Err` variant of `prepare` small.
+    pub(crate) error: Box<Error>,
 }
 
 pub(crate) async fn prepare(
@@ -37,14 +38,14 @@ pub(crate) async fn prepare(
         .await
         .map_err(|error| HandoffFailure {
             prompt: None,
-            error: error.into(),
+            error: Box::new(error.into()),
         })?;
     if source.branch.pending_task.is_some() {
         return Err(HandoffFailure {
             prompt: None,
-            error: Error::HostRequest(
+            error: Box::new(Error::HostRequest(
                 "a settled workspace checkpoint is required for handoff".into(),
-            ),
+            )),
         });
     }
     let result = auxiliary::run(
@@ -62,12 +63,12 @@ pub(crate) async fn prepare(
     .and_then(auxiliary::completed_text);
     let prompt = result.map_err(|error| HandoffFailure {
         prompt: None,
-        error,
+        error: error.into(),
     })?;
     if cancel.is_cancelled() {
         return Err(HandoffFailure {
             prompt: Some(prompt),
-            error: Error::AuxiliaryCancelled,
+            error: Box::new(Error::AuxiliaryCancelled),
         });
     }
     let result=async {
@@ -83,7 +84,7 @@ pub(crate) async fn prepare(
         })
         .map_err(|error| HandoffFailure {
             prompt: Some(prompt),
-            error,
+            error: error.into(),
         })
 }
 async fn create(client: &HostClient, parent: SessionCursor) -> Result<SessionView> {

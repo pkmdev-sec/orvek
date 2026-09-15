@@ -891,7 +891,7 @@ pub(super) async fn run(
                                 install(pane,replacement,prepared.configured,&mut panes,&mut app,&sender).await?;
                             }
                             Err(failure)=>{
-                                let event=if matches!(failure.error,Error::AuxiliaryCancelled){AppEvent::HandoffCancelled(pane)}else{AppEvent::HandoffFailed {pane,error:failure.error.to_string()}};
+                                let event=if matches!(&*failure.error,Error::AuxiliaryCancelled){AppEvent::HandoffCancelled(pane)}else{AppEvent::HandoffFailed {pane,error:failure.error.to_string()}};
                                 schedule(app.update(event),&mut scheduler,&mut effects);
                                 if let Some(prompt)=failure.prompt {schedule(app.update(AppEvent::EditorDraft {pane,draft:prompt}),&mut scheduler,&mut effects);}
                             }
@@ -1291,7 +1291,7 @@ fn dispatch_submission(
                 None,
                 Err(SubmitFailure {
                     uncertain: false,
-                    error,
+                    error: error.into(),
                 }),
             ),
         };

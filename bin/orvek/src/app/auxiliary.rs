@@ -28,7 +28,7 @@ pub(crate) async fn run(
     });
     let mut receipt = submission::acknowledge(client, &request)
         .await
-        .map_err(|failure| failure.error)?;
+        .map_err(|failure| *failure.error)?;
     let mut cancelled = false;
     let mut failures = 0u8;
     while receipt.status.pending() {

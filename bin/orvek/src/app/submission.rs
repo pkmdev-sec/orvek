@@ -87,7 +87,8 @@ pub(crate) async fn intent(client: &HostClient, session: SessionId) -> Result<Su
 pub(crate) struct SubmitFailure {
     /// True means the caller must keep this exact request ID for recovery.
     pub(crate) uncertain: bool,
-    pub(crate) error: Error,
+    // Boxed to keep the `Err` variant of `acknowledge` small.
+    pub(crate) error: Box<Error>,
 }
 
 /// Retry only this immutable request. A lost response never creates another ID.
@@ -98,7 +99,7 @@ pub(crate) async fn acknowledge(
     let Command::Submit { session, .. } = request.command else {
         return Err(SubmitFailure {
             uncertain: false,
-            error: Error::HostRequest("expected a submit command".into()),
+            error: Box::new(Error::HostRequest("expected a submit command".into())),
         });
     };
     let mut uncertain = false;
@@ -115,7 +116,7 @@ pub(crate) async fn acknowledge(
             Err(error @ Error::HostRequest(_)) if !uncertain => {
                 return Err(SubmitFailure {
                     uncertain: false,
-                    error,
+                    error: error.into(),
                 });
             }
             Err(error) => {
@@ -139,14 +140,14 @@ pub(crate) async fn acknowledge(
     }
     Err(SubmitFailure {
         uncertain: true,
-        error: Error::HostRequest(format!(
+        error: Box::new(Error::HostRequest(format!(
             "submission {} may have been accepted in session {}; reconnect with this request ID before resubmitting ({})",
             request.id,
             session,
             last_error
                 .map(|error| error.to_string())
                 .unwrap_or_default()
-        )),
+        ))),
     })
 }
 

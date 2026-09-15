@@ -64,7 +64,7 @@ pub(crate) async fn run(
     )?;
     let mut receipt = super::submission::acknowledge(&client, &request)
         .await
-        .map_err(|failure| failure.error)?;
+        .map_err(|failure| *failure.error)?;
     output.emit("submission", &receipt)?;
     let mut after = configured.session.journal_sequence;
     let mut watch = client.subscribe(after).await.ok();
