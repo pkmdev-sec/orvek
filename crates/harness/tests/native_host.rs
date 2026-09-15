@@ -304,6 +304,70 @@ async fn native_primary_tools_edit_the_live_workspace_and_prose_finishes_unverif
 }
 
 #[tokio::test]
+async fn native_primary_work_ignores_verification_budgets_and_evidence_invalidation() {
+    let fixture = Fixture::new();
+    let outputs = vec![
+        vec![function_call(
+            "fc_exec",
+            "call_exec",
+            "exec_command",
+            json!({"command":"sleep 0.02; printf finished > long-running.txt"}),
+        )],
+        vec![final_message("msg_done")],
+        vec![final_message("msg_followup_done")],
+    ];
+    let (endpoint, server) = provider(outputs).await;
+    let host = fixture.open_host(&endpoint).await;
+    let session = fixture.admit_session(&host).await;
+    let request = Uuid::new_v4();
+    host.submit(
+        session,
+        request,
+        vec![json!({"type":"input_text","text":"Complete the native work"})],
+        SubmitIntent::NewTask {
+            limits: Limits {
+                model_calls: 1,
+                tokens: 1,
+                elapsed_ms: 1,
+                ..Limits::default()
+            },
+            policy: policy(),
+        },
+    )
+    .await
+    .unwrap();
+    let run = wait_submission(&host, session, request).await;
+
+    assert_eq!(run.task.outcome, Some(Outcome::FinishedUnverified));
+    assert!(run.task.usage.model_calls > run.task.limits().model_calls);
+    assert!(run.task.usage.tokens > run.task.limits().tokens);
+    assert_eq!(run.task.generation, 1);
+    assert_eq!(
+        fs::read_to_string(fixture.source.join("long-running.txt")).unwrap(),
+        "finished"
+    );
+
+    let followup = Uuid::new_v4();
+    host.submit(
+        session,
+        followup,
+        vec![json!({"type":"input_text","text":"Continue after the limits are exhausted"})],
+        SubmitIntent::Continue {
+            task: run.task.id,
+            scope_revision: run.task.scope_revision,
+            schedule: Schedule::Queue,
+        },
+    )
+    .await
+    .unwrap();
+    let continued = wait_submission(&host, session, followup).await;
+    assert_eq!(continued.task.id, run.task.id);
+    assert_eq!(continued.task.outcome, Some(Outcome::FinishedUnverified));
+    assert!(continued.task.usage.model_calls > run.task.usage.model_calls);
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn native_receipts_record_host_backend_cwd_and_command_metadata() {
     let fixture = Fixture::new();
     let outputs = vec![

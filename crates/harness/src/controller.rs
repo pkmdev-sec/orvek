@@ -1197,9 +1197,10 @@ impl Host {
                     {
                         let outcome = if task.cancellation_requested {
                             Outcome::Cancelled
-                        } else if matches!(error, HostError::Store(StoreError::Budget))
-                            || crate::store::now_ms().saturating_sub(task.started_ms)
-                                >= task.limits().elapsed_ms
+                        } else if self.native_tools.is_none()
+                            && (matches!(error, HostError::Store(StoreError::Budget))
+                                || crate::store::now_ms().saturating_sub(task.started_ms)
+                                    >= task.limits().elapsed_ms)
                         {
                             Outcome::BudgetExhausted
                         } else {
@@ -1265,16 +1266,27 @@ impl Host {
         cancellation: CancellationToken,
         emit: EventSink,
     ) -> Result<TaskRun, HostError> {
+        let native = self.native_tools.is_some();
         let (mut session, mut task, created) = {
             let mut store = self.store.lock().await;
             match admission {
                 TaskRequest::Continue { request } => {
                     let classification = store.ordinary_classification(session_id, request)?;
-                    let mut run = store.continue_submission(session_id, request)?;
+                    let mut run = if native {
+                        store.continue_submission_without_budget_limit(session_id, request)?
+                    } else {
+                        store.continue_submission(session_id, request)?
+                    };
                     if let Some((kind, call, receipt, started_ms)) = classification {
-                        let task = store.account_ordinary_classification(
-                            run.1.id, request, kind, call, receipt, started_ms,
-                        )?;
+                        let task = if native {
+                            store.account_ordinary_classification_without_budget_limit(
+                                run.1.id, request, kind, call, receipt, started_ms,
+                            )?
+                        } else {
+                            store.account_ordinary_classification(
+                                run.1.id, request, kind, call, receipt, started_ms,
+                            )?
+                        };
                         run.1 = task;
                     }
                     run
@@ -1288,9 +1300,15 @@ impl Host {
                     let mut run =
                         store.start_prepared_request(session_id, request, input, limits, intake)?;
                     if let Some((kind, call, receipt, started_ms)) = classification {
-                        let task = store.account_ordinary_classification(
-                            run.1.id, request, kind, call, receipt, started_ms,
-                        )?;
+                        let task = if native {
+                            store.account_ordinary_classification_without_budget_limit(
+                                run.1.id, request, kind, call, receipt, started_ms,
+                            )?
+                        } else {
+                            store.account_ordinary_classification(
+                                run.1.id, request, kind, call, receipt, started_ms,
+                            )?
+                        };
                         run.1 = task;
                     }
                     run
@@ -1305,7 +1323,15 @@ impl Host {
                     task,
                     revision,
                     reason,
-                } => store.resume_task(session_id, request, task, revision, reason)?,
+                } => {
+                    if native {
+                        store.resume_task_without_budget_limit(
+                            session_id, request, task, revision, reason,
+                        )?
+                    } else {
+                        store.resume_task(session_id, request, task, revision, reason)?
+                    }
+                }
             }
         };
         if !created {
@@ -1316,9 +1342,8 @@ impl Host {
                 message: "Request was already admitted; inspect its recorded outcome".into(),
             });
         }
-        let deadline = TaskDeadline::start(&task, cancellation.clone());
+        let deadline = (!native).then(|| TaskDeadline::start(&task, cancellation.clone()));
         let scope_revision = task.scope_revision;
-        let native = self.native_tools.is_some();
         // A native task never materializes or removes anything: the session
         // workspace is the user's live directory and the only copy of the work.
         let workspace = if native {
@@ -1341,13 +1366,16 @@ impl Host {
                 return self.end_task(session_id, request, task.id, Outcome::Blocked, "Turn superseded by a recorded user follow-up; its requirements await admission".into(), emit).await;
             }
             if cancellation.is_cancelled() {
+                let outcome = deadline
+                    .as_ref()
+                    .map_or(Outcome::Cancelled, TaskDeadline::cancellation_outcome);
                 return self
                     .end_task(
                         session_id,
                         request,
                         task.id,
-                        deadline.cancellation_outcome(),
-                        if deadline.cancellation_outcome() == Outcome::BudgetExhausted {
+                        outcome,
+                        if outcome == Outcome::BudgetExhausted {
                             "Task elapsed-time allowance exhausted"
                         } else {
                             "Cancelled by user"
@@ -1479,7 +1507,12 @@ impl Host {
                         )
                         .await;
                 }
-                match store.reserve_model_call(task.id, call) {
+                let reservation = if native {
+                    store.reserve_model_call_without_budget_limit(task.id, call)
+                } else {
+                    store.reserve_model_call(task.id, call)
+                };
+                match reservation {
                     Ok(state) => task = state,
                     Err(StoreError::Budget) => {
                         drop(store);
@@ -1592,7 +1625,9 @@ impl Host {
                 output.status == ResponseStatus::Completed && response.failure.is_none()
             }) else {
                 let outcome = if cancellation.is_cancelled() {
-                    deadline.cancellation_outcome()
+                    deadline
+                        .as_ref()
+                        .map_or(Outcome::Cancelled, TaskDeadline::cancellation_outcome)
                 } else {
                     Outcome::Failed
                 };
@@ -1608,9 +1643,9 @@ impl Host {
                     .end_task(session_id, request, task.id, outcome, reason, emit)
                     .await;
             };
-            let Some(_) = tokens else {
+            if tokens.is_none() && !native {
                 return self.end_task(session_id, request, task.id, Outcome::BudgetExhausted, "Provider token usage is unknown; the configured token allowance cannot be established".into(), emit).await;
-            };
+            }
             {
                 let mut store = self.store.lock().await;
                 task = store.load(task.id)?;
@@ -2207,6 +2242,7 @@ impl Host {
         ) {
             return Ok(json!({"error":"tool is not in the admitted capability roster"}));
         }
+        let native = self.native_tools.is_some();
         let (state, job, mutates) = {
             let mut store = self.store.lock().await;
             let mut state = store.load(task_id)?;
@@ -2215,7 +2251,7 @@ impl Host {
             }
             // Early writes invalidate evidence just like post-contract edits.
             let mutates = matches!(proposal.name.as_str(), "write_file" | "exec_command");
-            if mutates {
+            if mutates && !native {
                 state = store.invalidate_candidate(
                     task_id,
                     state.revision,
@@ -2252,11 +2288,19 @@ impl Host {
                 input,
                 environment,
             };
-            let (state, job) =
-                store.start_execution_job(task_id, state.revision, mutates, 60_000, invocation)?;
+            let (state, job) = if native {
+                store.start_execution_job_without_budget_limit(
+                    task_id,
+                    state.revision,
+                    mutates,
+                    u64::MAX,
+                    invocation,
+                )?
+            } else {
+                store.start_execution_job(task_id, state.revision, mutates, 60_000, invocation)?
+            };
             (state, job, mutates)
         };
-        let native = self.native_tools.is_some();
         // Native jobs address the session workspace directly; isolated jobs
         // address the task's private working copy. Both produce the same
         // receipt shape: a result value, optional execution metadata, and a
@@ -2268,7 +2312,7 @@ impl Host {
                     task_id: task_id.0,
                     generation: state.generation,
                     job_id: job,
-                    timeout_ms: 60_000,
+                    timeout_ms: (proposal.name != "exec_command").then_some(60_000),
                     max_output_bytes: 32 * 1024,
                 };
                 let run = native_tools

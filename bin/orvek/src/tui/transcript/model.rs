@@ -485,6 +485,10 @@ impl TranscriptModel {
                         ),
                         true,
                     ),
+                    TaskEvent::Stopped {
+                        outcome: Outcome::FinishedUnverified,
+                        ..
+                    } => return false,
                     TaskEvent::Stopped { outcome, reason } => (
                         format!("Task {id}: {} · {reason}", outcome_name(*outcome)),
                         false,
@@ -960,6 +964,25 @@ mod tool_preview_tests {
                 .iter()
                 .all(|entry| matches!(entry.kind, EntryKind::Tool(_)))
         );
+    }
+
+    #[test]
+    fn finished_unverified_is_not_rendered() {
+        let mut model = TranscriptModel::default();
+
+        let change = apply(
+            &mut model,
+            vec![ViewChange::Task {
+                id: orvek_harness::state::TaskId::new(),
+                event: TaskEvent::Stopped {
+                    outcome: Outcome::FinishedUnverified,
+                    reason: "Finished on the native host without verification evidence".into(),
+                },
+            }],
+        );
+
+        assert!(!change.changed);
+        assert!(model.entries().is_empty());
     }
 
     #[test]

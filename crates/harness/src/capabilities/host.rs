@@ -22,7 +22,7 @@ pub struct HostToolContext {
     pub task_id: Uuid,
     pub generation: u64,
     pub job_id: Uuid,
-    pub timeout_ms: u64,
+    pub timeout_ms: Option<u64>,
     pub max_output_bytes: usize,
 }
 #[derive(Debug, thiserror::Error)]
@@ -79,6 +79,8 @@ pub struct NativeExecutionResult {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub elapsed_ms: u64,
+    #[serde(default)]
+    pub output_truncated: bool,
     pub metadata: NativeEnvironment,
 }
 pub struct HostToolRun {
@@ -105,7 +107,7 @@ impl HostTools {
                 "read_file" => "Read a native host file, including outside the project. Returns digest and bounded content.",
                 "search" => "Search literal text in native host files or directories. Follows ordinary symlinks; reports bounded coverage.",
                 "write_file" => "Create, replace, or delete a native host file after checking expected digest or absence. Creates missing parent directories. Ordinary symlinks are followed. Concurrent external writers are not fenced.",
-                _ => "Run /bin/sh on the native host with inherited HOME, PATH, environment and network. No Docker or sandbox. Optional cwd accepts absolute, relative or ~/ paths. Timeout/cancellation kills the process group, but cannot fence daemonized escapes. Unknown outcomes must not be retried automatically.",
+                _ => "Run /bin/sh on the native host with inherited HOME, PATH, environment and network. No Docker or sandbox. Optional cwd accepts absolute, relative or ~/ paths. User cancellation kills the process group, but cannot fence daemonized escapes. Output is truncated without stopping the command. Unknown outcomes must not be retried automatically.",
             }.into();
             fn paths(value: &mut Value) {
                 if let Some(object) = value.as_object_mut() {
@@ -138,7 +140,7 @@ impl HostTools {
     ) -> HostToolRun {
         let mut execution = None;
         let result = async {
-            if !context.cwd.is_absolute() || context.timeout_ms == 0 || context.max_output_bytes < 4096 || context.max_output_bytes > 16*1024*1024 || serde_json::to_vec(&arguments).map_err(|_| HostToolError::InvalidArguments)?.len() > 2*1024*1024 { return Err(HostToolError::InvalidArguments); }
+            if !context.cwd.is_absolute() || context.timeout_ms == Some(0) || context.max_output_bytes < 4096 || context.max_output_bytes > 16*1024*1024 || serde_json::to_vec(&arguments).map_err(|_| HostToolError::InvalidArguments)?.len() > 2*1024*1024 { return Err(HostToolError::InvalidArguments); }
             let cwd = fs::canonicalize(&context.cwd)?;
             let result = if name == "exec_command" {
                 let args: ExecArgs = decode(arguments)?;
@@ -146,7 +148,7 @@ impl HostTools {
                 let actual_cwd = fs::canonicalize(resolve(&cwd, args.cwd.as_deref().unwrap_or("."))?)?;
                 let native = run_command(args.command, actual_cwd, &context, cancellation).await?;
                 let unknown = matches!(native.status, NativeExecutionStatus::Unknown(_));
-                let value = json!({"status":native.status,"stdout":encoded(&native.stdout),"stderr":encoded(&native.stderr),"elapsed_ms":native.elapsed_ms,"metadata":native.metadata});
+                let value = json!({"status":native.status,"stdout":encoded(&native.stdout),"stderr":encoded(&native.stderr),"output_truncated":native.output_truncated,"elapsed_ms":native.elapsed_ms,"metadata":native.metadata});
                 execution = Some(native);
                 if unknown { return Err(HostToolError::OutcomeUnknown); }
                 value
@@ -179,11 +181,11 @@ fn resolve(cwd: &Path, value: &str) -> Result<PathBuf, HostToolError> {
     }
     Ok(cwd.join(value))
 }
-fn check(cancel: &CancellationToken, deadline: Instant) -> Result<(), HostToolError> {
+fn check(cancel: &CancellationToken, deadline: Option<Instant>) -> Result<(), HostToolError> {
     if cancel.is_cancelled() {
         return Err(HostToolError::Cancelled);
     }
-    if Instant::now() >= deadline {
+    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
         return Err(HostToolError::TimedOut);
     }
     Ok(())
@@ -207,7 +209,9 @@ fn file_tool(
     context: &HostToolContext,
     cancel: &CancellationToken,
 ) -> Result<Value, HostToolError> {
-    let deadline = Instant::now() + Duration::from_millis(context.timeout_ms);
+    let deadline = context
+        .timeout_ms
+        .map(|timeout_ms| Instant::now() + Duration::from_millis(timeout_ms));
     check(cancel, deadline)?;
     let budget = context.max_output_bytes.saturating_sub(2048) / 6;
     match name {
@@ -405,7 +409,9 @@ async fn run_command(
 ) -> Result<NativeExecutionResult, HostToolError> {
     check(
         &cancel,
-        Instant::now() + Duration::from_millis(context.timeout_ms),
+        context
+            .timeout_ms
+            .map(|timeout_ms| Instant::now() + Duration::from_millis(timeout_ms)),
     )?;
     let started = Instant::now();
     let mut child = Command::new("/bin/sh")
@@ -424,9 +430,15 @@ async fn run_command(
         .ok_or(HostToolError::OutcomeUnknown)?;
     let mut stdout_pipe = child.stdout.take().ok_or(HostToolError::OutcomeUnknown)?;
     let mut stderr_pipe = child.stderr.take().ok_or(HostToolError::OutcomeUnknown)?;
-    let deadline = tokio::time::sleep(Duration::from_millis(context.timeout_ms));
+    let deadline = async {
+        match context.timeout_ms {
+            Some(timeout_ms) => tokio::time::sleep(Duration::from_millis(timeout_ms)).await,
+            None => std::future::pending().await,
+        }
+    };
     tokio::pin!(deadline);
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let mut output_truncated = false;
     let (mut out_buffer, mut err_buffer) = ([0u8; 4096], [0u8; 4096]);
     let (mut out_open, mut err_open) = (true, true);
     let mut exited = None;
@@ -450,14 +462,14 @@ async fn run_command(
                 out_open=count!=0;
                 let remaining=limit.saturating_sub(stdout.len()+stderr.len());
                 stdout.extend_from_slice(&out_buffer[..count.min(remaining)]);
-                if count>remaining { break NativeExecutionStatus::OutputLimit; }
+                output_truncated |= count > remaining;
             }
             result=stderr_pipe.read(&mut err_buffer), if err_open=>{
                 let count=match result {Ok(n)=>n,Err(_)=>break NativeExecutionStatus::Unknown("stderr capture failed".into())};
                 err_open=count!=0;
                 let remaining=limit.saturating_sub(stdout.len()+stderr.len());
                 stderr.extend_from_slice(&err_buffer[..count.min(remaining)]);
-                if count>remaining { break NativeExecutionStatus::OutputLimit; }
+                output_truncated |= count > remaining;
             }
         }
     };
@@ -479,6 +491,7 @@ async fn run_command(
         stdout,
         stderr,
         elapsed_ms: started.elapsed().as_millis() as u64,
+        output_truncated,
         metadata: NativeEnvironment {
             backend: "native_host".into(),
             cwd,
@@ -510,7 +523,7 @@ mod tests {
             task_id: Uuid::new_v4(),
             generation: 1,
             job_id: Uuid::new_v4(),
-            timeout_ms: 10_000,
+            timeout_ms: Some(10_000),
             max_output_bytes: 1 << 20,
         }
     }
@@ -613,6 +626,30 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(home_probe["result"]["status"]["kind"], "exited");
+    }
+
+    #[tokio::test]
+    async fn exec_without_deadline_truncates_output_without_stopping_the_command() {
+        let directory = tempfile::tempdir().unwrap();
+        let context = HostToolContext {
+            timeout_ms: None,
+            max_output_bytes: 4096,
+            ..context(directory.path())
+        };
+        let result = run(
+            "exec_command",
+            json!({"command":"head -c 10000 /dev/zero; printf finished > completed"}),
+            context,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["result"]["status"]["kind"], "exited");
+        assert_eq!(result["result"]["output_truncated"], true);
+        assert_eq!(
+            fs::read_to_string(directory.path().join("completed")).unwrap(),
+            "finished"
+        );
     }
 
     #[tokio::test]

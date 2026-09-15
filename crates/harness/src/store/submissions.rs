@@ -416,6 +416,23 @@ impl Store {
         session_id: SessionId,
         request: Uuid,
     ) -> Result<(SessionState, TaskState, bool), StoreError> {
+        self.continue_submission_record(session_id, request, true)
+    }
+
+    pub(crate) fn continue_submission_without_budget_limit(
+        &mut self,
+        session_id: SessionId,
+        request: Uuid,
+    ) -> Result<(SessionState, TaskState, bool), StoreError> {
+        self.continue_submission_record(session_id, request, false)
+    }
+
+    fn continue_submission_record(
+        &mut self,
+        session_id: SessionId,
+        request: Uuid,
+        enforce_budget: bool,
+    ) -> Result<(SessionState, TaskState, bool), StoreError> {
         let submission = self.submission(session_id, request)?;
         let id = if let WorkIntent::Continue { task: id, .. } = submission.intent {
             id
@@ -475,7 +492,9 @@ impl Store {
             ));
         }
         task.cancellation_requested = false;
-        check_budget(&task)?;
+        if enforce_budget {
+            check_budget(&task)?;
+        }
         if !task.directive_scopes.contains_key(&request) {
             append_task_event(
                 &transaction,
