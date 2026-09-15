@@ -17,6 +17,7 @@ base64.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
 fs2.workspace = true
+jsonschema.workspace = true
 memchr = "2.8.3"
 reqwest.workspace = true
 rusqlite = { workspace = true, features = ["backup", "limits", "hooks"] }

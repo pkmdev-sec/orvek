@@ -242,6 +242,10 @@ pub enum WatchFrame {
     PreviewGap {
         dropped: u64,
     },
+    Subagent {
+        session: SessionId,
+        event: crate::controller::SubagentEvent,
+    },
     Ready {
         after: u64,
     },
@@ -775,6 +779,7 @@ async fn watch(
     shutdown: CancellationToken,
 ) -> io::Result<()> {
     let mut previews = host.subscribe_previews();
+    let mut subagents = host.subscribe_subagents();
     let mut unexpected = [0u8; 1];
     send_watch(stream, &WatchFrame::Ready { after }).await?;
     loop {
@@ -807,6 +812,19 @@ async fn watch(
                 Ok(crate::controller::HostUpdate::PreviewGap { .. }) => send_watch(stream, &WatchFrame::PreviewGap { dropped: 1 }).await?,
                 Ok(_) => {},
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => send_watch(stream, &WatchFrame::PreviewGap { dropped }).await?,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
+            },
+            subagent_event = subagents.recv() => match subagent_event {
+                Ok(event) => {
+                    let session = match &event {
+                        crate::controller::SubagentEvent::Spawned { session, .. }
+                        | crate::controller::SubagentEvent::Returned { session, .. }
+                        | crate::controller::SubagentEvent::Failed { session, .. }
+                        | crate::controller::SubagentEvent::Cancelled { session, .. } => *session,
+                    };
+                    send_watch(stream, &WatchFrame::Subagent { session, event }).await?
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
             }
         }

@@ -161,6 +161,7 @@ struct ExecArgs {
 }
 
 /// The sole command backend is the strict Docker runtime supplied by the host.
+#[derive(Clone)]
 pub struct WorkspaceTools {
     executor: Arc<DockerExecutor>,
 }

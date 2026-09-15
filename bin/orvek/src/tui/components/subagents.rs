@@ -1032,6 +1032,8 @@ const fn state_style(status: &ChildStatus) -> (&'static str, Color, &'static str
     match status {
         ChildStatus::Running => ("◐", Color::Yellow, "running"),
         ChildStatus::Returned { .. } => ("●", Color::Gray, "returned"),
+        ChildStatus::Failed { .. } => ("✗", Color::Red, "failed"),
+        ChildStatus::Cancelled => ("○", Color::DarkGray, "cancelled"),
     }
 }
 

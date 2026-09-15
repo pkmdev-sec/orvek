@@ -456,6 +456,7 @@ pub(crate) async fn serve(config: &Config) -> Result<()> {
         executor,
         configuration_identity(config)?,
     )?);
+    host.set_subagent_policy(config.subagents().enabled(), config.agent().max_subagents());
     let stop = CancellationToken::new();
     let signal_stop = stop.clone();
     let signal = tokio::spawn(async move {

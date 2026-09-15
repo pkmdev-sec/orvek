@@ -228,6 +228,12 @@ pub(crate) struct SubagentsConfig {
     allow_luna: bool,
 }
 
+impl SubagentsConfig {
+    pub(crate) const fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ConfigOverrides {
     pub(crate) path: Option<PathBuf>,

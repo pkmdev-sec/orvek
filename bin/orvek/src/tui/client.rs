@@ -2,6 +2,7 @@
 
 use super::{
     StartupMode,
+    children::{ChildId, ChildStatus, ChildUpdate, ChildView},
     components::{
         AppEffect, AppEvent, AppNode, ComponentUpdate, DraftReset, RenderRequest, RootEffect,
         RootNode,
@@ -1108,6 +1109,15 @@ pub(super) async fn run(
                     }
                 }
                 Update::Watch {pane,generation,frame}=>{
+                    if let WatchFrame::Subagent { session, event } = &frame {
+                        if let Some(current)=panes.get(&pane).filter(|value|value.generation==generation && value.view.id==*session) {
+                            let _ = current;
+                            if let Some(update) = subagent_update(event) {
+                                schedule(app.update(AppEvent::Subagent { pane, update }),&mut scheduler,&mut effects);
+                            }
+                        }
+                        continue;
+                    }
                     if let Some(current)=panes.get_mut(&pane).filter(|value|value.generation==generation) {
                         for change in current.projection.apply(frame) {
                             if matches!(&change,ViewChange::Submission(_)|ViewChange::SubmissionChanged {..}|ViewChange::QueueChanged) {refresh_queue(&mut jobs,&sender,pane,current);}
@@ -1615,6 +1625,45 @@ struct SubmissionJob {
     session: orvek_harness::session::SessionId,
     prompt: super::prompt::Submission,
     existing: Option<Request>,
+}
+
+/// Maps a host subagent lifecycle event onto the TUI child tree contract.
+/// Schema-valid results are referenced by digest, never inlined.
+fn subagent_update(event: &orvek_harness::controller::SubagentEvent) -> Option<ChildUpdate> {
+    use orvek_harness::controller::SubagentEvent;
+    match event {
+        SubagentEvent::Spawned {
+            agent,
+            role,
+            task,
+            model,
+            ..
+        } => {
+            let model = model.parse().ok()?;
+            Some(ChildUpdate::Added(ChildView {
+                id: ChildId(*agent),
+                session_id: String::new(),
+                model,
+                role: role.clone(),
+                task: task.clone(),
+                parent: None,
+            }))
+        }
+        SubagentEvent::Returned { agent, output, .. } => Some(ChildUpdate::Status {
+            id: ChildId(*agent),
+            status: ChildStatus::Returned { output: *output },
+        }),
+        SubagentEvent::Failed { agent, error, .. } => Some(ChildUpdate::Status {
+            id: ChildId(*agent),
+            status: ChildStatus::Failed {
+                error: error.clone(),
+            },
+        }),
+        SubagentEvent::Cancelled { agent, .. } => Some(ChildUpdate::Status {
+            id: ChildId(*agent),
+            status: ChildStatus::Cancelled,
+        }),
+    }
 }
 
 /// Resolves the command text of a shell submission from the durable record,

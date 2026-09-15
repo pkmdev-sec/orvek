@@ -111,6 +111,8 @@ pub(crate) enum ChildStatus {
     // child result is not evidence, so the UI must not be able to present it
     // as one.
     Returned { output: Digest },
+    Failed { error: String },
+    Cancelled,
 }
 impl ChildStatus {
     pub(crate) const fn is_active(&self) -> bool {

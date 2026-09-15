@@ -162,6 +162,9 @@ impl HostProjection {
     pub(crate) fn apply(&mut self, frame: WatchFrame) -> Vec<ViewChange> {
         match frame {
             WatchFrame::Journal(record) => self.journal(record),
+            // Subagent lifecycle is presentation state, not journal projection;
+            // the client intercepts these frames before applying the rest.
+            WatchFrame::Subagent { .. } => Vec::new(),
             WatchFrame::Preview {
                 session,
                 request,
