@@ -364,7 +364,9 @@ impl HostProjection {
                         source_revision,
                         items: projection.len(),
                     }],
-                    SessionCommand::Feedback { .. } => Vec::new(),
+                    SessionCommand::Feedback { message } => {
+                        vec![ViewChange::Status(format!("Feedback: {message}"))]
+                    }
                 }
             }
         }
@@ -502,6 +504,24 @@ mod tests {
             })
             .unwrap(),
         })
+    }
+
+    #[test]
+    fn feedback_reaches_the_transcript_as_a_status_line() {
+        let session = SessionId::new();
+        let mut projection = HostProjection::new(session, 0);
+
+        let changes = projection.apply(event(
+            session,
+            1,
+            SessionCommand::Feedback {
+                message: "keep the patch minimal".to_owned(),
+            },
+        ));
+        assert!(matches!(
+            changes.as_slice(),
+            [super::ViewChange::Status(text)] if text.contains("keep the patch minimal")
+        ));
     }
 
     #[test]

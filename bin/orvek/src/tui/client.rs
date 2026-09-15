@@ -1111,6 +1111,38 @@ pub(super) async fn run(
                     if let Some(current)=panes.get_mut(&pane).filter(|value|value.generation==generation) {
                         for change in current.projection.apply(frame) {
                             if matches!(&change,ViewChange::Submission(_)|ViewChange::SubmissionChanged {..}|ViewChange::QueueChanged) {refresh_queue(&mut jobs,&sender,pane,current);}
+                            if let ViewChange::ShellStarted { request } = &change {
+                                let client = current.client.clone();
+                                let known = current.shell_commands.get(request).cloned();
+                                let session_id = current.view.id;
+                                let out = sender.clone();
+                                let request = *request;
+                                jobs.spawn(async move {
+                                    let command = match known {
+                                        Some(command) => Some(command),
+                                        None => {
+                                            submission_command(&client, session_id, request).await
+                                        }
+                                    };
+                                    if let Some(command) = command {
+                                        let _ = out
+                                            .send(Update::Enriched {
+                                                pane,
+                                                generation,
+                                                change: ViewChange::ToolProposed {
+                                                    request: Some(request),
+                                                    call_id: format!("shell-{request}"),
+                                                    name: "shell".into(),
+                                                    arguments: serde_json::json!({
+                                                        "command": command
+                                                    })
+                                                    .to_string(),
+                                                },
+                                            })
+                                            .await;
+                                    }
+                                });
+                            }
                             if let ViewChange::ReviewRecorded { feedback } = &change {
                                 let client = current.client.clone();
                                 let out = sender.clone();
@@ -1174,6 +1206,9 @@ pub(super) async fn run(
                                 ViewChange::RequestSettled {request,..} if current.view.active_request==Some(*request)=>{
                                     current.view.active_request=None;
                                     if pane==PaneId::Main {herdr.idle(Some(&current.view.id.to_string()));}
+                                }
+                                ViewChange::RequestSettled {request,..} if current.shell_commands.contains_key(request)=>{
+                                    schedule(app.update(AppEvent::ShellFinished(pane)),&mut scheduler,&mut effects);
                                 }
                                 _=>{},
                             }
@@ -1580,6 +1615,48 @@ struct SubmissionJob {
     session: orvek_harness::session::SessionId,
     prompt: super::prompt::Submission,
     existing: Option<Request>,
+}
+
+/// Resolves the command text of a shell submission from the durable record,
+/// so journal replay after a restart renders shells without in-process state.
+async fn submission_command(
+    client: &crate::app::host::HostClient,
+    session: orvek_harness::session::SessionId,
+    request: Uuid,
+) -> Option<String> {
+    use base64::Engine as _;
+    let engine = &base64::engine::general_purpose::STANDARD;
+    let Response::Submission(submission) = client
+        .query(Command::Submission { session, request })
+        .await
+        .ok()?
+    else {
+        return None;
+    };
+    let Response::Artifact(page) = client
+        .query(Command::ReadArtifact {
+            digest: submission.input,
+            offset: 0,
+            limit: 64 * 1024,
+        })
+        .await
+        .ok()?
+    else {
+        return None;
+    };
+    let data = page.get("data")?.as_str()?;
+    let bytes = engine.decode(data).ok()?;
+    let messages: Vec<serde_json::Value> = serde_json::from_slice(&bytes).ok()?;
+    messages
+        .iter()
+        .find_map(|message| {
+            message.get("content")?.as_array()?.iter().find_map(|part| {
+                (part.get("type")? == "input_text")
+                    .then(|| part.get("text")?.as_str().map(str::to_owned))
+                    .flatten()
+            })
+        })
+        .filter(|text| !text.trim().is_empty())
 }
 
 /// One bounded line describing recorded review feedback.
