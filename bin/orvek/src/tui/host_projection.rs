@@ -279,10 +279,15 @@ impl HostProjection {
                         vec![ViewChange::QueueChanged]
                     }
                     SessionCommand::Submitted(submission) => {
-                        if let orvek_harness::submission::WorkIntent::Auxiliary { spec } =
-                            &submission.intent
-                        {
-                            self.classify_auxiliary(submission.id, spec.visible());
+                        let preview_visible = match &submission.intent {
+                            orvek_harness::submission::WorkIntent::Auxiliary { spec } => {
+                                Some(spec.visible())
+                            }
+                            orvek_harness::submission::WorkIntent::Ordinary { .. } => Some(true),
+                            _ => None,
+                        };
+                        if let Some(visible) = preview_visible {
+                            self.classify_auxiliary(submission.id, visible);
                         }
                         vec![ViewChange::Submission(*submission)]
                     }
@@ -437,8 +442,11 @@ fn content_text(content: &Value, images: bool) -> String {
 mod tests {
     use super::*;
     use orvek_harness::{
+        Digest,
+        contract::Limits,
         inference::{OutputItem, Usage},
         state::{Outcome, RequestKind},
+        submission::{Schedule, Submission, SubmissionStatus, WorkIntent},
     };
     use serde_json::json;
 
@@ -505,6 +513,48 @@ mod tests {
                     }
                 })
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn ordinary_submission_keeps_answer_previews_visible() {
+        let session = SessionId::new();
+        let request = Uuid::nil();
+        let input = Digest::of(b"input");
+        let mut projection = HostProjection::new(session, 0);
+        projection.apply(event(
+            session,
+            1,
+            SessionCommand::Submitted(Box::new(Submission {
+                manual_job: None,
+                id: request,
+                input,
+                initial_input: input,
+                records: Vec::new(),
+                result: None,
+                intent: WorkIntent::Ordinary {
+                    limits: Limits::default(),
+                    policy: Digest::of(b"policy"),
+                    schedule: Schedule::Queue,
+                },
+                status: SubmissionStatus::Queued,
+                submitted_revision: 1,
+                submitted_ms: 1,
+            })),
+        ));
+        projection.apply(event(session, 2, SessionCommand::AuxiliaryStarted));
+
+        let changes = projection.apply(WatchFrame::Preview {
+            session,
+            request,
+            delta: Delta::ReasoningSummary {
+                item_id: "reasoning-1".into(),
+                text: "visible reasoning".into(),
+            },
+        });
+
+        assert!(
+            matches!(&changes[..], [ViewChange::Reasoning { text, .. }] if text == "visible reasoning")
         );
     }
 
