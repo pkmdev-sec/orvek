@@ -347,6 +347,8 @@ fn configuration_identity(config: &Config) -> Result<Digest> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => serde_json::Value::Null,
         Err(error) => return Err(error.into()),
     };
+    let execution = config.agent().execution();
+    let sandbox = execution.is_sandbox();
     let configuration = serde_json::json!({
         "version": 1,
         "application_build": env!("ORVEK_BUILD_TIMESTAMP"),
@@ -364,8 +366,11 @@ fn configuration_identity(config: &Config) -> Result<Digest> {
         "completion_hook": config.agent().completion_hook(),
         "websocket_url": config.agent().websocket_url(),
         "api_base_url": config.agent().api_base_url(),
-        "executor_image": std::env::var("ORVEK_EXECUTOR_IMAGE").ok(),
-        "executor_helper": std::env::var_os("ORVEK_EXECUTOR_HELPER").map(PathBuf::from),
+        "execution": execution,
+        // Native identity must not depend on Docker selection; sandbox keeps
+        // pinning the executor image and helper explicitly.
+        "executor_image": sandbox.then(|| std::env::var("ORVEK_EXECUTOR_IMAGE").ok()).flatten(),
+        "executor_helper": sandbox.then(|| std::env::var_os("ORVEK_EXECUTOR_HELPER").map(PathBuf::from)),
     });
     Digest::of_value(&configuration).map_err(|error| Error::HostRequest(error.to_string()))
 }
@@ -445,17 +450,27 @@ pub(crate) async fn serve(config: &Config) -> Result<()> {
         },
     )?;
     let provider = model_routed_provider(provider, config)?;
-    let image =
-        std::env::var("ORVEK_EXECUTOR_IMAGE").unwrap_or_else(|_| "debian:bookworm-slim".into());
-    let executor = DockerExecutor::connect(&image)
-        .await
-        .map_err(|error| Error::HostRequest(error.to_string()))?;
-    let host = Arc::new(Host::open_with_identity(
-        &state_directory(config.path()),
-        provider,
-        executor,
-        configuration_identity(config)?,
-    )?);
+    // Native mode never touches Docker; sandbox mode keeps the verified
+    // isolated workflow and its executor requirements.
+    let host = Arc::new(if config.agent().execution().is_sandbox() {
+        let image =
+            std::env::var("ORVEK_EXECUTOR_IMAGE").unwrap_or_else(|_| "debian:bookworm-slim".into());
+        let executor = DockerExecutor::connect(&image)
+            .await
+            .map_err(|error| Error::HostRequest(error.to_string()))?;
+        Host::open_with_identity(
+            &state_directory(config.path()),
+            provider,
+            executor,
+            configuration_identity(config)?,
+        )?
+    } else {
+        Host::open_native(
+            &state_directory(config.path()),
+            provider,
+            configuration_identity(config)?,
+        )?
+    });
     host.set_subagent_policy(config.subagents().enabled(), config.agent().max_subagents());
     let stop = CancellationToken::new();
     let signal_stop = stop.clone();

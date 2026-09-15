@@ -169,10 +169,30 @@ pub(crate) struct AuthConfig {
     api_key_env: Option<String>,
 }
 
+/// Execution backend for primary task work.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ExecutionMode {
+    /// Primary tools run on this machine with user permissions; ordinary
+    /// completion is reported without a verification certificate.
+    #[default]
+    Host,
+    /// Previous isolated workflow: private snapshot, Docker commands,
+    /// contract-gated verified delivery.
+    Sandbox,
+}
+
+impl ExecutionMode {
+    pub(crate) const fn is_sandbox(self) -> bool {
+        matches!(self, Self::Sandbox)
+    }
+}
+
 /// Effective model and capability configuration.
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct AgentConfig {
     workspace: PathBuf,
+    execution: ExecutionMode,
     model: Model,
     thinking: ReasoningEffort,
     reasoning_mode: ReasoningMode,
@@ -371,6 +391,7 @@ struct AuthConfigFile {
 #[serde(default, deny_unknown_fields)]
 struct AgentConfigFile {
     workspace: Option<PathBuf>,
+    execution: Option<ExecutionMode>,
     model: Option<Model>,
     thinking: Option<ReasoningEffort>,
     reasoning_mode: Option<ReasoningMode>,
@@ -453,20 +474,7 @@ impl Config {
             &path,
             current_dir,
         )
-        .unwrap_or_else(|| {
-            // The harness lives inside its own managed framework workspace by
-            // default. That keeps a bare launch independent of the calling
-            // directory, gives the self-evolution machinery stable ground to
-            // work on, and never overlaps the host's protected state. Point
-            // `workspace` at a project explicitly to work on that project.
-            let managed = path
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join("workspaces")
-                .join("default");
-            fs::create_dir_all(&managed).ok();
-            managed
-        });
+        .unwrap_or_else(|| current_dir.to_path_buf());
         let config_dir = path.parent().unwrap_or(Path::new("."));
         let mcp_servers = file
             .mcp_servers
@@ -527,6 +535,7 @@ impl Config {
             models,
             agent: AgentConfig {
                 workspace,
+                execution: file.agent.execution.unwrap_or_default(),
                 model: file.agent.model.unwrap_or_default(),
                 thinking: overrides
                     .thinking
@@ -1092,6 +1101,10 @@ impl AgentConfig {
         &self.workspace
     }
 
+    pub(crate) const fn execution(&self) -> ExecutionMode {
+        self.execution
+    }
+
     pub(crate) const fn model(&self) -> Model {
         self.model
     }
@@ -1628,6 +1641,45 @@ mod tests {
     }
 
     #[test]
+    fn execution_mode_defaults_to_host_and_accepts_sandbox() {
+        use crate::app::config::ExecutionMode;
+        let directory = tempdir().unwrap();
+        let home = directory.path().join("home");
+        let load = |contents: &str| {
+            let path = home.join(".orvek/config.toml");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, contents).unwrap();
+            Config::load_with(
+                ConfigOverrides::default(),
+                Environment {
+                    home: Some(home.clone()),
+                    ..Environment::default()
+                },
+                directory.path(),
+            )
+        };
+        assert_eq!(
+            load("[agent]\n").unwrap().agent.execution(),
+            ExecutionMode::Host
+        );
+        assert_eq!(
+            load("[agent]\nexecution = \"sandbox\"\n")
+                .unwrap()
+                .agent
+                .execution(),
+            ExecutionMode::Sandbox
+        );
+        assert!(
+            load("[agent]\nexecution = \"sandbox\"\n")
+                .unwrap()
+                .agent
+                .execution()
+                .is_sandbox()
+        );
+        assert!(load("[agent]\nexecution = \"bogus\"\n").is_err());
+    }
+
+    #[test]
     fn missing_default_file_materializes_all_defaults() {
         let directory = tempdir().unwrap();
         let home = directory.path().join("home");
@@ -1644,10 +1696,7 @@ mod tests {
         assert_eq!(config.path(), home.join(".orvek/config.toml"));
         assert_eq!(config.auth.mode, AuthMode::Auto);
         assert_eq!(config.auth.file, home.join(".codex/auth.json"));
-        assert_eq!(
-            config.agent.workspace,
-            home.join(".orvek/workspaces/default")
-        );
+        assert_eq!(config.agent.workspace, directory.path());
         assert_eq!(config.agent.thinking, ReasoningEffort::Medium);
         assert_eq!(config.agent.reasoning_mode, ReasoningMode::Standard);
         assert!(!config.agent.fast_mode);
@@ -1678,6 +1727,7 @@ mod tests {
             &rendered["agent"],
             &[
                 "workspace",
+                "execution",
                 "model",
                 "thinking",
                 "reasoning_mode",
@@ -1724,7 +1774,7 @@ mod tests {
         );
         assert_eq!(
             rendered["agent"]["workspace"].as_str(),
-            home.join(".orvek/workspaces/default").to_str()
+            directory.path().to_str()
         );
         assert_eq!(rendered["agent"]["thinking"].as_str(), Some("medium"));
         assert_eq!(rendered["agent"]["fast_mode"].as_bool(), Some(false));
