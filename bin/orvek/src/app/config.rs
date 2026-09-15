@@ -423,7 +423,20 @@ impl Config {
             &path,
             current_dir,
         )
-        .unwrap_or_else(|| current_dir.to_path_buf());
+        .unwrap_or_else(|| {
+            // The harness lives inside its own managed framework workspace by
+            // default. That keeps a bare launch independent of the calling
+            // directory, gives the self-evolution machinery stable ground to
+            // work on, and never overlaps the host's protected state. Point
+            // `workspace` at a project explicitly to work on that project.
+            let managed = path
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("workspaces")
+                .join("default");
+            fs::create_dir_all(&managed).ok();
+            managed
+        });
         let config_dir = path.parent().unwrap_or(Path::new("."));
         let mcp_servers = file
             .mcp_servers
@@ -1578,7 +1591,10 @@ mod tests {
         assert_eq!(config.path(), home.join(".orvek/config.toml"));
         assert_eq!(config.auth.mode, AuthMode::Auto);
         assert_eq!(config.auth.file, home.join(".codex/auth.json"));
-        assert_eq!(config.agent.workspace, directory.path());
+        assert_eq!(
+            config.agent.workspace,
+            home.join(".orvek/workspaces/default")
+        );
         assert_eq!(config.agent.thinking, ReasoningEffort::Medium);
         assert_eq!(config.agent.reasoning_mode, ReasoningMode::Standard);
         assert!(!config.agent.fast_mode);
@@ -1654,7 +1670,7 @@ mod tests {
         );
         assert_eq!(
             rendered["agent"]["workspace"].as_str(),
-            directory.path().to_str()
+            home.join(".orvek/workspaces/default").to_str()
         );
         assert_eq!(rendered["agent"]["thinking"].as_str(), Some("medium"));
         assert_eq!(rendered["agent"]["fast_mode"].as_bool(), Some(false));
