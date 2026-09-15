@@ -528,7 +528,11 @@ impl Host {
         request: SessionAdmissionRequest,
     ) -> Result<SessionAdmissionRequest, HostError> {
         let workspace = request.workspace().canonicalize()?;
-        if self.root.starts_with(&workspace) || workspace.starts_with(&self.root) {
+        // Native sessions never snapshot the workspace, so a workspace that
+        // contains the state root cannot contaminate evidence. Isolated
+        // sessions capture the tree, so they still refuse the overlap.
+        let isolated = self.native_tools.is_none();
+        if isolated && (self.root.starts_with(&workspace) || workspace.starts_with(&self.root)) {
             return Err(HostError::Invalid(
                 "protected state and source workspace must not overlap",
             ));

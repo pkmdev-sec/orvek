@@ -506,6 +506,37 @@ async fn restart_keeps_unknown_native_jobs_unfenced_and_never_replays_them() {
 }
 
 #[tokio::test]
+async fn native_sessions_admit_workspaces_that_contain_the_state_root() {
+    // Launching from a home-style directory whose tree contains the state
+    // root is ordinary native usage: no snapshot exists to contaminate.
+    let fixture = Fixture::new();
+    let (endpoint, server) = provider(vec![vec![final_message("msg_home")]]).await;
+    let host = fixture.open_host(&endpoint).await;
+    let session = host
+        .create_session(SessionAdmissionRequest::new(
+            fixture.directory.path().canonicalize().unwrap(),
+            ModelSettings::default(),
+            orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+            Channel::Stable,
+        ))
+        .await
+        .expect("ancestor workspace must be admitted on a native host")
+        .id;
+    let request = Uuid::new_v4();
+    host.submit(
+        session,
+        request,
+        vec![json!({"type":"input_text","text":"Status only"})],
+        new_task_intent(),
+    )
+    .await
+    .unwrap();
+    let run = wait_submission(&host, session, request).await;
+    assert_eq!(run.task.outcome, Some(Outcome::FinishedUnverified));
+    drop(server);
+}
+
+#[tokio::test]
 async fn native_host_rejects_sandbox_only_shell_input() {
     let fixture = Fixture::new();
     let host = fixture.open_host("http://127.0.0.1:1/v1/responses").await;
