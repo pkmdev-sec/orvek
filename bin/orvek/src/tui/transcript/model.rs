@@ -137,7 +137,8 @@ impl TranscriptModel {
             | ViewChange::Submission(_)
             | ViewChange::SubmissionChanged { .. }
             | ViewChange::ShellStarted { .. }
-            | ViewChange::ShellPublished { .. } => return false,
+            | ViewChange::ShellPublished { .. }
+            | ViewChange::ReviewRecorded { .. } => return false,
             ViewChange::HistoricalImport {
                 manifest,
                 source_session,
@@ -454,6 +455,12 @@ impl TranscriptModel {
             ViewChange::Warning(message) => {
                 self.push(EntryKind::Error {
                     message: bounded(message),
+                });
+            }
+            ViewChange::Status(text) => {
+                self.push(EntryKind::HostStatus {
+                    text: bounded(text),
+                    verified: false,
                 });
             }
         }

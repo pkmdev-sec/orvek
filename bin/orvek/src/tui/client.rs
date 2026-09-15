@@ -1111,6 +1111,26 @@ pub(super) async fn run(
                     if let Some(current)=panes.get_mut(&pane).filter(|value|value.generation==generation) {
                         for change in current.projection.apply(frame) {
                             if matches!(&change,ViewChange::Submission(_)|ViewChange::SubmissionChanged {..}|ViewChange::QueueChanged) {refresh_queue(&mut jobs,&sender,pane,current);}
+                            if let ViewChange::ReviewRecorded { feedback } = &change {
+                                let client = current.client.clone();
+                                let out = sender.clone();
+                                let feedback = *feedback;
+                                jobs.spawn(async move {
+                                    if let Some(text) =
+                                        review_feedback_text(&client, feedback).await
+                                    {
+                                        let _ = out
+                                            .send(Update::Enriched {
+                                                pane,
+                                                generation,
+                                                change: ViewChange::Status(format!(
+                                                    "Review feedback recorded · {text}"
+                                                )),
+                                            })
+                                            .await;
+                                    }
+                                });
+                            }
                             if let ViewChange::ShellPublished { request, report } = &change {
                                 let client = current.client.clone();
                                 let out = sender.clone();
@@ -1560,6 +1580,39 @@ struct SubmissionJob {
     session: orvek_harness::session::SessionId,
     prompt: super::prompt::Submission,
     existing: Option<Request>,
+}
+
+/// One bounded line describing recorded review feedback.
+async fn review_feedback_text(
+    client: &crate::app::host::HostClient,
+    feedback: orvek_harness::Digest,
+) -> Option<String> {
+    use base64::Engine as _;
+    let engine = &base64::engine::general_purpose::STANDARD;
+    let Response::Artifact(page) = client
+        .query(Command::ReadArtifact {
+            digest: feedback,
+            offset: 0,
+            limit: 8 * 1024,
+        })
+        .await
+        .ok()?
+    else {
+        return None;
+    };
+    let data = page.get("data")?.as_str()?;
+    let bytes = engine.decode(data).ok()?;
+    let parsed: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let disposition = parsed
+        .get("disposition")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown");
+    let first_line = parsed
+        .get("body")
+        .and_then(|value| value.as_str())
+        .and_then(|body| body.lines().find(|line| !line.trim().is_empty()))
+        .unwrap_or("");
+    Some(format!("{disposition} · {first_line}"))
 }
 
 fn dispatch_submission(

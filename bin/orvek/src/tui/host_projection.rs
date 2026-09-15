@@ -80,6 +80,9 @@ pub(crate) enum ViewChange {
         request: Uuid,
         report: orvek_harness::Digest,
     },
+    ReviewRecorded {
+        feedback: orvek_harness::Digest,
+    },
     Task {
         id: TaskId,
         event: TaskEvent,
@@ -90,6 +93,7 @@ pub(crate) enum ViewChange {
     },
     DiscardPreviews,
     Warning(String),
+    Status(String),
 }
 
 pub(crate) struct HostProjection {
@@ -256,7 +260,9 @@ impl HostProjection {
                 match command {
                     SessionCommand::AdmissionPinned { .. }
                     | SessionCommand::LegacyImportBound { .. } => Vec::new(),
-                    SessionCommand::ReviewRecorded { .. } => Vec::new(),
+                    SessionCommand::ReviewRecorded { feedback } => {
+                        vec![ViewChange::ReviewRecorded { feedback }]
+                    }
                     SessionCommand::ShellStarted { .. } => {
                         vec![ViewChange::ShellStarted { request: operation }]
                     }
