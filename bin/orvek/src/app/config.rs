@@ -14,6 +14,7 @@ use std::{
     fmt, fs,
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
 };
 use tempfile::NamedTempFile;
@@ -104,6 +105,7 @@ pub(crate) struct Config {
     path: PathBuf,
     auth: AuthConfig,
     agent: AgentConfig,
+    models: BTreeMap<Model, ModelRouteConfig>,
     mcp_servers: BTreeMap<String, McpServerConfig>,
     skills: SkillsConfig,
     memory: MemoryConfig,
@@ -111,6 +113,18 @@ pub(crate) struct Config {
     theme: Theme,
     #[serde(skip)]
     reload: ReloadSource,
+}
+
+/// Effective per-model provider overrides. A model entry without a route is
+/// rejected so a typo cannot silently fall back to the default endpoint.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ModelRouteConfig {
+    #[serde(serialize_with = "serialize_optional_string")]
+    pub(crate) api_base_url: Option<String>,
+    #[serde(serialize_with = "serialize_optional_string")]
+    pub(crate) websocket_url: Option<String>,
+    #[serde(serialize_with = "serialize_optional_string")]
+    pub(crate) api_key_env: Option<String>,
 }
 
 /// Configuration for one MCP server transport.
@@ -249,11 +263,21 @@ pub(crate) struct ConfigReload {
 struct ConfigFile {
     auth: AuthConfigFile,
     agent: AgentConfigFile,
+    models: BTreeMap<String, ModelRouteFile>,
     mcp_servers: BTreeMap<String, McpServerConfigFile>,
     skills: SkillsConfigFile,
     memory: MemoryConfigFile,
     subagents: SubagentsConfigFile,
     theme: Theme,
+}
+
+/// Per-model provider overrides from the `[models]` table.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ModelRouteFile {
+    api_base_url: Option<String>,
+    websocket_url: Option<String>,
+    api_key_env: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -470,6 +494,23 @@ impl Config {
             return Err(ConfigError::ContextWindowTokens(context_window_tokens).into());
         }
 
+        let mut models = BTreeMap::new();
+        for (name, route) in file.models {
+            let model =
+                Model::from_str(&name).map_err(|_| ConfigError::UnknownModel(name.clone()))?;
+            if route.api_base_url.is_none() && route.websocket_url.is_none() {
+                return Err(ConfigError::ModelRouteWithoutEndpoint(name).into());
+            }
+            models.insert(
+                model,
+                ModelRouteConfig {
+                    api_base_url: optional_string(route.api_base_url),
+                    websocket_url: optional_string(route.websocket_url),
+                    api_key_env: optional_string(route.api_key_env),
+                },
+            );
+        }
+
         Ok(Self {
             path,
             auth: AuthConfig::new(
@@ -477,6 +518,7 @@ impl Config {
                 auth_file,
                 optional_string(file.auth.api_key_env),
             ),
+            models,
             agent: AgentConfig {
                 workspace,
                 model: file.agent.model.unwrap_or_default(),
@@ -567,6 +609,11 @@ impl Config {
 
     pub(crate) fn agent(&self) -> &AgentConfig {
         &self.agent
+    }
+
+    /// Per-model provider overrides from the `[models]` table.
+    pub(crate) fn model_routes(&self) -> &BTreeMap<Model, ModelRouteConfig> {
+        &self.models
     }
 
     pub(crate) fn mcp_servers(&self) -> &BTreeMap<String, McpServerConfig> {
@@ -1612,6 +1659,7 @@ mod tests {
             &[
                 "auth",
                 "agent",
+                "models",
                 "mcp_servers",
                 "skills",
                 "memory",
@@ -1727,6 +1775,43 @@ mod tests {
             Some("http://127.0.0.1:11436/v1")
         );
         assert!(config.agent().websocket_url().is_none());
+    }
+
+    #[test]
+    fn model_routes_parse_and_validate() {
+        let config = load_config(
+            "[models.spark]\napi_base_url = \"https://api.openai.com/v1\"\napi_key_env = \"OPENAI_API_KEY\"\n\n[models.glm]\napi_base_url = \"http://127.0.0.1:11436/v1\"\n",
+        )
+        .unwrap();
+
+        let routes = config.model_routes();
+        assert_eq!(routes.len(), 2);
+        let spark = &routes[&Model::Spark];
+        assert_eq!(
+            spark.api_base_url.as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+        assert_eq!(spark.api_key_env.as_deref(), Some("OPENAI_API_KEY"));
+        let glm = &routes[&Model::Glm];
+        assert_eq!(
+            glm.api_base_url.as_deref(),
+            Some("http://127.0.0.1:11436/v1")
+        );
+        assert!(glm.websocket_url.is_none());
+
+        let error = load_config("[models.spark]\napi_key_env = \"X\"\n").unwrap_err();
+        assert!(matches!(
+            error,
+            crate::app::error::Error::Config(
+                crate::app::error::ConfigError::ModelRouteWithoutEndpoint(_)
+            )
+        ));
+        let error =
+            load_config("[models.nope]\napi_base_url = \"https://x.example/v1\"\n").unwrap_err();
+        assert!(matches!(
+            error,
+            crate::app::error::Error::Config(crate::app::error::ConfigError::UnknownModel(_))
+        ));
     }
 
     #[test]

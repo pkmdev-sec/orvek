@@ -17,6 +17,9 @@ pub(crate) enum ActivityState {
     Idle,
     Thinking,
     Working,
+    // Restored alongside the manual compaction controls; no host state
+    // feeds it yet.
+    #[allow(dead_code)]
     Compacting,
     Complete,
     Error,

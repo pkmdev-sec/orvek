@@ -149,6 +149,10 @@ pub(crate) enum ConfigError {
     Serialize(#[source] toml::ser::Error),
     #[error("agent context window must be between 16384 and 1000000 tokens, got {0}")]
     ContextWindowTokens(u64),
+    #[error("unknown model `{0}` in the [models] table")]
+    UnknownModel(String),
+    #[error("model `{0}` needs api_base_url or websocket_url in the [models] table")]
+    ModelRouteWithoutEndpoint(String),
     #[error(
         "legacy compaction strategy `{0}` is no longer supported; use `provider` context projection"
     )]

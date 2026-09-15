@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, fmt, str::FromStr};
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(
+    Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum Model {
     #[default]
@@ -12,6 +14,8 @@ pub enum Model {
     Luna,
     #[serde(alias = "glm-5.3")]
     Glm,
+    #[serde(alias = "gpt-5.3-codex-spark")]
+    Spark,
 }
 
 impl Model {
@@ -21,6 +25,7 @@ impl Model {
             Self::Terra => "gpt-5.6-terra",
             Self::Luna => "gpt-5.6-luna",
             Self::Glm => "glm-5.3",
+            Self::Spark => "gpt-5.3-codex-spark",
         }
     }
 }
@@ -39,6 +44,7 @@ impl FromStr for Model {
             "terra" | "gpt-5.6-terra" => Ok(Self::Terra),
             "luna" | "gpt-5.6-luna" => Ok(Self::Luna),
             "glm" | "glm-5.3" => Ok(Self::Glm),
+            "spark" | "gpt-5.3-codex-spark" => Ok(Self::Spark),
             _ => Err(FailureKind::InvalidRequest),
         }
     }

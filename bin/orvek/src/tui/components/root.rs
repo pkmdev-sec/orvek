@@ -2,6 +2,7 @@
 
 use super::{
     actions::{Action, ActionAvailability, ActionsEffect, ActionsEvent, ActionsMenu},
+    activity_mark::{ActivityMark, ActivityState},
     composer::{Composer, ComposerChromeTarget, ComposerDraft, ComposerEffect, ComposerEvent},
     context_diagnostics::{
         ContextDiagnosticsEffect, ContextDiagnosticsEvent, ContextDiagnosticsPanel,
@@ -365,6 +366,8 @@ pub(crate) struct RootNode {
     submission_uncertain: bool,
     in_flight_shells: usize,
     blocking_task: Option<BlockingTask>,
+    activity: ActivityMark,
+    activity_outcome: ActivityState,
     review_url: Option<String>,
     fork_available: bool,
     skills: Arc<[Skill]>,
@@ -408,6 +411,8 @@ impl RootNode {
             submission_uncertain: false,
             in_flight_shells: 0,
             blocking_task: None,
+            activity: ActivityMark::new(Instant::now()),
+            activity_outcome: ActivityState::Idle,
             review_url: None,
             fork_available: true,
             skills: Arc::from([]),
@@ -667,6 +672,7 @@ impl RootNode {
         };
         [
             selector,
+            self.activity.deadline(),
             self.transcript.component().animation_deadline(),
             self.composer.component().animation_deadline(),
             self.queue.component().animation_deadline(),
@@ -685,36 +691,64 @@ impl RootNode {
     }
 
     fn render_root(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme, focused: bool) {
+        let header_height = if area.height >= 16 { 2 } else { 1 };
+        let mark_width = if header_height == 2 {
+            ActivityMark::WIDTH
+        } else {
+            1
+        }
+        .min(area.width);
+        self.activity.set_preferences(header_height == 2, false);
+        self.activity.render(
+            frame,
+            Rect::new(area.x, area.y, mark_width, header_height),
+            theme,
+        );
+        let label_x = area.x + mark_width + 2;
+        if label_x < area.right() {
+            frame.buffer_mut().set_stringn(
+                label_x,
+                area.y,
+                self.activity.state().label(),
+                usize::from(area.right() - label_x),
+                Style::default().fg(theme.code_text()),
+            );
+        }
+        let body = Rect {
+            y: area.y + header_height,
+            height: area.height.saturating_sub(header_height),
+            ..area
+        };
         let height = self
             .composer
             .component_mut()
-            .desired_height(area.width)
-            .min(area.height);
+            .desired_height(body.width)
+            .min(body.height);
         let composer_area = Rect {
-            y: area.bottom().saturating_sub(height),
+            y: body.bottom().saturating_sub(height),
             height,
-            ..area
+            ..body
         };
         self.composer_area = composer_area;
         let queue_height = self
             .queue
             .component()
             .desired_height()
-            .min(area.height.saturating_sub(height));
-        let queue_width = area.width.saturating_mul(95) / 100;
+            .min(body.height.saturating_sub(height));
+        let queue_width = body.width.saturating_mul(95) / 100;
         let queue_area = Rect {
-            x: area.x + area.width.saturating_sub(queue_width) / 2,
+            x: body.x + body.width.saturating_sub(queue_width) / 2,
             y: composer_area.y.saturating_sub(queue_height),
             width: queue_width,
             height: queue_height,
         };
         self.queue_area = queue_area;
         let transcript_area = Rect {
-            height: area
+            height: body
                 .height
                 .saturating_sub(height)
                 .saturating_sub(queue_height),
-            ..area
+            ..body
         };
         self.transcript_area = transcript_area;
         self.composer_content_area = if composer_area.width >= 2 && composer_area.height >= 3 {
@@ -2302,10 +2336,16 @@ impl RootNode {
 
     fn agent_turn_finished(&mut self) -> ComponentUpdate<RootEffect> {
         self.in_flight_turns = self.in_flight_turns.saturating_sub(1);
+        if self.in_flight_turns == 0 {
+            self.activity_outcome = ActivityState::Complete;
+            self.refresh_activity(Instant::now());
+        }
         ComponentUpdate::render(RenderRequest::Immediate)
     }
 
     fn turns_cancelled(&mut self) -> ComponentUpdate<RootEffect> {
+        self.activity_outcome = ActivityState::Cancelled;
+        self.refresh_activity(Instant::now());
         ComponentUpdate::render(RenderRequest::Immediate)
     }
 
@@ -2332,6 +2372,12 @@ impl RootNode {
     }
 
     fn update_animation(&mut self, now: Instant) -> ComponentUpdate<RootEffect> {
+        self.refresh_activity(now);
+        let activity = if self.activity.advance(now) {
+            RenderRequest::Streaming
+        } else {
+            RenderRequest::None
+        };
         let confirmation = if self
             .key_confirmation
             .as_ref()
@@ -2380,9 +2426,24 @@ impl RootNode {
                 .max(queue.render)
                 .max(subagents)
                 .max(selection)
+                .max(activity)
                 .max(confirmation)
                 .max(notification),
         }
+    }
+
+    /// Projects turn, shell, and overlay activity into the header mark. The
+    /// outcome state persists after a turn settles so the mark lands on
+    /// Complete, Error, or Cancelled instead of snapping straight to Idle.
+    fn refresh_activity(&mut self, now: Instant) {
+        let state = if self.in_flight_shells > 0 || self.subagents.active_count() > 0 {
+            ActivityState::Working
+        } else if self.in_flight_turns > 0 || self.blocking_task.is_some() {
+            ActivityState::Thinking
+        } else {
+            self.activity_outcome
+        };
+        self.activity.set_state(state, now);
     }
 
     fn update_selection_auto_scroll(&mut self, now: Instant) -> RenderRequest {
@@ -2496,6 +2557,8 @@ impl Component for RootNode {
             }
             RootEvent::SubmissionFailed { uncertain, error } => {
                 self.submission_uncertain = uncertain;
+                self.activity_outcome = ActivityState::Error;
+                self.refresh_activity(Instant::now());
                 if !uncertain {
                     self.pending_submission = None;
                     if self.pending_reflection {
@@ -2535,6 +2598,8 @@ impl Component for RootNode {
                     record.host()
                 {
                     self.in_flight_turns = 1;
+                    self.activity_outcome = ActivityState::Thinking;
+                    self.refresh_activity(Instant::now());
                     self.thread = ThreadState::Started;
                 }
                 if let Some(crate::tui::host_projection::ViewChange::Settings(settings)) =
@@ -3037,6 +3102,7 @@ fn model_name(model: Model) -> &'static str {
         Model::Terra => "Terra",
         Model::Sol => "Sol",
         Model::Glm => "GLM 5.3",
+        Model::Spark => "Spark",
     }
 }
 
@@ -3760,26 +3826,26 @@ mod tests {
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        root.update(mouse(MouseEventKind::ScrollUp, 5, 1));
+        root.update(mouse(MouseEventKind::ScrollUp, 5, 2));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
         assert_eq!(
-            terminal.backend().buffer()[(5, 0)].bg,
+            terminal.backend().buffer()[(5, 1)].bg,
             Theme::default().code_background()
         );
 
-        root.update(mouse(MouseEventKind::Down(MouseButton::Left), 5, 0));
+        root.update(mouse(MouseEventKind::Down(MouseButton::Left), 5, 1));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
 
         let first_row = (0..40)
-            .map(|column| terminal.backend().buffer()[(column, 0)].symbol())
+            .map(|column| terminal.backend().buffer()[(column, 1)].symbol())
             .collect::<String>();
         assert!(first_row.contains("jump to this prompt"));
         assert_ne!(
-            terminal.backend().buffer()[(5, 0)].bg,
+            terminal.backend().buffer()[(5, 1)].bg,
             Theme::default().code_background()
         );
     }
@@ -3820,12 +3886,12 @@ mod tests {
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        let banner_column = text_column(terminal.backend().buffer(), 0, "1 update");
+        let banner_column = text_column(terminal.backend().buffer(), 1, "1 update");
 
         root.update(mouse(
             MouseEventKind::Down(MouseButton::Left),
             banner_column,
-            0,
+            1,
         ));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
@@ -5153,7 +5219,7 @@ mod tests {
         assert_eq!(
             update.effects,
             [RootEffect::Copy(
-                "prompt 1\n\nprompt 2\n\nprompt 3\n\nprompt 4\n\nprompt 5".to_owned()
+                "prompt 1\n\nprompt 2\n\nprompt 3\n\nprompt 4".to_owned()
             )]
         );
     }
@@ -5190,7 +5256,7 @@ mod tests {
         root.update(mouse(MouseEventKind::Down(MouseButton::Left), 2, start_row));
         root.update(mouse(MouseEventKind::Drag(MouseButton::Left), 31, edge));
 
-        for _ in 0..4 {
+        for _ in 0..5 {
             terminal
                 .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
                 .unwrap();
@@ -5283,15 +5349,15 @@ mod tests {
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
 
-        root.update(mouse(MouseEventKind::Down(MouseButton::Left), 2, 0));
+        root.update(mouse(MouseEventKind::Down(MouseButton::Left), 2, 1));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        root.update(mouse(MouseEventKind::Drag(MouseButton::Left), 39, 0));
+        root.update(mouse(MouseEventKind::Drag(MouseButton::Left), 39, 1));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        let update = root.update(mouse(MouseEventKind::Up(MouseButton::Left), 39, 0));
+        let update = root.update(mouse(MouseEventKind::Up(MouseButton::Left), 39, 1));
 
         assert_eq!(
             update.effects,

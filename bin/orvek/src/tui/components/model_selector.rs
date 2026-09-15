@@ -16,7 +16,13 @@ use ratatui::{
 };
 use std::time::{Duration, Instant};
 
-const MODELS: [Model; 4] = [Model::Luna, Model::Terra, Model::Sol, Model::Glm];
+const MODELS: [Model; 5] = [
+    Model::Luna,
+    Model::Terra,
+    Model::Sol,
+    Model::Glm,
+    Model::Spark,
+];
 const ANIMATION_DURATION: Duration = Duration::from_millis(280);
 const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 const KEY_BINDINGS: [(&str, &str); 3] = [("←/→", "model"), ("enter", "apply"), ("esc", "cancel")];
@@ -164,6 +170,7 @@ impl ModelSelector {
             (model_column(left, width, 1), Model::Terra, "Terra"),
             (model_column(left, width, 2), Model::Sol, "Sol"),
             (model_column(left, width, 3), Model::Glm, "GLM"),
+            (model_column(left, width, 4), Model::Spark, "Spark"),
         ];
         for (column, model, label) in labels {
             let label_width = u16::try_from(label.len()).unwrap_or(u16::MAX);
@@ -254,6 +261,7 @@ fn model_name(model: Model) -> &'static str {
         Model::Terra => "Terra",
         Model::Sol => "Sol",
         Model::Glm => "GLM 5.3",
+        Model::Spark => "Spark",
     }
 }
 
@@ -331,6 +339,10 @@ mod tests {
         selector.update_key(key(KeyCode::Right), now);
         assert_eq!(selector.selected, 3);
         selector.update_key(key(KeyCode::Right), now);
+        assert_eq!(selector.selected, 4);
+        selector.update_key(key(KeyCode::Right), now);
+        assert_eq!(selector.selected, 4);
+        selector.update_key(key(KeyCode::Left), now);
         assert_eq!(selector.selected, 3);
         selector.update_key(key(KeyCode::Left), now);
         assert_eq!(selector.selected, 2);
@@ -350,11 +362,15 @@ mod tests {
         assert_eq!(rendered_label_color(&mut selector, "Terra"), Color::Green);
         assert_eq!(rendered_label_color(&mut selector, "Sol"), Color::Yellow);
         assert_eq!(rendered_label_color(&mut selector, "GLM"), Color::Cyan);
+        assert_eq!(
+            rendered_label_color(&mut selector, "Spark"),
+            Color::LightMagenta
+        );
     }
 
     #[test]
     fn filled_bar_uses_the_selected_model_color() {
-        let mut selector = ModelSelector::new(Model::Glm);
+        let mut selector = ModelSelector::new(Model::Spark);
         let terminal = render(&mut selector);
         let rail = terminal
             .backend()
@@ -365,26 +381,50 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(!rail.is_empty());
-        assert!(rail.iter().all(|cell| cell.fg == Color::Cyan));
+        assert!(rail.iter().all(|cell| cell.fg == Color::LightMagenta));
     }
 
     #[test]
     fn stops_use_the_filled_bar_color_only_when_covered() {
         assert_eq!(
             rendered_stop_colors(&mut ModelSelector::new(Model::Luna)),
-            [Color::DarkGray, Color::DarkGray, Color::DarkGray]
+            [
+                Color::DarkGray,
+                Color::DarkGray,
+                Color::DarkGray,
+                Color::DarkGray
+            ]
         );
         assert_eq!(
             rendered_stop_colors(&mut ModelSelector::new(Model::Terra)),
-            [Color::Green, Color::DarkGray, Color::DarkGray]
+            [
+                Color::Green,
+                Color::DarkGray,
+                Color::DarkGray,
+                Color::DarkGray
+            ]
         );
         assert_eq!(
             rendered_stop_colors(&mut ModelSelector::new(Model::Sol)),
-            [Color::Yellow, Color::Yellow, Color::DarkGray]
+            [
+                Color::Yellow,
+                Color::Yellow,
+                Color::DarkGray,
+                Color::DarkGray
+            ]
         );
         assert_eq!(
             rendered_stop_colors(&mut ModelSelector::new(Model::Glm)),
-            [Color::Cyan, Color::Cyan, Color::Cyan]
+            [Color::Cyan, Color::Cyan, Color::Cyan, Color::DarkGray]
+        );
+        assert_eq!(
+            rendered_stop_colors(&mut ModelSelector::new(Model::Spark)),
+            [
+                Color::LightMagenta,
+                Color::LightMagenta,
+                Color::LightMagenta,
+                Color::LightMagenta
+            ]
         );
     }
 

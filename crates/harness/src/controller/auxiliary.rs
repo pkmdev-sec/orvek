@@ -270,8 +270,13 @@ impl Host {
             let projection = crate::context::project(&view, byte_limit)?;
             history = projection.input;
             let materialized = crate::input::materialize(history.clone(), &artifacts)?;
+            let framing = if matches!(spec.kind, crate::auxiliary::AuxiliaryKind::Conversation) {
+                crate::controller::CONVERSATION_INSTRUCTIONS
+            } else {
+                crate::controller::AUXILIARY_INSTRUCTIONS
+            };
             let instructions = format!(
-                "Provide {:?} assistance. {AUXILIARY_INSTRUCTIONS}\nPinned harness behavior:\n{}\nOriginal auxiliary request:\n{}",
+                "Provide {:?} assistance. {framing}\nPinned harness behavior:\n{}\nOriginal auxiliary request:\n{}",
                 spec.kind,
                 session
                     .behavior_instructions()

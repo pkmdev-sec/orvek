@@ -380,6 +380,46 @@ fn route_transport(config: &Config) -> Transport {
     }
 }
 
+/// Attaches `[models.<name>]` overrides so mixed setups route each model to
+/// its own endpoint and credential (for example GLM through the local bridge
+/// while a direct OpenAI model uses the default route). A route whose key
+/// environment variable is unset is skipped with a warning so the host still
+/// starts for the models that are configured.
+fn model_routed_provider(provider: ResponsesClient, config: &Config) -> Result<ResponsesClient> {
+    let mut provider = provider;
+    for (model, route_config) in config.model_routes() {
+        let key_env = route_config
+            .api_key_env
+            .as_deref()
+            .unwrap_or(config.auth().api_key_env());
+        let Ok(Some(key)) = crate::app::secret::SecretString::from_environment(key_env) else {
+            eprintln!(
+                "orvek: skipping [models.{}] route; {} is not set",
+                model.as_str(),
+                key_env
+            );
+            continue;
+        };
+        let auth = orvek_harness::inference::auth::Auth::api_key(
+            orvek_harness::inference::auth::SecretString::new(key.expose_secret().to_owned()),
+        )
+        .map_err(|error| Error::HostRequest(error.to_string()))?;
+        let transport = match route_config.websocket_url.as_deref() {
+            Some(_) => Transport::WebSocket,
+            None => Transport::Http,
+        };
+        let route = Route::from_overrides(
+            &auth,
+            transport,
+            route_config.api_base_url.as_deref(),
+            route_config.websocket_url.as_deref(),
+        )
+        .map_err(|error| Error::HostRequest(error.to_string()))?;
+        provider = provider.with_model_route(*model, auth, route);
+    }
+    Ok(provider)
+}
+
 pub(crate) async fn serve(config: &Config) -> Result<()> {
     let auth = config.auth().load()?;
     let route = Route::from_overrides(
@@ -404,6 +444,7 @@ pub(crate) async fn serve(config: &Config) -> Result<()> {
             ..ProviderLimits::default()
         },
     )?;
+    let provider = model_routed_provider(provider, config)?;
     let image =
         std::env::var("ORVEK_EXECUTOR_IMAGE").unwrap_or_else(|_| "debian:bookworm-slim".into());
     let executor = DockerExecutor::connect(&image)

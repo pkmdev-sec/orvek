@@ -1078,6 +1078,7 @@ fn model_name(model: Model) -> &'static str {
         Model::Terra => "Terra",
         Model::Sol => "Sol",
         Model::Glm => "GLM",
+        Model::Spark => "Spark",
     }
 }
 
