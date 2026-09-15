@@ -3,23 +3,18 @@
 use super::{
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
+    typography::{CHOICE_MARKER, ChoiceStyle, SearchField},
 };
 use crate::tui::theme::Theme;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEventKind};
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::{List, ListItem, ListState, Paragraph},
+    widgets::{List, ListItem, ListState},
 };
 use std::{cmp::Reverse, fs, path::Path};
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 const KEY_BINDINGS: [(&str, &str); 3] = [("↑↓", "move"), ("enter/tab", "insert"), ("esc", "close")];
-const SEARCH_LABEL: &str = "Search: ";
-const FOCUS_MARKER: &str = "› ";
 const SKIPPED_DIRECTORIES: [&str; 4] = [".git", ".jj", "node_modules", "target"];
 
 pub(super) enum FileFinderEvent {
@@ -143,23 +138,7 @@ impl FileFinder {
     }
 
     fn render_search(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        if area.is_empty() {
-            return;
-        }
-
-        let marker = "  ";
-        let prefix_width = marker.width() + SEARCH_LABEL.width();
-        let query_width = usize::from(area.width).saturating_sub(prefix_width);
-        let visible_query = visible_query_tail(&self.query, query_width);
-        let label_style = Style::default().fg(theme.muted());
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(marker, label_style),
-                Span::styled(SEARCH_LABEL, label_style),
-                Span::styled(visible_query, Style::default().fg(theme.text())),
-            ])),
-            area,
-        );
+        SearchField::new(&self.query).render(frame, area, theme);
     }
 
     fn render_paths(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
@@ -167,16 +146,13 @@ impl FileFinder {
             return;
         }
 
-        let items = self.matches.iter().map(|index| {
-            ListItem::new(self.paths[*index].as_str()).style(Style::default().fg(theme.text()))
+        let items = self.matches.iter().enumerate().map(|(position, index)| {
+            let typography = ChoiceStyle::new(position == self.selected, true);
+            ListItem::new(self.paths[*index].as_str()).style(typography.primary(theme))
         });
         let list = List::new(items)
-            .highlight_style(
-                Style::default()
-                    .fg(theme.accent())
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol(FOCUS_MARKER);
+            .highlight_style(ChoiceStyle::new(true, true).highlight(theme))
+            .highlight_symbol(CHOICE_MARKER);
         let selected = (!self.matches.is_empty()).then_some(self.selected);
         let mut state = ListState::default().with_selected(selected);
         frame.render_stateful_widget(list, area, &mut state);
@@ -317,17 +293,6 @@ pub(super) fn fuzzy_score(path: &str, query: &str) -> Option<usize> {
         previous_character = Some(character);
     }
     None
-}
-
-pub(super) fn visible_query_tail(query: &str, width: usize) -> &str {
-    let mut used = 0;
-    for (index, grapheme) in query.grapheme_indices(true).rev() {
-        used += grapheme.width();
-        if used > width {
-            return &query[index + grapheme.len()..];
-        }
-    }
-    query
 }
 
 #[cfg(test)]

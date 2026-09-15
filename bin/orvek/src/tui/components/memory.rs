@@ -3,6 +3,7 @@
 use super::{
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
+    typography::{CHOICE_MARKER, ChoiceStyle, SearchField, secondary},
 };
 use crate::tui::{session::format_age, theme::Theme};
 use chrono::{DateTime, Utc};
@@ -61,7 +62,6 @@ const LOAD_ERROR_KEYS: [(&str, &str); 2] = [("r", "retry"), ("esc", "close")];
 const DELETE_ERROR_KEYS: [(&str, &str); 3] =
     [("d/delete", "retry"), ("r", "refresh"), ("esc", "back")];
 const LOADING_KEYS: [(&str, &str); 2] = [("r", "retry"), ("esc", "close")];
-const FILTER_LABEL: &str = " Filter: ";
 const MAX_PREVIEW_GRAPHEMES: usize = 160;
 const MAX_ERROR_WIDTH: usize = 240;
 
@@ -658,20 +658,13 @@ impl MemoryBrowser {
             .namespace_scope_label()
             .map_or_else(String::new, |scope| format!("  Namespaces: {scope}"));
         let sort = format!("  Sort: {}", self.sort.label());
-        let query_width = usize::from(area.width)
-            .saturating_sub(FILTER_LABEL.width())
-            .saturating_sub(scope.width())
-            .saturating_sub(sort.width());
-        let query = visible_tail(&self.query, query_width);
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(FILTER_LABEL, Style::default().fg(theme.muted())),
-                Span::styled(query, Style::default().fg(theme.text())),
-                Span::styled(scope, Style::default().fg(theme.muted())),
-                Span::styled(sort, Style::default().fg(theme.muted())),
-            ])),
-            area,
-        );
+        let suffix = vec![
+            Span::styled(scope, secondary(theme)),
+            Span::styled(sort, secondary(theme)),
+        ];
+        let line = SearchField::with_prefix(&self.query, "  Filter: ")
+            .line_with_suffix(area.width, suffix, theme);
+        frame.render_widget(Paragraph::new(line), area);
     }
 
     fn render_records(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
@@ -707,24 +700,21 @@ impl MemoryBrowser {
         }
 
         let width = usize::from(area.width).saturating_sub(2);
-        let items = self.matches.iter().map(|index| {
+        let selected = self.selected_match_index();
+        let items = self.matches.iter().enumerate().map(|(position, index)| {
             let record = &self.records[*index];
             let preview = bounded_preview(&record.content, width);
             let metadata = fit_width(&list_metadata(record), width);
+            let typography = ChoiceStyle::new(Some(position) == selected, true);
             ListItem::new(vec![
-                Line::from(Span::styled(
-                    preview,
-                    Style::default()
-                        .fg(theme.text())
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(Span::styled(metadata, Style::default().fg(theme.muted()))),
+                Line::from(Span::styled(preview, typography.primary(theme))),
+                Line::from(Span::styled(metadata, typography.detail(theme))),
             ])
         });
         let list = List::new(items)
-            .highlight_symbol("› ")
-            .highlight_style(Style::default().fg(theme.accent()));
-        let mut state = ListState::default().with_selected(self.selected_match_index());
+            .highlight_symbol(CHOICE_MARKER)
+            .highlight_style(ChoiceStyle::new(true, true).highlight(theme));
+        let mut state = ListState::default().with_selected(selected);
         frame.render_stateful_widget(list, area, &mut state);
     }
 
@@ -1178,17 +1168,6 @@ fn fit_width(text: &str, width: usize) -> String {
     }
     result.push('…');
     result
-}
-
-fn visible_tail(query: &str, width: usize) -> &str {
-    let mut used: usize = 0;
-    for (index, grapheme) in query.grapheme_indices(true).rev() {
-        used += grapheme.width();
-        if used > width {
-            return &query[index + grapheme.len()..];
-        }
-    }
-    query
 }
 
 #[cfg(test)]

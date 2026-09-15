@@ -3,18 +3,18 @@
 use super::{
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
+    typography::{CHOICE_MARKER, ChoiceStyle, SearchField},
 };
 use crate::tui::theme::Theme;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
-    widgets::{List, ListItem, ListState, Paragraph},
+    widgets::{List, ListItem, ListState},
 };
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 const ACTIONS: [Action; 16] = [
     Action::Effort,
@@ -35,8 +35,6 @@ const ACTIONS: [Action; 16] = [
     Action::Model,
 ];
 const KEY_BINDINGS: [(&str, &str); 3] = [("↑↓", "move"), ("enter/tab", "open"), ("esc", "close")];
-const SEARCH_LABEL: &str = "Search: ";
-const SELECTION_MARKER: &str = "› ";
 
 pub(super) enum ActionsEvent {
     Terminal(Event),
@@ -221,21 +219,7 @@ impl ActionsMenu {
     }
 
     fn render_search(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        if area.is_empty() {
-            return;
-        }
-
-        let marker = "  ";
-        let prefix_width = marker.width() + SEARCH_LABEL.width();
-        let query_width = usize::from(area.width).saturating_sub(prefix_width);
-        let visible_query = visible_query_tail(&self.query, query_width);
-        let label_style = Style::default().fg(theme.muted());
-        let line = Line::from(vec![
-            Span::styled(marker, label_style),
-            Span::styled(SEARCH_LABEL, label_style),
-            Span::styled(visible_query, Style::default().fg(theme.text())),
-        ]);
-        frame.render_widget(Paragraph::new(line), area);
+        SearchField::new(&self.query).render(frame, area, theme);
     }
 
     fn render_actions(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
@@ -247,16 +231,10 @@ impl ActionsMenu {
             let action = ACTIONS[*index];
             let enabled = self.is_enabled(action);
             let selected = row == self.selected;
-            let label_color = if !enabled {
-                theme.muted()
-            } else if selected {
-                theme.accent()
-            } else {
-                theme.text()
-            };
+            let typography = ChoiceStyle::new(selected, enabled);
             let mut spans = vec![Span::styled(
                 self.display_label(action),
-                Style::default().fg(label_color),
+                typography.primary(theme),
             )];
             if let Some(alias) = action
                 .alias()
@@ -264,7 +242,7 @@ impl ActionsMenu {
             {
                 spans.push(Span::styled(
                     format!(" (alias: {alias})"),
-                    Style::default().fg(theme.muted()),
+                    typography.detail(theme),
                 ));
             }
             ListItem::new(Line::from(spans))
@@ -273,15 +251,10 @@ impl ActionsMenu {
             .matches
             .get(self.selected)
             .is_some_and(|index| self.is_enabled(ACTIONS[*index]));
-        let highlight = if selected_enabled {
-            Style::default().add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
         let list = List::new(items)
             .style(Style::default().fg(theme.text()))
-            .highlight_style(highlight)
-            .highlight_symbol(SELECTION_MARKER);
+            .highlight_style(ChoiceStyle::new(true, selected_enabled).highlight(theme))
+            .highlight_symbol(CHOICE_MARKER);
         let selected = (!self.matches.is_empty()).then_some(self.selected);
         let mut state = ListState::default().with_selected(selected);
         frame.render_stateful_widget(list, area, &mut state);
@@ -444,23 +417,12 @@ fn contains_ignore_ascii_case(value: &str, query: &str) -> bool {
         .any(|window| window.eq_ignore_ascii_case(query.as_bytes()))
 }
 
-fn visible_query_tail(query: &str, width: usize) -> &str {
-    let mut used = 0;
-    for (index, grapheme) in query.grapheme_indices(true).rev() {
-        used += grapheme.width();
-        if used > width {
-            return &query[index + grapheme.len()..];
-        }
-    }
-    query
-}
-
 #[cfg(test)]
 mod tests {
     use super::{Action, ActionAvailability, ActionsEffect, ActionsEvent, ActionsMenu, Component};
     use crate::tui::theme::Theme;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend, style::Color};
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn key(code: KeyCode) -> ActionsEvent {
         ActionsEvent::Terminal(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)))
@@ -502,7 +464,7 @@ mod tests {
         );
         assert_eq!(
             row_segment(&terminal, 1, 1, 58),
-            "│  Search:                                               │"
+            "│  Search: ▏ type to filter                              │"
         );
         assert_eq!(
             row_segment(&terminal, 2, 1, 58),
@@ -574,9 +536,16 @@ mod tests {
         );
         assert_eq!(
             terminal.backend().buffer()[(18, 2)].fg,
-            Theme::default().muted()
+            Theme::default().text()
         );
-        assert_eq!(terminal.backend().buffer()[(12, 17)].fg, Color::Reset);
+        assert_eq!(
+            terminal.backend().buffer()[(12, 17)].fg,
+            Theme::default().accent()
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(2, 2)].bg,
+            Theme::default().code_background()
+        );
         assert_eq!(
             terminal.backend().buffer()[(15, 17)].fg,
             Theme::default().muted()

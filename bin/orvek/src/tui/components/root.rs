@@ -33,6 +33,7 @@ use crate::{
     tui::{
         children::{ChildUpdate, MessageOrigin},
         context::ContextDiagnostics,
+        format::sanitize_terminal_text,
         prompt::Submission,
         session::{RecentPrompt, SessionSummary},
         theme::{Theme, ThemeMode},
@@ -46,7 +47,7 @@ use ratatui::{
     Frame,
     layout::{Position, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 use semver::Version;
@@ -99,7 +100,7 @@ struct KeyConfirmation {
 }
 
 struct Notification {
-    message: Line<'static>,
+    message: Text<'static>,
     color: Color,
     deadline: Instant,
 }
@@ -113,9 +114,16 @@ struct SelectionAutoScroll {
 impl Notification {
     fn plain(message: String, color: Color) -> Self {
         Self {
-            message: Line::styled(
-                message,
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            message: Text::from(
+                sanitize_terminal_text(&message)
+                    .split('\n')
+                    .map(|line| {
+                        Line::styled(
+                            line.to_owned(),
+                            Style::default().fg(color).add_modifier(Modifier::BOLD),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
             ),
             color,
             deadline: Instant::now() + BREADCRUMB_DURATION,
@@ -125,12 +133,12 @@ impl Notification {
     fn update_available(version: Version) -> Self {
         let green = Style::default().fg(Color::Green);
         Self {
-            message: Line::from(vec![
+            message: Text::from(Line::from(vec![
                 Span::styled("Update available · ", green),
                 Span::styled(format!("v{version}"), green.add_modifier(Modifier::BOLD)),
                 Span::styled(" · run ", green),
                 Span::styled("`orvek update`", Style::default().fg(Color::Reset)),
-            ]),
+            ])),
             color: Color::Green,
             deadline: Instant::now() + BREADCRUMB_DURATION,
         }
@@ -2950,26 +2958,38 @@ fn render_notification(
     frame: &mut Frame<'_>,
     area: Rect,
     theme: &Theme,
-    message: &Line<'_>,
+    message: &Text<'_>,
     color: Color,
 ) {
-    if area.is_empty() {
+    if area.width < 3 || area.height < 3 {
         return;
     }
-    let text_width = message.width();
-    let width = u16::try_from(text_width.saturating_add(4)).unwrap_or(u16::MAX);
-    let paragraph = Paragraph::new(message.clone())
-        .centered()
-        .wrap(Wrap { trim: true });
-    let body_width = width.min(area.width).saturating_sub(2).max(1);
-    let body_height = u16::try_from(text_width.div_ceil(usize::from(body_width)))
+    let longest = message.lines.iter().map(Line::width).max().unwrap_or(0);
+    let width = u16::try_from(longest.saturating_add(4))
         .unwrap_or(u16::MAX)
-        .max(1);
+        .clamp(12, 64)
+        .min(area.width);
+    let inset = u16::from(width >= 40);
+    let text_width = width.saturating_sub(2 + inset * 2).max(1);
+    let paragraph = Paragraph::new(message.clone()).wrap(Wrap { trim: false });
+    let line_count = paragraph.line_count(text_width);
+    let body_height = u16::try_from(line_count).unwrap_or(u16::MAX).max(1);
     let popup = Floating::new("", width, body_height.saturating_add(2), &[])
         .at_top()
         .colors(color, color)
         .render(frame, area, theme);
-    frame.render_widget(paragraph, popup.body);
+    let text_area = Rect::new(
+        popup.body.x + inset,
+        popup.body.y,
+        popup.body.width.saturating_sub(inset * 2),
+        popup.body.height,
+    );
+    let paragraph = if line_count == 1 {
+        paragraph.centered()
+    } else {
+        paragraph.left_aligned()
+    };
+    frame.render_widget(paragraph, text_area);
 }
 
 fn render_key_confirmation(
@@ -5006,6 +5026,31 @@ mod tests {
     }
 
     #[test]
+    fn multiline_notifications_use_rendered_height_and_sanitize_controls() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        root.update(super::RootEvent::NotifySuccess(
+            "First line\r\nSecond\tline\u{1b}".to_owned(),
+        ));
+        let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
+
+        terminal
+            .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let rows = (0..4)
+            .map(|row| {
+                (0..40)
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        assert!(rows[1].contains("First line"));
+        assert!(rows[2].contains("Second    line�"));
+        assert!(rows[3].contains('╰'));
+    }
+
+    #[test]
     fn update_available_uses_the_success_frame_and_styles_version_and_command() {
         let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
@@ -5685,8 +5730,9 @@ mod tests {
         let notification = root.notification.as_ref().unwrap();
         let message = notification
             .message
-            .spans
+            .lines
             .iter()
+            .flat_map(|line| &line.spans)
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert_eq!(
@@ -5710,8 +5756,9 @@ mod tests {
         let notification = root.notification.as_ref().unwrap();
         let message = notification
             .message
-            .spans
+            .lines
             .iter()
+            .flat_map(|line| &line.spans)
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert_eq!(
@@ -6346,8 +6393,9 @@ mod tests {
         let notification = root.notification.as_ref().unwrap();
         let message = notification
             .message
-            .spans
+            .lines
             .iter()
+            .flat_map(|line| &line.spans)
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert_eq!(message, "The folder must be a git repository.");

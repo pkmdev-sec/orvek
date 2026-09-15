@@ -1,9 +1,10 @@
 //! Picker for prompts from the current session or all persisted sessions.
 
 use super::{
-    file_finder::{fuzzy_score, visible_query_tail},
+    file_finder::fuzzy_score,
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
+    typography::{CHOICE_MARKER, ChoiceStyle, SearchField},
 };
 use crate::tui::{session::RecentPrompt, theme::Theme};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
@@ -16,7 +17,6 @@ use ratatui::{
 };
 use std::cmp::Reverse;
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 const KEY_BINDINGS: [(&str, &str); 6] = [
     ("type", "search"),
@@ -27,7 +27,6 @@ const KEY_BINDINGS: [(&str, &str); 6] = [
     ("esc", "close"),
 ];
 const LIST_HEIGHT: u16 = 7;
-const SEARCH_LABEL: &str = "Search: ";
 
 pub(super) enum RecentPromptPickerEvent {
     Terminal(Event),
@@ -220,23 +219,7 @@ impl RecentPromptPicker {
     }
 
     fn render_search(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        if area.is_empty() {
-            return;
-        }
-
-        let marker = "  ";
-        let prefix_width = marker.width() + SEARCH_LABEL.width();
-        let query_width = usize::from(area.width).saturating_sub(prefix_width);
-        let query = visible_query_tail(&self.query, query_width);
-        let label_style = Style::default().fg(theme.muted());
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(marker, label_style),
-                Span::styled(SEARCH_LABEL, label_style),
-                Span::styled(query, Style::default().fg(theme.text())),
-            ])),
-            area,
-        );
+        SearchField::new(&self.query).render(frame, area, theme);
     }
 
     fn render_prompts(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
@@ -258,21 +241,22 @@ impl RecentPromptPicker {
 
         let items = self.visible.iter().enumerate().map(|(position, index)| {
             let prompt = &self.prompts[*index];
+            let typography = ChoiceStyle::new(position == self.selected, true);
             let mut spans = vec![Span::styled(
                 format!("{}. {}", position + 1, one_line_preview(&prompt.text)),
-                Style::default().fg(theme.text()),
+                typography.primary(theme),
             )];
             if self.scope == RecentPromptScope::Global {
                 spans.push(Span::styled(
                     format!("  · {} · {}", prompt.workspace.display(), prompt.session_id),
-                    Style::default().fg(theme.muted()),
+                    typography.detail(theme),
                 ));
             }
             ListItem::new(Line::from(spans))
         });
         let list = List::new(items)
-            .highlight_symbol("› ")
-            .highlight_style(Style::default().fg(theme.accent()));
+            .highlight_symbol(CHOICE_MARKER)
+            .highlight_style(ChoiceStyle::new(true, true).highlight(theme));
         let mut state = ListState::default().with_selected(Some(self.selected));
         frame.render_stateful_widget(list, area, &mut state);
     }

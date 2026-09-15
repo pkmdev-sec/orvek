@@ -24,6 +24,7 @@ mod subagent_tree_layout;
 mod subagents;
 mod theme_selector;
 mod transcript;
+mod typography;
 mod waved_text;
 
 pub(crate) use app::{AppEffect, AppEvent, AppNode};

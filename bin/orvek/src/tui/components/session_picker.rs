@@ -3,6 +3,7 @@
 use super::{
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
+    typography::{CHOICE_MARKER, ChoiceStyle, SearchField},
 };
 use crate::tui::{
     session::{SessionSummary, format_age},
@@ -12,18 +13,16 @@ use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKin
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{List, ListItem, ListState, Paragraph},
 };
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 const RESUME_KEY_BINDINGS: [(&str, &str); 3] =
     [("↑↓", "move"), ("enter/tab", "resume"), ("esc", "close")];
 const MENTION_KEY_BINDINGS: [(&str, &str); 3] =
     [("↑↓", "move"), ("enter/tab", "insert"), ("esc", "close")];
-const SEARCH_LABEL: &str = "Search: ";
 
 pub(super) enum SessionPickerEvent {
     Terminal(Event),
@@ -166,22 +165,7 @@ impl SessionPicker {
     }
 
     fn render_search(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        if area.is_empty() {
-            return;
-        }
-        let marker = "  ";
-        let prefix_width = marker.width() + SEARCH_LABEL.width();
-        let query_width = usize::from(area.width).saturating_sub(prefix_width);
-        let query = visible_tail(&self.query, query_width);
-        let label_style = Style::default().fg(theme.muted());
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(marker, label_style),
-                Span::styled(SEARCH_LABEL, label_style),
-                Span::styled(query, Style::default().fg(theme.text())),
-            ])),
-            area,
-        );
+        SearchField::new(&self.query).render(frame, area, theme);
     }
 
     fn render_sessions(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
@@ -199,8 +183,9 @@ impl SessionPicker {
             );
             return;
         }
-        let items = self.matches.iter().map(|index| {
+        let items = self.matches.iter().enumerate().map(|(position, index)| {
             let session = &self.sessions[*index];
+            let typography = ChoiceStyle::new(position == self.selected, true);
             let title = format!(
                 "{} · {}",
                 format_age(session.started_at_unix_ms),
@@ -219,19 +204,17 @@ impl SessionPicker {
             ListItem::new(vec![
                 Line::from(Span::styled(
                     crate::tui::format::sanitize_terminal_text_inline(&title).into_owned(),
-                    Style::default()
-                        .fg(theme.text())
-                        .add_modifier(Modifier::BOLD),
+                    typography.primary(theme),
                 )),
                 Line::from(Span::styled(
                     crate::tui::format::sanitize_terminal_text_inline(&detail).into_owned(),
-                    Style::default().fg(theme.muted()),
+                    typography.detail(theme),
                 )),
             ])
         });
         let list = List::new(items)
-            .highlight_symbol("› ")
-            .highlight_style(Style::default().fg(theme.accent()));
+            .highlight_symbol(CHOICE_MARKER)
+            .highlight_style(ChoiceStyle::new(true, true).highlight(theme));
         let selected = (!self.matches.is_empty()).then_some(self.selected);
         let mut state = ListState::default().with_selected(selected);
         frame.render_stateful_widget(list, area, &mut state);
@@ -298,17 +281,6 @@ impl Component for SessionPicker {
         self.render_search(frame, search, theme);
         self.render_sessions(frame, sessions, theme);
     }
-}
-
-fn visible_tail(query: &str, width: usize) -> &str {
-    let mut used = 0;
-    for (index, grapheme) in query.grapheme_indices(true).rev() {
-        used += grapheme.width();
-        if used > width {
-            return &query[index + grapheme.len()..];
-        }
-    }
-    query
 }
 
 #[cfg(test)]

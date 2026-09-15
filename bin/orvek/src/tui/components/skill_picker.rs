@@ -1,25 +1,22 @@
 //! Searchable picker for skills available to the active session.
 
 use super::{
-    file_finder::{fuzzy_score, visible_query_tail},
+    file_finder::fuzzy_score,
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
+    typography::{CHOICE_MARKER, ChoiceStyle, SearchField},
 };
 use crate::{core::extensions::Skill, tui::theme::Theme};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEventKind};
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{List, ListItem, ListState, Paragraph},
+    widgets::{List, ListItem, ListState},
 };
 use std::{cmp::Reverse, sync::Arc};
-use unicode_width::UnicodeWidthStr;
 
 const KEY_BINDINGS: [(&str, &str); 3] = [("↑↓", "move"), ("enter/tab", "insert"), ("esc", "close")];
-const SEARCH_LABEL: &str = "Search: ";
-const FOCUS_MARKER: &str = "› ";
 
 pub(super) enum SkillPickerEvent {
     Terminal(Event),
@@ -133,25 +130,7 @@ impl SkillPicker {
     }
 
     fn render_search(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        if area.is_empty() {
-            return;
-        }
-
-        let marker = "  ";
-        let prefix_width = marker.width() + SEARCH_LABEL.width();
-        let query_width = usize::from(area.width).saturating_sub(prefix_width);
-        let label_style = Style::default().fg(theme.muted());
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(marker, label_style),
-                Span::styled(SEARCH_LABEL, label_style),
-                Span::styled(
-                    visible_query_tail(&self.query, query_width),
-                    Style::default().fg(theme.text()),
-                ),
-            ])),
-            area,
-        );
+        SearchField::new(&self.query).render(frame, area, theme);
     }
 
     fn render_skills(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
@@ -159,24 +138,20 @@ impl SkillPicker {
             return;
         }
 
-        let items = self.matches.iter().map(|index| {
+        let items = self.matches.iter().enumerate().map(|(position, index)| {
             let skill = &self.skills[*index];
+            let typography = ChoiceStyle::new(position == self.selected, true);
             ListItem::new(Line::from(vec![
-                Span::styled(
-                    format!("${}", skill.name()),
-                    Style::default()
-                        .fg(theme.text())
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::styled(format!("${}", skill.name()), typography.primary(theme)),
                 Span::styled(
                     format!("  {}", skill.description()),
-                    Style::default().fg(theme.muted()),
+                    typography.detail(theme),
                 ),
             ]))
         });
         let list = List::new(items)
-            .highlight_style(Style::default().fg(theme.accent()))
-            .highlight_symbol(FOCUS_MARKER);
+            .highlight_style(ChoiceStyle::new(true, true).highlight(theme))
+            .highlight_symbol(CHOICE_MARKER);
         let selected = (!self.matches.is_empty()).then_some(self.selected);
         let mut state = ListState::default().with_selected(selected);
         frame.render_stateful_widget(list, area, &mut state);

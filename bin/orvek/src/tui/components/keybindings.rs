@@ -3,13 +3,13 @@
 use super::{
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
+    typography,
 };
 use crate::tui::theme::Theme;
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseEventKind};
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
 };
@@ -138,14 +138,9 @@ fn binding_line(
     let occupied = 1 + key.width() + description.width();
     let gap = usize::from(width).saturating_sub(occupied).max(1);
     Line::from(vec![
-        Span::styled(
-            format!(" {key}"),
-            Style::default()
-                .fg(theme.accent())
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(format!(" {key}"), typography::key(theme)),
         Span::raw(" ".repeat(gap)),
-        Span::styled(description, Style::default().fg(theme.muted())),
+        Span::styled(description, typography::secondary(theme)),
     ])
 }
 

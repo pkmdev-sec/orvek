@@ -3,13 +3,13 @@
 use super::{
     floating::Floating,
     node::{Component, ComponentUpdate, RenderRequest},
+    typography::{CHOICE_MARKER, ChoiceStyle},
 };
 use crate::tui::theme::{Theme, ThemeMode};
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseEventKind};
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{List, ListItem, ListState},
 };
@@ -123,25 +123,24 @@ impl Component for ThemeSelector {
         }
         let layout = Floating::new("Theme", 38, 7, &KEY_BINDINGS).render(frame, area, theme);
         self.navigation_area = layout.body;
-        let items = ThemeMode::ALL.into_iter().map(|mode| {
-            let detail = match mode {
-                ThemeMode::Auto => "Follow the operating system",
-                ThemeMode::Light => "Always use the light palette",
-                ThemeMode::Dark => "Always use the dark palette",
-            };
-            ListItem::new(Line::from(vec![
-                Span::styled(
-                    format!("{:<6}", mode.as_str()),
-                    Style::default().fg(theme.text()),
-                ),
-                Span::styled(detail, Style::default().fg(theme.muted())),
-            ]))
-        });
-        let list = List::new(items).highlight_symbol("› ").highlight_style(
-            Style::default()
-                .fg(theme.accent())
-                .add_modifier(Modifier::BOLD),
-        );
+        let items = ThemeMode::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(position, mode)| {
+                let typography = ChoiceStyle::new(position == self.selected, true);
+                let detail = match mode {
+                    ThemeMode::Auto => "Follow the operating system",
+                    ThemeMode::Light => "Always use the light palette",
+                    ThemeMode::Dark => "Always use the dark palette",
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("{:<6}", mode.as_str()), typography.primary(theme)),
+                    Span::styled(detail, typography.detail(theme)),
+                ]))
+            });
+        let list = List::new(items)
+            .highlight_symbol(CHOICE_MARKER)
+            .highlight_style(ChoiceStyle::new(true, true).highlight(theme));
         let mut state = ListState::default().with_selected(Some(self.selected));
         frame.render_stateful_widget(list, layout.body, &mut state);
         let cursor_y = layout.body.y + u16::try_from(self.selected).unwrap_or(u16::MAX);

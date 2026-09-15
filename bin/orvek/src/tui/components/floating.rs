@@ -1,5 +1,6 @@
 //! Shared chrome and layout for centered modal components.
 
+use super::typography;
 use crate::tui::theme::Theme;
 use ratatui::{
     Frame,
@@ -121,12 +122,12 @@ impl<'a> Floating<'a> {
             if !spans.is_empty() {
                 spans.push(Span::styled(
                     KEY_BINDING_SEPARATOR,
-                    Style::default().fg(theme.muted()),
+                    typography::secondary(theme),
                 ));
                 line_width += separator_width;
             }
             if !key.is_empty() {
-                spans.push(Span::styled(key, Style::reset()));
+                spans.push(Span::styled(key, typography::key(theme)));
             }
             if !help.is_empty() {
                 spans.push(Span::styled(
@@ -135,7 +136,7 @@ impl<'a> Floating<'a> {
                     } else {
                         format!(" {help}")
                     },
-                    Style::default().fg(theme.muted()),
+                    typography::secondary(theme),
                 ));
             }
             line_width += key_binding_width;
@@ -189,7 +190,7 @@ fn split_footer(inner: Rect, footer_height: u16) -> (Rect, Rect) {
 mod tests {
     use super::Floating;
     use crate::tui::theme::Theme;
-    use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Modifier};
 
     #[test]
     fn floating_centers_rounded_chrome_and_styles_keys_separately_from_help() {
@@ -212,7 +213,8 @@ mod tests {
         let start = (0..20)
             .find(|&column| buffer[(column, row)].symbol() == "l")
             .unwrap();
-        assert_eq!(buffer[(start, row)].fg, Color::Reset);
+        assert_eq!(buffer[(start, row)].fg, Theme::default().accent());
+        assert!(buffer[(start, row)].modifier.contains(Modifier::BOLD));
         assert_eq!(buffer[(start + 5, row)].fg, Theme::default().muted());
     }
 
