@@ -442,7 +442,7 @@ impl Decoder {
                 for (index, completed_item) in &self.items {
                     let index =
                         usize::try_from(*index).map_err(|_| FailureKind::MalformedResponse)?;
-                    if history_items.get(index) != Some(completed_item) {
+                    if !terminal_item_confirms(completed_item, history_items.get(index)) {
                         return Err(FailureKind::MalformedResponse);
                     }
                 }
@@ -490,6 +490,36 @@ impl Decoder {
         self.response_id = Some(id.into());
         Ok(())
     }
+}
+
+fn terminal_item_confirms(completed: &Value, terminal: Option<&Value>) -> bool {
+    let Some(terminal) = terminal else {
+        return false;
+    };
+    if completed == terminal {
+        return true;
+    }
+    if completed.get("type").and_then(Value::as_str) != Some("reasoning")
+        || terminal.get("type").and_then(Value::as_str) != Some("reasoning")
+    {
+        return false;
+    }
+    let (Some(completed), Some(terminal)) = (completed.as_object(), terminal.as_object()) else {
+        return false;
+    };
+    completed.len() == terminal.len()
+        && completed.iter().all(|(key, value)| {
+            let Some(terminal_value) = terminal.get(key) else {
+                return false;
+            };
+            if key == "encrypted_content" {
+                return value.as_str().is_some_and(|value| !value.is_empty())
+                    && terminal_value
+                        .as_str()
+                        .is_some_and(|value| !value.is_empty());
+            }
+            value == terminal_value
+        })
 }
 
 fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str, FailureKind> {
@@ -545,5 +575,78 @@ fn normalize(item: &Value) -> Result<OutputItem, FailureKind> {
             }))
         }
         _ => Ok(OutputItem::Opaque { item: item.clone() }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Decoder, terminal_item_confirms};
+    use serde_json::json;
+
+    #[test]
+    fn terminal_reencrypted_reasoning_confirms_the_completed_item() {
+        let mut decoder = Decoder::default();
+        let completed_reasoning = json!({
+            "type": "reasoning",
+            "id": "reasoning-1",
+            "encrypted_content": "first-ciphertext",
+            "summary": [{"type": "summary_text", "text": "same summary"}],
+            "content": [],
+        });
+        decoder
+            .event(
+                &serde_json::to_vec(&json!({
+                    "type": "response.output_item.done",
+                    "output_index": 0,
+                    "item": completed_reasoning,
+                }))
+                .unwrap(),
+                &mut |_| {},
+            )
+            .unwrap();
+
+        let terminal = json!({
+            "type": "response.completed",
+            "response": {
+                "id": "response-1",
+                "status": "completed",
+                "error": null,
+                "incomplete_details": null,
+                "output": [{
+                    "type": "reasoning",
+                    "id": "reasoning-1",
+                    "encrypted_content": "terminal-ciphertext",
+                    "summary": [{"type": "summary_text", "text": "same summary"}],
+                    "content": [],
+                }],
+                "usage": {"input_tokens": 5, "output_tokens": 1, "total_tokens": 6},
+            },
+        });
+
+        assert!(
+            decoder
+                .event(&serde_json::to_vec(&terminal).unwrap(), &mut |_| {})
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn terminal_reencrypted_reasoning_rejects_semantic_changes() {
+        let completed = json!({
+            "type": "reasoning",
+            "id": "reasoning-1",
+            "encrypted_content": "first-ciphertext",
+            "summary": [{"type": "summary_text", "text": "original summary"}],
+            "content": [],
+        });
+        let changed = json!({
+            "type": "reasoning",
+            "id": "reasoning-1",
+            "encrypted_content": "terminal-ciphertext",
+            "summary": [{"type": "summary_text", "text": "changed summary"}],
+            "content": [],
+        });
+
+        assert!(!terminal_item_confirms(&completed, Some(&changed)));
     }
 }
