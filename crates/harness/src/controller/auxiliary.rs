@@ -490,7 +490,7 @@ impl Host {
                 return Ok(json!({"error":"config_show takes no arguments"}));
             }
             return Ok(
-                json!({"model":session.model(),"workspace":session.workspace(),"host_config":self.config_identity,"executor":self.executor.environment(),"admission":session.admission().map(|profile| json!({"request":profile.request_digest(),"binding":profile.binding(),"provenance":profile.provenance(),"authority":profile.authority()}))}),
+                json!({"model":session.model(),"workspace":session.workspace(),"host_config":self.config_identity,"executor":self.executor.as_ref().map(|executor| executor.environment()),"admission":session.admission().map(|profile| json!({"request":profile.request_digest(),"binding":profile.binding(),"provenance":profile.provenance(),"authority":profile.authority()}))}),
             );
         }
         if proposal.name == "read_review" {
@@ -569,10 +569,16 @@ impl Host {
             max_output_bytes: 32 * 1024,
             timeout_ms: 30_000,
         };
-        let result = self
-            .tools
-            .execute(&proposal.name, args, context, cancellation)
-            .await;
+        // Auxiliary requests stay read-only: on a native host there is no
+        // sandbox toolset, so the static file-only entry point serves the same
+        // two snapshot tools without ever reaching an executor.
+        let result = if let Some(tools) = self.tools.as_ref() {
+            tools
+                .execute(&proposal.name, args, context, cancellation)
+                .await
+        } else {
+            WorkspaceTools::execute_file_tool(&proposal.name, args, &context, &cancellation)
+        };
         Ok(match result {
             Ok(value) => value,
             Err(error) => json!({"error":error.to_string()}),

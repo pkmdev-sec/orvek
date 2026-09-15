@@ -47,7 +47,7 @@ impl Host {
         let mut store = self.store.lock().await;
         let profile = super::resolve_baseline_admission(
             &store,
-            self.executor.as_ref(),
+            self.runtime(),
             self.config_identity,
             request,
             crate::evolution::BaselineReason::LegacyImport,

@@ -99,6 +99,11 @@ impl Host {
         {
             content.push(json!({"type":"input_text","text":"Reflect on this session."}));
         }
+        if matches!(intent, SubmitIntent::Shell { .. }) && self.native_tools.is_some() {
+            return Err(HostError::Invalid(
+                "shell input runs in the isolated Docker workspace; native host mode has no sandbox shell",
+            ));
+        }
         let input = crate::input::prepare(content, store.artifacts())?;
         let intent = match intent {
             SubmitIntent::Shell { spec } => WorkIntent::Shell { spec },

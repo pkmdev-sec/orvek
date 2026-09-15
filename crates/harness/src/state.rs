@@ -56,12 +56,15 @@ pub enum Outcome {
     BudgetExhausted,
     Cancelled,
     Failed,
+    /// Ordinary native-host work ended from final prose or an explicit finish.
+    /// The user's live workspace keeps every change; no certificate exists.
+    FinishedUnverified,
 }
 
 impl Outcome {
     pub const fn exit_code(self) -> u8 {
         match self {
-            Self::Complete => 0,
+            Self::Complete | Self::FinishedUnverified => 0,
             Self::Failed => 1,
             Self::Blocked => 20,
             Self::BudgetExhausted => 21,
@@ -669,5 +672,36 @@ impl TaskState {
     fn invalidate(&mut self) {
         self.generation += 1;
         self.delivery = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Outcomes cross process, store and UI boundaries as serde tags; a
+    /// renamed or reordered variant would silently strand persisted tasks.
+    #[test]
+    fn outcomes_roundtrip_through_their_serde_tags() {
+        for outcome in [
+            Outcome::Complete,
+            Outcome::DeliveredWithExceptions,
+            Outcome::Blocked,
+            Outcome::BudgetExhausted,
+            Outcome::Cancelled,
+            Outcome::Failed,
+            Outcome::FinishedUnverified,
+        ] {
+            let tag = serde_json::to_value(outcome).unwrap();
+            assert_eq!(
+                serde_json::from_value::<Outcome>(tag.clone()).unwrap(),
+                outcome
+            );
+            assert_eq!(tag, serde_json::to_value(outcome).unwrap());
+        }
+        assert_eq!(
+            serde_json::to_value(Outcome::FinishedUnverified).unwrap(),
+            serde_json::json!("finished_unverified")
+        );
     }
 }

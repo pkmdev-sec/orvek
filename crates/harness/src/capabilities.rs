@@ -9,6 +9,8 @@
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod files;
 
+pub mod host;
+
 use crate::{
     Digest,
     runtime::{
