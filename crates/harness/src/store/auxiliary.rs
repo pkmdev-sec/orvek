@@ -92,10 +92,11 @@ impl Store {
         Ok(())
     }
 
-    pub fn settle_classification(
+    pub fn settle_failed_classification(
         &mut self,
         session: SessionId,
         request: Uuid,
+        error: String,
     ) -> Result<(), StoreError> {
         let state = self.load_session(session)?;
         if state.active_request != Some(request) {
@@ -108,7 +109,7 @@ impl Store {
             SessionCommand::TurnSettled {
                 request,
                 outcome: None,
-                error: None,
+                error: Some(error),
             },
         )?;
         Ok(())

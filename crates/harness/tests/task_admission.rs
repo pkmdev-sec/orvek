@@ -4,7 +4,7 @@ use orvek_harness::{
     artifacts::PublicArtifactRef,
     contract::*,
     inference::ModelSettings,
-    session::{SessionConfig, SessionId},
+    session::{SessionCommand, SessionConfig, SessionEvent, SessionId},
     state::{JobStatus, Phase},
     verification::{CheckProgram, ControlFailure, Expectation, Probe},
     workspace::{Snapshot, SnapshotPolicy},
@@ -566,6 +566,62 @@ fn ordinary_fixture() -> (tempfile::TempDir, Store, SessionId, Digest) {
 /// rebuildable, so the record carries its own time rather than reading the
 /// clock while folding.
 const DISPATCHED_MS: u64 = 1_700_000_000_000;
+
+#[test]
+fn failed_classification_settlement_preserves_its_error() {
+    use orvek_harness::{
+        input,
+        submission::{Schedule, SubmissionStatus, WorkIntent},
+    };
+    use serde_json::json;
+    let (_root, mut store, session, policy) = ordinary_fixture();
+    let input = input::prepare(
+        vec![json!({"type":"input_text","text":"Fix addition"})],
+        store.public_artifacts(),
+    )
+    .unwrap();
+    let request = Uuid::new_v4();
+    store
+        .submit(
+            session,
+            request,
+            input.artifact,
+            WorkIntent::Ordinary {
+                limits: Limits::default(),
+                policy,
+                schedule: Schedule::Queue,
+            },
+        )
+        .unwrap();
+    store
+        .set_submission_status(session, request, SubmissionStatus::Running)
+        .unwrap();
+    store.begin_classification(session, request).unwrap();
+
+    store
+        .settle_failed_classification(session, request, "classification rejected".into())
+        .unwrap();
+
+    let settled = store
+        .journal_page(0, 100)
+        .unwrap()
+        .into_iter()
+        .filter_map(|record| serde_json::from_value::<SessionEvent>(record.event).ok())
+        .find_map(|event| match event {
+            SessionEvent::Command {
+                command:
+                    SessionCommand::TurnSettled {
+                        request: settled,
+                        error,
+                        ..
+                    },
+                ..
+            } if settled == request => error,
+            _ => None,
+        });
+    assert_eq!(settled.as_deref(), Some("classification rejected"));
+    assert_eq!(store.load_session(session).unwrap().active_request, None);
+}
 
 #[test]
 fn ordinary_cancellation_before_classification_is_never_dispatched() {
