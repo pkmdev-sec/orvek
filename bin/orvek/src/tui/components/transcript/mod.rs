@@ -276,12 +276,27 @@ impl Transcript {
             height: area.bottom().saturating_sub(prompt.area.bottom()),
             ..area
         });
-        if self.expandables_focused {
+        if self.expandables_focused && matches!(self.scroll, ScrollState::Follow) {
             let _ = render_top_right_hint(frame, area, &EXPANDABLE_FOCUS_HINTS, theme.accent());
             return;
         }
 
-        if !matches!(self.scroll, ScrollState::Detached(_)) || self.new_updates == 0 {
+        if !matches!(self.scroll, ScrollState::Detached(_)) || area.is_empty() {
+            return;
+        }
+        let area = Rect {
+            y: area.bottom().saturating_sub(1),
+            height: 1,
+            ..area
+        };
+
+        if self.new_updates == 0 {
+            self.updates_banner_area = render_top_right_hint(
+                frame,
+                area,
+                &["↓ Scrolled up · Ctrl+End to follow", "↓ Ctrl+End to follow"],
+                theme.border(),
+            );
             return;
         }
 
@@ -1538,6 +1553,18 @@ impl Component for Transcript {
             return;
         }
         let mut plan = self.render_plan(area.width, area.height, theme);
+        let area = if matches!(self.scroll, ScrollState::Detached(_)) {
+            Rect {
+                height: area.height.saturating_sub(1),
+                ..area
+            }
+        } else {
+            area
+        };
+        if self.viewport_height != area.height {
+            self.viewport_height = area.height;
+            plan = self.render_plan(area.width, area.height, theme);
+        }
         let prompt_entry = self.pinned_prompt_entry(plan.anchors.first().copied());
         let prompt_height = self.prepare_pinned_prompt(prompt_entry, area, theme);
         let transcript_area = Rect {

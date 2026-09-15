@@ -516,10 +516,12 @@ fn truncate_line(line: Line<'static>, width: u16) -> Line<'static> {
 
 fn generic(tool: &ToolEntry, width: u16, theme: &Theme, expanded: bool) -> Presentation {
     let title = humanize_tool(&tool.name);
-    let subject = meaningful_subject(&tool.arguments).unwrap_or_else(|| {
-        let count = tool.arguments.as_object().map_or(0, serde_json::Map::len);
-        format!("{count} arguments")
-    });
+    let subject = meaningful_subject(&tool.arguments)
+        .or_else(|| tool.arguments.as_str().map(str::to_owned))
+        .unwrap_or_else(|| {
+            let count = tool.arguments.as_object().map_or(0, serde_json::Map::len);
+            format!("{count} arguments")
+        });
     let mut presentation = Presentation::new(title, subject);
     if !expanded {
         return presentation;
@@ -672,6 +674,17 @@ mod tests {
     };
     use ratatui::style::{Color, Modifier};
     use serde_json::json;
+
+    #[test]
+    fn incomplete_tool_arguments_are_visible_without_expanding() {
+        let preview = tool("tool", serde_json::json!("{\"command\":\"pd"));
+        let lines = render(&preview, 80, &Theme::default());
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string().contains("{\"command\":\"pd"))
+        );
+    }
 
     fn tool(name: &str, arguments: serde_json::Value) -> ToolEntry {
         ToolEntry {

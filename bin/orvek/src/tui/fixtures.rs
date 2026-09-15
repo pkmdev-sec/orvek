@@ -113,6 +113,7 @@ pub(crate) fn record(
             if matches!(kind, DisplaySample::ToolStart) {
                 vec![
                     ViewChange::ToolProposed {
+                        item_id: None,
                         request: Some(request),
                         call_id,
                         name,

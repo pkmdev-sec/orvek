@@ -42,6 +42,8 @@ pub(crate) struct TranscriptModel {
     reasoning: HashMap<MessageKey, EntryId>,
     users: HashMap<Uuid, EntryId>,
     tools: HashMap<String, EntryId>,
+    tool_items: HashMap<MessageKey, EntryId>,
+    pending_tool_previews: HashSet<EntryId>,
     jobs: HashMap<Uuid, EntryId>,
     active_requests: HashMap<Uuid, u64>,
     running_tools: HashSet<EntryId>,
@@ -49,6 +51,7 @@ pub(crate) struct TranscriptModel {
     message_threads: HashMap<ThreadId, EntryId>,
     message_order: VecDeque<ThreadId>,
     evicted: Vec<EntryId>,
+    discarded_previews: Vec<EntryId>,
     history_truncated: bool,
 }
 
@@ -123,6 +126,7 @@ impl TranscriptModel {
                 verified: false,
             });
         }
+        self.evicted.append(&mut self.discarded_previews);
         ModelChange {
             changed,
             removed: std::mem::take(&mut self.evicted),
@@ -237,15 +241,16 @@ impl TranscriptModel {
                 });
             }
             ViewChange::ToolProposed {
+                request,
+                item_id,
                 call_id,
                 name,
                 arguments,
-                ..
             } => {
                 if self.tools.contains_key(call_id) {
                     return false;
                 }
-                let id = self.push(EntryKind::Tool(ToolEntry {
+                let tool = ToolEntry {
                     name: name.clone(),
                     arguments: serde_json::from_str(&bounded(arguments))
                         .unwrap_or_else(|_| Value::String(bounded(arguments))),
@@ -256,8 +261,62 @@ impl TranscriptModel {
                     metadata: None,
                     substeps: Vec::new(),
                     child_count: 0,
-                }));
+                };
+                // Provider item IDs identify preview streams, not execution calls.
+                let key = item_id.as_ref().map(|item| (*request, item.clone()));
+                let preview = key
+                    .as_ref()
+                    .and_then(|key| self.tool_items.get(key))
+                    .copied();
+                let id = if let Some(id) = preview {
+                    self.pending_tool_previews.remove(&id);
+                    self.update(id, |kind| *kind = EntryKind::Tool(tool));
+                    id
+                } else {
+                    self.push(EntryKind::Tool(tool))
+                };
+                if let Some(key) = key {
+                    self.tool_items.insert(key, id);
+                }
                 self.tools.insert(call_id.clone(), id);
+            }
+            ViewChange::ToolArguments {
+                request,
+                item_id,
+                chunk,
+            } => {
+                if chunk.is_empty() {
+                    return false;
+                }
+                let key = (*request, item_id.clone());
+                let id = match self.tool_items.get(&key).copied() {
+                    Some(id) if !self.pending_tool_previews.contains(&id) => return false,
+                    Some(id) => id,
+                    None => {
+                        let id = self.push(EntryKind::Tool(ToolEntry {
+                            name: "tool".to_owned(),
+                            arguments: Value::String(String::new()),
+                            started_at_unix_ms: at_ms,
+                            state: ToolState::Proposed,
+                            duration_ns: None,
+                            result: None,
+                            metadata: None,
+                            substeps: Vec::new(),
+                            child_count: 0,
+                        }));
+                        self.tool_items.insert(key, id);
+                        self.pending_tool_previews.insert(id);
+                        id
+                    }
+                };
+                self.update(id, |kind| {
+                    if let EntryKind::Tool(tool) = kind
+                        && let Value::String(current) = &mut tool.arguments
+                    {
+                        current.push_str(chunk);
+                        *current = bounded(current);
+                    }
+                });
             }
             ViewChange::ToolResult {
                 call_id, output, ..
@@ -278,6 +337,7 @@ impl TranscriptModel {
                 }
             }
             ViewChange::RequestSettled { request, error } => {
+                self.discard_tool_previews(Some(*request));
                 let started = self.active_requests.remove(request);
                 if let Some(error) = error {
                     self.push(EntryKind::Error {
@@ -438,6 +498,7 @@ impl TranscriptModel {
                 self.push(EntryKind::HostStatus {text:format!("Context projected from revision {source_revision} · {items} items · original history retained"),verified:false});
             }
             ViewChange::DiscardPreviews => {
+                self.discard_tool_previews(None);
                 let pending = self.assistants.values().copied().collect::<Vec<_>>();
                 for id in pending {
                     self.update(id, |kind| {
@@ -637,6 +698,8 @@ impl TranscriptModel {
             self.assistants.retain(|_, id| *id != removed);
             self.reasoning.retain(|_, id| *id != removed);
             self.tools.retain(|_, id| *id != removed);
+            self.tool_items.retain(|_, id| *id != removed);
+            self.pending_tool_previews.remove(&removed);
             self.jobs.retain(|_, id| *id != removed);
             self.running_tools.remove(&removed);
             self.entry_indices = self
@@ -658,6 +721,32 @@ impl TranscriptModel {
             trailing_spacer: true,
         });
         id
+    }
+
+    fn discard_tool_previews(&mut self, request: Option<Uuid>) {
+        let removed = self
+            .tool_items
+            .iter()
+            .filter(|((owner, _), id)| {
+                request.is_none_or(|request| *owner == Some(request))
+                    && self.pending_tool_previews.contains(id)
+            })
+            .map(|(_, id)| *id)
+            .collect::<HashSet<_>>();
+        if removed.is_empty() {
+            return;
+        }
+        self.entries.retain(|entry| !removed.contains(&entry.id));
+        self.tool_items.retain(|_, id| !removed.contains(id));
+        self.pending_tool_previews
+            .retain(|id| !removed.contains(id));
+        self.entry_indices = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| (entry.id, index))
+            .collect();
+        self.discarded_previews.extend(removed);
     }
 
     fn update(&mut self, id: EntryId, change: impl FnOnce(&mut EntryKind)) {
@@ -747,4 +836,138 @@ fn display_tool_result(name: &str, value: Value) -> (Value, Option<u64>) {
         rendered,
         elapsed.map(|value| value.saturating_mul(1_000_000)),
     )
+}
+
+#[cfg(test)]
+mod tool_preview_tests {
+    use super::*;
+    use crate::tui::host_projection::history_items;
+    use orvek_harness::session::{SessionCursor, SessionId};
+    use serde_json::json;
+
+    fn apply(model: &mut TranscriptModel, changes: Vec<ViewChange>) -> ModelChange {
+        model.apply(&TranscriptRecord::from_host_batch(
+            1,
+            1,
+            SessionCursor {
+                version: 1,
+                session: SessionId::new(),
+                revision: 1,
+            },
+            changes,
+        ))
+    }
+
+    fn preview(request: Uuid, item: &str, chunk: &str) -> ViewChange {
+        ViewChange::ToolArguments {
+            request: Some(request),
+            item_id: item.into(),
+            chunk: chunk.into(),
+        }
+    }
+
+    #[test]
+    fn streamed_arguments_reconcile_provider_item_with_execution_call() {
+        let mut model = TranscriptModel::default();
+        let request = Uuid::new_v4();
+        apply(&mut model, vec![preview(request, "fc-1", "{\"command\":")]);
+        let preview_id = model.entries()[0].id;
+        apply(&mut model, vec![preview(request, "fc-1", "\"pwd\"}")]);
+        let EntryKind::Tool(tool) = &model.entries()[0].kind else {
+            panic!("expected tool")
+        };
+        assert_eq!(tool.arguments, json!("{\"command\":\"pwd\"}"));
+        apply(
+            &mut model,
+            history_items(
+                Some(request),
+                &[json!({
+                    "type": "function_call", "id": "fc-1", "call_id": "call-1",
+                    "name": "exec_command", "arguments": "{\"command\":\"pwd\"}"
+                })],
+            ),
+        );
+        assert_eq!(model.entries().len(), 1);
+        assert_eq!(model.entries()[0].id, preview_id);
+        assert!(!apply(&mut model, vec![preview(request, "fc-1", "late")]).changed);
+        apply(
+            &mut model,
+            vec![ViewChange::ToolResult {
+                request: Some(request),
+                call_id: "call-1".into(),
+                output: "done".into(),
+            }],
+        );
+        let EntryKind::Tool(tool) = &model.entries()[0].kind else {
+            panic!("expected tool")
+        };
+        assert_eq!(tool.name, "exec_command");
+        assert_eq!(tool.arguments, json!({"command":"pwd"}));
+        assert!(tool.result.is_some());
+    }
+
+    #[test]
+    fn preview_gap_removes_only_unconfirmed_tools_and_replay_restores_them() {
+        let mut model = TranscriptModel::default();
+        let request = Uuid::new_v4();
+        let recorded = history_items(
+            Some(request),
+            &[json!({
+                "type":"function_call", "id":"fc-recorded", "call_id":"call-recorded",
+                "name":"read_file", "arguments":"{}"
+            })],
+        );
+        apply(&mut model, recorded);
+        apply(&mut model, vec![preview(request, "fc-pending", "partial")]);
+        let preview_id = model.entries()[1].id;
+        let change = apply(&mut model, vec![ViewChange::DiscardPreviews]);
+        assert_eq!(change.removed, vec![preview_id]);
+        assert_eq!(model.entries().len(), 1);
+        apply(
+            &mut model,
+            history_items(
+                Some(request),
+                &[json!({
+                    "type":"function_call", "id":"fc-pending", "call_id":"call-pending",
+                    "name":"read_file", "arguments":"{}"
+                })],
+            ),
+        );
+        assert_eq!(model.entries().len(), 2);
+        assert!(
+            model
+                .entries()
+                .iter()
+                .all(|entry| matches!(entry.kind, EntryKind::Tool(_)))
+        );
+    }
+
+    #[test]
+    fn settling_request_discards_its_previews_without_touching_other_requests() {
+        let mut model = TranscriptModel::default();
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        apply(
+            &mut model,
+            vec![
+                preview(first, "same-item", "one"),
+                preview(second, "same-item", "two"),
+            ],
+        );
+        let second_id = model.entries()[1].id;
+        apply(
+            &mut model,
+            vec![ViewChange::RequestSettled {
+                request: first,
+                error: None,
+            }],
+        );
+        let tools = model
+            .entries()
+            .iter()
+            .filter(|entry| matches!(entry.kind, EntryKind::Tool(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].id, second_id);
+    }
 }

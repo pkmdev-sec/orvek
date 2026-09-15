@@ -58,9 +58,16 @@ pub(crate) enum ViewChange {
     },
     ToolProposed {
         request: Option<Uuid>,
+        #[serde(default)]
+        item_id: Option<String>,
         call_id: String,
         name: String,
         arguments: String,
+    },
+    ToolArguments {
+        request: Option<Uuid>,
+        item_id: String,
+        chunk: String,
     },
     ToolResult {
         request: Option<Uuid>,
@@ -188,10 +195,16 @@ impl HostProjection {
                         text,
                         replace: false,
                     }],
-                    // ItemDone and tool-argument previews grant no durable display or tool status.
-                    Delta::Created { .. }
-                    | Delta::ToolArguments { .. }
-                    | Delta::ItemDone { .. } => Vec::new(),
+                    // Preview item identity is reconciled with execution call identity
+                    // only when the journal records the complete proposal.
+                    Delta::ToolArguments { item_id, arguments } => {
+                        vec![ViewChange::ToolArguments {
+                            request: Some(request),
+                            item_id,
+                            chunk: arguments,
+                        }]
+                    }
+                    Delta::Created { .. } | Delta::ItemDone { .. } => Vec::new(),
                 }
             }
             WatchFrame::PreviewGap { .. } => vec![ViewChange::DiscardPreviews],
@@ -403,6 +416,7 @@ pub(crate) fn history_items(request: Option<Uuid>, items: &[Value]) -> Vec<ViewC
                 ) {
                     changes.push(ViewChange::ToolProposed {
                         request,
+                        item_id: item["id"].as_str().map(str::to_owned),
                         call_id: call_id.into(),
                         name: name.into(),
                         arguments: arguments.into(),
@@ -625,6 +639,70 @@ mod tests {
                 })
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn tool_argument_previews_stream_and_the_proposal_replaces_them() {
+        let session = SessionId::new();
+        let mut projection = HostProjection::new(session, 0);
+        let request = Uuid::new_v4();
+        projection.apply(WatchFrame::Preview {
+            session,
+            request,
+            delta: Delta::Created {
+                response_id: "resp-1".into(),
+            },
+        });
+        projection.apply(event_at(
+            session,
+            1,
+            request,
+            SessionCommand::Input {
+                kind: RequestKind::Conversation,
+                content: vec![json!({"type":"input_text","text":"run it"})],
+            },
+        ));
+
+        let changes = projection.apply(WatchFrame::Preview {
+            session,
+            request,
+            delta: Delta::ToolArguments {
+                item_id: "fc-1".into(),
+                arguments: r#"{"command":"pd"#.into(),
+            },
+        });
+        assert!(matches!(
+            changes.as_slice(),
+            [super::ViewChange::ToolArguments {
+                item_id,
+                chunk,
+                ..
+            }] if item_id == "fc-1" && chunk == r#"{"command":"pd"#
+        ));
+
+        // The provider item ID and execution call ID need not match.
+        let changes = projection.apply(event_at(
+            session,
+            2,
+            request,
+            SessionCommand::Response {
+                request,
+                items: vec![json!({
+                    "type": "function_call",
+                    "id": "fc-1",
+                    "call_id": "call-1",
+                    "name": "exec_command",
+                    "arguments": r#"{"command":"pwd"}"#,
+                    "status": "completed"
+                })],
+            },
+        ));
+        assert!(changes.iter().any(|change| matches!(
+            change,
+            super::ViewChange::ToolProposed { item_id, call_id, name, .. }
+                if item_id.as_deref() == Some("fc-1")
+                    && call_id == "call-1" && name == "exec_command"
+        )));
     }
 
     #[test]

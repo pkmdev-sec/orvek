@@ -104,6 +104,7 @@ pub(crate) struct Composer {
     cursor: usize,
     preferred_column: Option<usize>,
     scroll: usize,
+    follow_cursor: bool,
     last_width: usize,
     context_tokens: u64,
     context_window_tokens: Option<u64>,
@@ -206,6 +207,7 @@ impl Composer {
             cursor: 0,
             preferred_column: None,
             scroll: 0,
+            follow_cursor: true,
             last_width: 78,
             context_tokens: 0,
             context_window_tokens: None,
@@ -484,7 +486,7 @@ impl Composer {
             (layout.cursor_row, layout.cursor_column, layout.lines.len())
         };
         let visible_rows = usize::from(area.height - 2);
-        if selection.is_none() {
+        if selection.is_none() && self.follow_cursor {
             self.keep_cursor_visible(cursor_row, visible_rows, line_count);
         } else {
             self.clamp_scroll(visible_rows, line_count);
@@ -528,11 +530,12 @@ impl Composer {
             }
         }
 
+        let cursor_visible = (self.scroll..self.scroll + visible_rows).contains(&cursor_row);
         let cursor_row = cursor_row.saturating_sub(self.scroll);
         let cursor_x = area.x + 1 + u16::try_from(cursor_column).unwrap_or(u16::MAX);
         let cursor_y = area.y + 1 + u16::try_from(cursor_row).unwrap_or(u16::MAX);
         let max_cursor_x = area.right().saturating_sub(2);
-        if focused && selection.is_none() {
+        if focused && selection.is_none() && cursor_visible {
             frame.set_cursor_position(Position::new(cursor_x.min(max_cursor_x), cursor_y));
         }
     }
@@ -575,6 +578,7 @@ impl Composer {
             return false;
         }
         self.scroll = scroll;
+        self.follow_cursor = false;
         true
     }
 
@@ -614,6 +618,7 @@ impl Composer {
     }
 
     pub(crate) fn replace_draft(&mut self, draft: String) {
+        self.follow_cursor = true;
         self.draft = if draft.contains('\r') {
             normalize_line_endings(&draft).into_owned()
         } else {
@@ -698,6 +703,7 @@ impl Composer {
     }
 
     pub(crate) fn restore_draft(&mut self, draft: ComposerDraft) {
+        self.follow_cursor = true;
         self.draft = draft.text;
         self.images = draft.images;
         self.reviews = draft.reviews;
@@ -714,6 +720,7 @@ impl Composer {
             return ComposerUpdate::unchanged();
         }
 
+        self.follow_cursor = true;
         if key.modifiers == KeyModifiers::CONTROL {
             if matches!(key.code, KeyCode::Char('a' | 'b' | 'e' | 'f')) {
                 self.history.detach();
@@ -834,6 +841,7 @@ impl Composer {
     }
 
     fn insert(&mut self, text: &str) {
+        self.follow_cursor = true;
         let text = normalize_line_endings(text);
         self.move_cursor_out_of_image();
         for image in &mut self.images {
@@ -1138,7 +1146,7 @@ impl Composer {
             let layout = self.visual_layout(width);
             (layout.cursor_row, layout.cursor_column, layout.lines.len())
         };
-        if selection.is_none() {
+        if selection.is_none() && self.follow_cursor {
             self.scroll = 0;
         } else {
             self.clamp_scroll(1, line_count);
@@ -1167,12 +1175,8 @@ impl Composer {
                 width,
             );
         }
-        if focused && selection.is_none() {
-            let cursor_column = if cursor_row == scroll {
-                u16::try_from(cursor_column).unwrap_or(u16::MAX)
-            } else {
-                0
-            };
+        if focused && selection.is_none() && cursor_row == scroll {
+            let cursor_column = u16::try_from(cursor_column).unwrap_or(u16::MAX);
             let cursor_x = area
                 .x
                 .saturating_add(cursor_column.min(area.width.saturating_sub(1)));
@@ -2453,6 +2457,23 @@ mod tests {
                 .as_deref(),
             Some("bcdef\ngh")
         );
+    }
+
+    #[test]
+    fn wheel_scrolling_survives_redraw_until_composer_input() {
+        let mut composer = Composer::new(Path::new("/work"), ReasoningEffort::Medium);
+        composer.replace_draft("line 1\nline 2\nline 3\nline 4".to_owned());
+        render(&mut composer, 12, 4);
+        let cursor = composer.cursor;
+        assert!(composer.scroll_selection(-3, Rect::new(1, 1, 10, 2)));
+        let terminal = render(&mut composer, 12, 4);
+        assert!(rows(&terminal)[1].contains("line 1"));
+        assert_eq!(composer.cursor, cursor);
+        assert_eq!(composer.draft(), "line 1\nline 2\nline 3\nline 4");
+
+        composer.update(key(KeyCode::Char('!'), KeyModifiers::NONE));
+        let terminal = render(&mut composer, 12, 4);
+        assert!(rows(&terminal)[2].contains("line 4!"));
     }
 
     #[test]

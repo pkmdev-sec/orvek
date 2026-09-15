@@ -1140,6 +1140,7 @@ pub(super) async fn run(
                                                 pane,
                                                 generation,
                                                 change: ViewChange::ToolProposed {
+                                                    item_id: None,
                                                     request: Some(request),
                                                     call_id: format!("shell-{request}"),
                                                     name: "shell".into(),
@@ -1192,6 +1193,7 @@ pub(super) async fn run(
                                 ViewChange::ShellStarted { request } => {
                                     match current.shell_commands.get(&request) {
                                         Some(command) => ViewChange::ToolProposed {
+                                            item_id: None,
                                             request: Some(request),
                                             call_id: format!("shell-{request}"),
                                             name: "shell".into(),

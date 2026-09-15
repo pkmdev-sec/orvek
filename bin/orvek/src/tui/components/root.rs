@@ -950,6 +950,37 @@ impl RootNode {
         if self.transcript.component().updates_banner_clicked(&event) {
             return self.update_transcript(TranscriptEvent::FollowTail);
         }
+        if let Event::Mouse(mouse) = &event
+            && matches!(
+                mouse.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            )
+            && !mouse.modifiers.contains(KeyModifiers::SHIFT)
+        {
+            let position = Position::new(mouse.column, mouse.row);
+            if self.composer_area.contains(position) {
+                let rows = if mouse.kind == MouseEventKind::ScrollUp {
+                    -3
+                } else {
+                    3
+                };
+                let changed = self
+                    .composer
+                    .component_mut()
+                    .scroll_selection(rows, self.composer_content_area);
+                return ComponentUpdate::render(if changed {
+                    RenderRequest::Immediate
+                } else {
+                    RenderRequest::None
+                });
+            }
+            if self.transcript_area.contains(position)
+                && let Some(command) = self.transcript.component().scroll_command(&event)
+            {
+                return self.update_transcript(TranscriptEvent::Scroll(command));
+            }
+            return ComponentUpdate::none();
+        }
         if let Some(update) = self.update_selection_mouse(&mut event) {
             return update;
         }
@@ -1151,34 +1182,6 @@ impl RootNode {
                 self.selection.drag(span);
                 self.begin_selection_auto_scroll(surface, position);
                 Some(ComponentUpdate::render(RenderRequest::Immediate))
-            }
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-                if self.selection.is_active() || self.selection.is_pending() =>
-            {
-                let rows = if mouse.kind == MouseEventKind::ScrollUp {
-                    -3
-                } else {
-                    3
-                };
-                let render = match self.selection.surface()? {
-                    Surface::Transcript => {
-                        self.transcript
-                            .update(TranscriptEvent::Scroll(ScrollCommand::Rows(rows)));
-                        RenderRequest::Immediate
-                    }
-                    Surface::Composer => {
-                        let changed = self
-                            .composer
-                            .component_mut()
-                            .scroll_selection(rows as isize, self.composer_content_area);
-                        if changed {
-                            RenderRequest::Immediate
-                        } else {
-                            RenderRequest::None
-                        }
-                    }
-                };
-                Some(ComponentUpdate::render(render))
             }
             MouseEventKind::Up(MouseButton::Left)
                 if self.selection.is_active() || self.selection.is_pending() =>
@@ -3851,6 +3854,78 @@ mod tests {
     }
 
     #[test]
+    fn wheel_targets_the_hovered_surface_without_changing_the_draft() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        for sequence in 1..=20 {
+            let record = TranscriptRecord::from_local(
+                sequence,
+                sequence,
+                LocalEvent::UserSubmitted {
+                    id: TurnId::new(sequence),
+                    text: format!("prompt {sequence}"),
+                },
+            )
+            .unwrap();
+            root.update(super::RootEvent::Transcript(Arc::new(record)));
+        }
+        let draft = (1..=15)
+            .map(|row| format!("draft {row}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        root.composer.component_mut().replace_draft(draft.clone());
+        let before = render_root_text(&mut root, 60, 25);
+        assert!(before.contains("draft 15"));
+        let cursor = root.composer.component().cursor();
+        let content = root.composer_content_area;
+        root.update(mouse(MouseEventKind::ScrollUp, content.x, content.y));
+        let scrolled = render_root_text(&mut root, 60, 25);
+        assert!(!scrolled.contains("draft 15"));
+        assert!(!scrolled.contains("Scrolled up"));
+        assert_eq!(root.composer.component().draft(), draft);
+        assert_eq!(root.composer.component().cursor(), cursor);
+
+        let transcript = root.transcript_area;
+        root.update(mouse(MouseEventKind::ScrollUp, transcript.x, transcript.y));
+        let detached = render_root_text(&mut root, 60, 25);
+        assert!(detached.contains("Scrolled up"));
+        assert!(!detached.contains("draft 15"));
+
+        root.update(mouse(MouseEventKind::ScrollDown, content.x, content.y));
+        let restored = render_root_text(&mut root, 60, 25);
+        assert!(restored.contains("draft 15"));
+        assert!(restored.contains("Scrolled up"));
+    }
+
+    #[test]
+    fn detached_banner_can_follow_without_new_updates() {
+        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
+        for sequence in 1..=20 {
+            let record = TranscriptRecord::from_local(
+                sequence,
+                sequence,
+                LocalEvent::UserSubmitted {
+                    id: TurnId::new(sequence),
+                    text: format!("prompt {sequence}"),
+                },
+            )
+            .unwrap();
+            root.update(super::RootEvent::Transcript(Arc::new(record)));
+        }
+        render_root_text(&mut root, 60, 20);
+        root.update(key(KeyCode::PageUp, KeyModifiers::NONE));
+        let mut terminal = Terminal::new(TestBackend::new(60, 20)).unwrap();
+        terminal
+            .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        let row = root.transcript_area.bottom() - 1;
+        let column = text_column(terminal.backend().buffer(), row, "Scrolled up");
+        root.update(mouse(MouseEventKind::Down(MouseButton::Left), column, row));
+        let followed = render_root_text(&mut root, 60, 20);
+        assert!(!followed.contains("Scrolled up"));
+        assert!(followed.contains("prompt 20"));
+    }
+
+    #[test]
     fn clicking_the_updates_banner_returns_to_the_transcript_tail() {
         let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
         let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
@@ -3886,12 +3961,13 @@ mod tests {
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
             .unwrap();
-        let banner_column = text_column(terminal.backend().buffer(), 1, "1 update");
+        let banner_row = root.transcript_area.bottom() - 1;
+        let banner_column = text_column(terminal.backend().buffer(), banner_row, "1 update");
 
         root.update(mouse(
             MouseEventKind::Down(MouseButton::Left),
             banner_column,
-            1,
+            banner_row,
         ));
         terminal
             .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
@@ -5256,7 +5332,7 @@ mod tests {
         root.update(mouse(MouseEventKind::Down(MouseButton::Left), 2, start_row));
         root.update(mouse(MouseEventKind::Drag(MouseButton::Left), 31, edge));
 
-        for _ in 0..5 {
+        for _ in 0..7 {
             terminal
                 .draw(|frame| root.render(frame, frame.area(), &Theme::default()))
                 .unwrap();
