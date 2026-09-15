@@ -42,6 +42,33 @@ fn snapshot_preserves_bytes_modes_empty_directories_and_declared_exclusions() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn default_exclusions_skip_nested_virtual_environments() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let virtual_environment = source.join("evals/.venv/bin");
+    fs::create_dir_all(&virtual_environment).unwrap();
+    let outside = root.path().join("python");
+    fs::write(&outside, "generated interpreter").unwrap();
+    symlink(&outside, virtual_environment.join("python")).unwrap();
+    let artifacts = Store::open_with_artifact_limit(root.path(), 1024)
+        .unwrap()
+        .public_artifacts()
+        .clone();
+
+    let snapshot = Snapshot::capture(&source, SnapshotPolicy::default(), &artifacts).unwrap();
+
+    assert!(snapshot.entries.contains_key("evals"));
+    assert!(
+        !snapshot
+            .entries
+            .keys()
+            .any(|path| path.starts_with("evals/.venv"))
+    );
+}
+
 #[test]
 fn snapshot_limits_and_existing_destinations_are_enforced() {
     let root = tempfile::tempdir().unwrap();
