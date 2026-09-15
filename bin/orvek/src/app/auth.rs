@@ -14,8 +14,6 @@ use orvek_harness::{
 };
 use std::{path::Path, result::Result as StdResult};
 
-const OPENAI_API_KEY: &str = "OPENAI_API_KEY";
-
 enum SelectedAuth {
     ChatGpt,
     ApiKey(SecretString),
@@ -41,23 +39,23 @@ impl AuthConfig {
     }
 
     pub(crate) fn load(&self) -> AuthResult<Auth> {
-        let selected = self.select_auth(|| SecretString::from_environment(OPENAI_API_KEY))?;
+        let selected = self.select_auth(|| SecretString::from_environment(self.api_key_env()))?;
 
         selected.into_provider_auth(self.file())
     }
 
     pub(crate) fn credential_identity(&self) -> AuthResult<Option<Digest>> {
-        let selected = self.select_auth(|| SecretString::from_environment(OPENAI_API_KEY))?;
+        let selected = self.select_auth(|| SecretString::from_environment(self.api_key_env()))?;
 
         Ok(selected.credential_identity())
     }
 
     pub(crate) fn status(&self) -> AuthResult<()> {
-        match self.select_auth(|| SecretString::from_environment(OPENAI_API_KEY))? {
+        let api_key_env = self.api_key_env();
+        match self.select_auth(|| SecretString::from_environment(api_key_env))? {
             SelectedAuth::ChatGpt => self.print_chatgpt_status()?,
             SelectedAuth::ApiKey(_api_key) => {
-                println!("Authentication: OpenAI API key");
-                println!("Source: {OPENAI_API_KEY}");
+                println!("Authentication: API key from {api_key_env}");
             }
         }
 
@@ -176,7 +174,7 @@ mod tests {
         fs::write(&auth_file, "invalid but present").unwrap();
         let api_key_read = Cell::new(false);
 
-        let config = AuthConfig::new(AuthMode::Auto, auth_file);
+        let config = AuthConfig::new(AuthMode::Auto, auth_file, None);
         let selected = config
             .select_auth(|| {
                 api_key_read.set(true);
@@ -191,7 +189,7 @@ mod tests {
     #[test]
     fn auto_falls_back_to_an_api_key_when_chatgpt_is_absent() {
         let directory = tempdir().unwrap();
-        let config = AuthConfig::new(AuthMode::Auto, directory.path().join("auth.json"));
+        let config = AuthConfig::new(AuthMode::Auto, directory.path().join("auth.json"), None);
         let selected = config
             .select_auth(|| Ok(Some(SecretString::new("api-key".into()))))
             .unwrap();
@@ -202,7 +200,7 @@ mod tests {
     #[test]
     fn forced_chatgpt_does_not_read_the_api_key() {
         let api_key_read = Cell::new(false);
-        let config = AuthConfig::new(AuthMode::ChatGpt, "missing.json".into());
+        let config = AuthConfig::new(AuthMode::ChatGpt, "missing.json".into(), None);
         let selected = config
             .select_auth(|| {
                 api_key_read.set(true);
@@ -216,7 +214,7 @@ mod tests {
 
     #[test]
     fn forced_api_key_reports_a_missing_environment_value() {
-        let config = AuthConfig::new(AuthMode::ApiKey, "unused.json".into());
+        let config = AuthConfig::new(AuthMode::ApiKey, "unused.json".into(), None);
         let result = config.select_auth(|| Ok(None));
 
         assert!(matches!(result, Err(AuthError::ApiKeyUnavailable)));
@@ -249,7 +247,7 @@ mod tests {
         let directory = tempdir().unwrap();
         let auth_file = directory.path().join("auth.json");
         fs::write(&auth_file, "credentials").unwrap();
-        let config = AuthConfig::new(AuthMode::ChatGpt, auth_file.clone());
+        let config = AuthConfig::new(AuthMode::ChatGpt, auth_file.clone(), None);
 
         config.logout().unwrap();
         assert!(!auth_file.exists());

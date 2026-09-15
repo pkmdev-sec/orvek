@@ -12,7 +12,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 pub(crate) struct SecretString(String);
 
 impl SecretString {
-    pub(crate) fn from_environment(name: &'static str) -> Result<Option<Self>, SecretError> {
+    pub(crate) fn from_environment(name: &str) -> Result<Option<Self>, SecretError> {
         match env::var(name) {
             Ok(value) => {
                 let secret = Self::new(value);
@@ -23,7 +23,9 @@ impl SecretString {
                 Ok(Some(secret))
             }
             Err(VarError::NotPresent) => Ok(None),
-            Err(VarError::NotUnicode(_)) => Err(SecretError { name }),
+            Err(VarError::NotUnicode(_)) => Err(SecretError {
+                name: name.to_owned(),
+            }),
         }
     }
 

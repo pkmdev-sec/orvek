@@ -250,5 +250,5 @@ pub(crate) enum RuntimeError {
 #[derive(Debug, Error)]
 #[error("{name} is not valid Unicode")]
 pub(crate) struct SecretError {
-    pub(crate) name: &'static str,
+    pub(crate) name: String,
 }

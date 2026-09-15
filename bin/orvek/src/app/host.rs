@@ -370,11 +370,21 @@ fn configuration_identity(config: &Config) -> Result<Digest> {
     Digest::of_value(&configuration).map_err(|error| Error::HostRequest(error.to_string()))
 }
 
+/// A configured `websocket_url` opts into the WebSocket transport; every other
+/// setup speaks HTTP Responses against `api_base_url`, the way OpenAI-compatible
+/// endpoints and local bridges serve it.
+fn route_transport(config: &Config) -> Transport {
+    match config.agent().websocket_url() {
+        Some(_) => Transport::WebSocket,
+        None => Transport::Http,
+    }
+}
+
 pub(crate) async fn serve(config: &Config) -> Result<()> {
     let auth = config.auth().load()?;
     let route = Route::from_overrides(
         &auth,
-        Transport::WebSocket,
+        route_transport(config),
         config.agent().api_base_url(),
         config.agent().websocket_url(),
     )?;
@@ -386,6 +396,11 @@ pub(crate) async fn serve(config: &Config) -> Result<()> {
         ProviderLimits {
             max_attempts: 1,
             max_request_bytes,
+            // An OpenAI-compatible bridge stays silent while the model thinks,
+            // so the idle window must cover a full reasoning phase. The total
+            // window keeps headroom above the bridge's own upstream cap.
+            idle_timeout: Duration::from_secs(600),
+            total_timeout: Duration::from_secs(900),
             ..ProviderLimits::default()
         },
     )?;
@@ -422,6 +437,31 @@ mod tests {
         let listener = UnixListener::bind(&socket).unwrap();
         fs::set_permissions(socket, fs::Permissions::from_mode(0o600)).unwrap();
         listener
+    }
+
+    #[test]
+    fn websocket_transport_requires_a_configured_url_and_http_is_the_default() {
+        let directory = tempfile::tempdir().unwrap();
+        let write = |contents: &str| {
+            let path = directory.path().join("config.toml");
+            fs::write(&path, contents).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            crate::app::config::Config::load(crate::app::config::ConfigOverrides {
+                path: Some(path),
+                ..crate::app::config::ConfigOverrides::default()
+            })
+            .unwrap()
+        };
+
+        let config =
+            write("[agent]\nmodel = \"glm-5.3\"\napi_base_url = \"http://127.0.0.1:11436/v1\"\n");
+        assert_eq!(route_transport(&config), Transport::Http);
+
+        let config = write(
+            "[agent]\nmodel = \"glm-5.3\"\nwebsocket_url = \"wss://127.0.0.1:1/responses\"\n",
+        );
+        assert_eq!(route_transport(&config), Transport::WebSocket);
     }
 
     #[tokio::test]

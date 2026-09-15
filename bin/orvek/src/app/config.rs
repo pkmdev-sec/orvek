@@ -5,7 +5,7 @@ use crate::{
     tui::theme::{Theme, ThemeMode},
 };
 use clap::ValueEnum;
-use orvek_harness::inference::Thinking;
+use orvek_harness::inference::{Model, Thinking};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -152,12 +152,14 @@ pub(crate) struct McpEnvironment(BTreeMap<String, McpSecretString>);
 pub(crate) struct AuthConfig {
     mode: AuthMode,
     file: PathBuf,
+    api_key_env: Option<String>,
 }
 
 /// Effective model and capability configuration.
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct AgentConfig {
     workspace: PathBuf,
+    model: Model,
     thinking: ReasoningEffort,
     reasoning_mode: ReasoningMode,
     fast_mode: bool,
@@ -332,12 +334,14 @@ struct McpHttpConfigFile {
 struct AuthConfigFile {
     mode: Option<AuthMode>,
     file: Option<PathBuf>,
+    api_key_env: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct AgentConfigFile {
     workspace: Option<PathBuf>,
+    model: Option<Model>,
     thinking: Option<ReasoningEffort>,
     reasoning_mode: Option<ReasoningMode>,
     fast_mode: Option<bool>,
@@ -458,9 +462,11 @@ impl Config {
             auth: AuthConfig::new(
                 overrides.auth_mode.or(file.auth.mode).unwrap_or_default(),
                 auth_file,
+                optional_string(file.auth.api_key_env),
             ),
             agent: AgentConfig {
                 workspace,
+                model: file.agent.model.unwrap_or_default(),
                 thinking: overrides
                     .thinking
                     .or(file.agent.thinking)
@@ -992,12 +998,22 @@ impl ConfigReload {
 }
 
 impl AuthConfig {
-    pub(crate) const fn new(mode: AuthMode, file: PathBuf) -> Self {
-        Self { mode, file }
+    pub(crate) const fn new(mode: AuthMode, file: PathBuf, api_key_env: Option<String>) -> Self {
+        Self {
+            mode,
+            file,
+            api_key_env,
+        }
     }
 
     pub(crate) const fn mode(&self) -> AuthMode {
         self.mode
+    }
+
+    /// Environment variable that holds the API key; OpenAI's by default so a
+    /// custom OpenAI-compatible endpoint only needs `api_base_url`.
+    pub(crate) fn api_key_env(&self) -> &str {
+        self.api_key_env.as_deref().unwrap_or("OPENAI_API_KEY")
     }
 
     pub(crate) fn file(&self) -> &Path {
@@ -1008,6 +1024,10 @@ impl AuthConfig {
 impl AgentConfig {
     pub(crate) fn workspace(&self) -> &Path {
         &self.workspace
+    }
+
+    pub(crate) const fn model(&self) -> Model {
+        self.model
     }
 
     pub(crate) const fn thinking(&self) -> ReasoningEffort {
@@ -1460,7 +1480,7 @@ impl Config {
 mod tests {
     use super::{
         AuthMode, Config, ConfigOverrides, Environment, McpEnvironment, McpSecretString,
-        McpServerConfig, ReasoningEffort, ReasoningMode, RemoteMemoryConfigFile,
+        McpServerConfig, Model, ReasoningEffort, ReasoningMode, RemoteMemoryConfigFile,
         RemoteMemoryTokenFile, ThemeMode, validate_mcp_url,
     };
     use crate::app::error::{ConfigError, Error, McpUrlError, RemoteMemoryConfigError};
@@ -1588,6 +1608,7 @@ mod tests {
             &rendered["agent"],
             &[
                 "workspace",
+                "model",
                 "thinking",
                 "reasoning_mode",
                 "fast_mode",
@@ -1673,6 +1694,31 @@ mod tests {
         assert!(reloaded.agent.websocket_url.is_none());
         assert!(reloaded.agent.api_base_url.is_none());
         assert!(reloaded.memory().remote().is_none());
+    }
+
+    #[test]
+    fn glm_bridge_configuration_loads() {
+        let config = load_config(
+            "[auth]\nmode = \"api-key\"\napi_key_env = \"ZAI_API_KEY\"\n\n[agent]\nmodel = \"glm-5.3\"\napi_base_url = \"http://127.0.0.1:11436/v1\"\nthinking = \"xhigh\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(config.auth().api_key_env(), "ZAI_API_KEY");
+        assert_eq!(config.agent().model(), Model::Glm);
+        assert_eq!(config.agent().model().as_str(), "glm-5.3");
+        assert_eq!(
+            config.agent().api_base_url(),
+            Some("http://127.0.0.1:11436/v1")
+        );
+        assert!(config.agent().websocket_url().is_none());
+    }
+
+    #[test]
+    fn api_key_env_defaults_to_openai() {
+        let config = load_config("[agent]\nmodel = \"glm\"\n").unwrap();
+
+        assert_eq!(config.auth().api_key_env(), "OPENAI_API_KEY");
+        assert_eq!(config.agent().model(), Model::Glm);
     }
 
     #[test]

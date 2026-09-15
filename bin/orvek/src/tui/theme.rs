@@ -183,6 +183,7 @@ impl Theme {
             Model::Luna => Color::White,
             Model::Terra => Color::Green,
             Model::Sol => Color::Yellow,
+            Model::Glm => Color::Cyan,
         }
     }
 

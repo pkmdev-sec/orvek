@@ -10,6 +10,8 @@ pub enum Model {
     Sol,
     Terra,
     Luna,
+    #[serde(alias = "glm-5.3")]
+    Glm,
 }
 
 impl Model {
@@ -18,6 +20,7 @@ impl Model {
             Self::Sol => "gpt-5.6-sol",
             Self::Terra => "gpt-5.6-terra",
             Self::Luna => "gpt-5.6-luna",
+            Self::Glm => "glm-5.3",
         }
     }
 }
@@ -35,6 +38,7 @@ impl FromStr for Model {
             "sol" | "gpt-5.6-sol" => Ok(Self::Sol),
             "terra" | "gpt-5.6-terra" => Ok(Self::Terra),
             "luna" | "gpt-5.6-luna" => Ok(Self::Luna),
+            "glm" | "glm-5.3" => Ok(Self::Glm),
             _ => Err(FailureKind::InvalidRequest),
         }
     }
@@ -580,8 +584,22 @@ fn normalize(item: &Value) -> Result<OutputItem, FailureKind> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Decoder, terminal_item_confirms};
+    use super::{Decoder, Model, terminal_item_confirms};
     use serde_json::json;
+
+    #[test]
+    fn glm_model_round_trips_through_its_wire_name() {
+        use std::str::FromStr;
+
+        for name in ["glm", "glm-5.3"] {
+            let model = Model::from_str(name).unwrap();
+            assert_eq!(model, Model::Glm);
+            assert_eq!(model.as_str(), "glm-5.3");
+        }
+        let parsed: Result<Model, _> = "glm-5.3".parse();
+        assert_eq!(parsed.unwrap().as_str(), "glm-5.3");
+        assert!("glm-4".parse::<Model>().is_err());
+    }
 
     #[test]
     fn terminal_reencrypted_reasoning_confirms_the_completed_item() {

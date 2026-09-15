@@ -376,7 +376,7 @@ impl Cli {
         } else {
             Config::load(overrides)?
         };
-        let model = self.model.unwrap_or_default();
+        let model = self.model.unwrap_or(config.agent().model());
 
         match self.command {
             Some(Command::Resume) => {

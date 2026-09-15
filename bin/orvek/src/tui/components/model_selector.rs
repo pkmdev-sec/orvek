@@ -16,7 +16,7 @@ use ratatui::{
 };
 use std::time::{Duration, Instant};
 
-const MODELS: [Model; 3] = [Model::Luna, Model::Terra, Model::Sol];
+const MODELS: [Model; 4] = [Model::Luna, Model::Terra, Model::Sol, Model::Glm];
 const ANIMATION_DURATION: Duration = Duration::from_millis(280);
 const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 const KEY_BINDINGS: [(&str, &str); 3] = [("←/→", "model"), ("enter", "apply"), ("esc", "cancel")];
@@ -163,6 +163,7 @@ impl ModelSelector {
             (model_column(left, width, 0), Model::Luna, "Luna"),
             (model_column(left, width, 1), Model::Terra, "Terra"),
             (model_column(left, width, 2), Model::Sol, "Sol"),
+            (model_column(left, width, 3), Model::Glm, "GLM"),
         ];
         for (column, model, label) in labels {
             let label_width = u16::try_from(label.len()).unwrap_or(u16::MAX);
@@ -252,6 +253,7 @@ fn model_name(model: Model) -> &'static str {
         Model::Luna => "Luna",
         Model::Terra => "Terra",
         Model::Sol => "Sol",
+        Model::Glm => "GLM 5.3",
     }
 }
 
@@ -327,10 +329,15 @@ mod tests {
         let mut selector = ModelSelector::new(Model::Sol);
 
         selector.update_key(key(KeyCode::Right), now);
+        assert_eq!(selector.selected, 3);
+        selector.update_key(key(KeyCode::Right), now);
+        assert_eq!(selector.selected, 3);
+        selector.update_key(key(KeyCode::Left), now);
         assert_eq!(selector.selected, 2);
         selector.update_key(key(KeyCode::Left), now);
         assert_eq!(selector.selected, 1);
         selector.update_key(key(KeyCode::Left), now);
+        assert_eq!(selector.selected, 0);
         selector.update_key(key(KeyCode::Left), now);
         assert_eq!(selector.selected, 0);
     }
@@ -342,11 +349,12 @@ mod tests {
         assert_eq!(rendered_label_color(&mut selector, "Luna"), Color::White);
         assert_eq!(rendered_label_color(&mut selector, "Terra"), Color::Green);
         assert_eq!(rendered_label_color(&mut selector, "Sol"), Color::Yellow);
+        assert_eq!(rendered_label_color(&mut selector, "GLM"), Color::Cyan);
     }
 
     #[test]
     fn filled_bar_uses_the_selected_model_color() {
-        let mut selector = ModelSelector::new(Model::Sol);
+        let mut selector = ModelSelector::new(Model::Glm);
         let terminal = render(&mut selector);
         let rail = terminal
             .backend()
@@ -357,22 +365,26 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(!rail.is_empty());
-        assert!(rail.iter().all(|cell| cell.fg == Color::Yellow));
+        assert!(rail.iter().all(|cell| cell.fg == Color::Cyan));
     }
 
     #[test]
     fn stops_use_the_filled_bar_color_only_when_covered() {
         assert_eq!(
             rendered_stop_colors(&mut ModelSelector::new(Model::Luna)),
-            [Color::DarkGray, Color::DarkGray]
+            [Color::DarkGray, Color::DarkGray, Color::DarkGray]
         );
         assert_eq!(
             rendered_stop_colors(&mut ModelSelector::new(Model::Terra)),
-            [Color::Green, Color::DarkGray]
+            [Color::Green, Color::DarkGray, Color::DarkGray]
         );
         assert_eq!(
             rendered_stop_colors(&mut ModelSelector::new(Model::Sol)),
-            [Color::Yellow, Color::Yellow]
+            [Color::Yellow, Color::Yellow, Color::DarkGray]
+        );
+        assert_eq!(
+            rendered_stop_colors(&mut ModelSelector::new(Model::Glm)),
+            [Color::Cyan, Color::Cyan, Color::Cyan]
         );
     }
 
