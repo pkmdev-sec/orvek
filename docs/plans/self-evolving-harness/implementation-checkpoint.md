@@ -174,3 +174,17 @@ Each unit ends in a verifiable state and lands independently.
 Do not enable registry writes (unit 5) before the open-rollout prerequisites
 in the section above are satisfied; until then the coordinator runs dry-run
 campaigns only.
+
+
+## Review correction, 2026-09-15
+
+The Phase 13 “done” labels above describe implemented scaffolding, not a complete
+activation and rollback path. Review found caller-supplied final verdicts, fixed
+rather than policy-derived audit debits, insufficient certificate/state binding,
+and no transaction writing rollback receipts and restoring the active pointer.
+These need correction before Phase 13 can be called complete. Phases 14–15 remain
+unimplemented. Synthetic tests do not establish production rollout readiness.
+
+Workspace execution and TUI fixes are tracked separately in
+[Workspace execution](../../workspace-execution.md). They do not close those
+evolution gaps or establish comparative benchmark performance.
