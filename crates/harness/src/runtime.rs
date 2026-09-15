@@ -28,6 +28,24 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 pub use workspace::RetainedGuest;
 
+const WRITABLE_MOUNT_OPTIONS: &str = "rw,exec,nosuid,nodev";
+
+/// Workspace commands may fetch dependencies. Verification keeps network inputs closed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExecutionPolicy {
+    Protected,
+    Workspace,
+}
+
+impl ExecutionPolicy {
+    fn network(self) -> &'static str {
+        match self {
+            Self::Protected => "none",
+            Self::Workspace => "bridge",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExecutionRequest {
     pub job_id: Uuid,
@@ -142,6 +160,8 @@ pub struct ExecutionEnvironment {
     pub temporary_bytes: u64,
     pub temporary_inodes: u64,
     pub source_transport: String,
+    #[serde(default)]
+    pub writable_mount_options: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExecutionFence {
@@ -249,6 +269,10 @@ impl DockerExecutor {
         &self.image_id
     }
     pub fn environment(&self) -> ExecutionEnvironment {
+        self.environment_for(ExecutionPolicy::Protected)
+    }
+
+    pub fn environment_for(&self, policy: ExecutionPolicy) -> ExecutionEnvironment {
         ExecutionEnvironment {
             daemon_id: self.docker.daemon_id.clone(),
             endpoint: self.docker.endpoint.clone(),
@@ -257,7 +281,7 @@ impl DockerExecutor {
             memory_bytes: self.limits.memory_bytes,
             pids: self.limits.pids,
             cpus: 1,
-            network: "none".into(),
+            network: policy.network().into(),
             helper_digest: self.helper_digest,
             architecture: self.architecture.clone(),
             workspace_bytes: self.limits.workspace_bytes,
@@ -267,6 +291,7 @@ impl DockerExecutor {
             temporary_bytes: self.limits.temporary_bytes,
             temporary_inodes: self.limits.temporary_inodes,
             source_transport: "readonly_snapshot_and_validated_export".into(),
+            writable_mount_options: WRITABLE_MOUNT_OPTIONS.into(),
         }
     }
     pub fn retained_guest(
@@ -279,6 +304,16 @@ impl DockerExecutor {
     pub async fn run(
         &self,
         request: &ExecutionRequest,
+        cancellation: CancellationToken,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        self.run_with_policy(request, ExecutionPolicy::Protected, cancellation)
+            .await
+    }
+
+    pub async fn run_with_policy(
+        &self,
+        request: &ExecutionRequest,
+        policy: ExecutionPolicy,
         cancellation: CancellationToken,
     ) -> Result<ExecutionResult, RuntimeError> {
         if request.timeout_ms == 0
@@ -345,7 +380,7 @@ impl DockerExecutor {
             "tact.managed=true".into(),
             "--label".into(),
             format!("tact.job={}", request.job_id),
-            "--network=none".into(),
+            format!("--network={}", policy.network()),
             "--ipc=private".into(),
             "--cgroupns=private".into(),
             "--read-only".into(),
@@ -1010,7 +1045,8 @@ fn container_name(job: Uuid) -> String {
     format!("tact-job-{job}")
 }
 fn tmpfs(path: &str, bytes: u64, inodes: u64, extra: &str) -> String {
-    format!("{path}:rw,nosuid,nodev,size={bytes},nr_inodes={inodes},{extra}")
+    // Docker defaults tmpfs to noexec; builds and installed workspace tools must run.
+    format!("{path}:{WRITABLE_MOUNT_OPTIONS},size={bytes},nr_inodes={inodes},{extra}")
 }
 fn readonly_bind(path: &Path, target: &str) -> Result<String, RuntimeError> {
     let path = path

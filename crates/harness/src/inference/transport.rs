@@ -195,6 +195,22 @@ impl CallOutcome {
     pub fn billing_uncertain(&self) -> bool {
         self.attempts.iter().any(|a| a.billing_uncertain)
     }
+
+    /// A rate-limit rejection can be admitted again without duplicating a billed generation.
+    pub fn rate_limited(&self) -> bool {
+        self.failure.as_ref().is_some_and(|failure| {
+            failure.kind == FailureKind::Rejected && failure.http_status == Some(429)
+        }) && self.response.is_none()
+            && self.response_id.is_none()
+            && self.partial_text.is_empty()
+            && self.partial_items.is_empty()
+            && !self.attempts.is_empty()
+            && self.attempts.iter().all(|attempt| {
+                attempt.status == AttemptStatus::Rejected
+                    && attempt.http_status == Some(429)
+                    && !attempt.billing_uncertain
+            })
+    }
 }
 
 /// No conversation, execution, or completion state is retained here. A new socket
@@ -438,7 +454,8 @@ impl ResponsesClient {
                     // Only explicit pre-stream rejections are retried. A broken stream may
                     // already have generated/billed output and is returned for host policy.
                     if number == self.limits.max_attempts
-                        || !matches!(rejection.status, Some(408 | 429 | 502 | 503 | 504))
+                        || record.billing_uncertain
+                        || rejection.status != Some(429)
                         || state.decoder.observed
                     {
                         return Err(rejection.kind);

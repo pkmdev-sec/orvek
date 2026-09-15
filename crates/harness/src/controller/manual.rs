@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     manual::{ManualJob, ShellReport, ShellSpec},
-    runtime::{ExecutionRequest, ExecutionStatus},
+    runtime::{ExecutionPolicy, ExecutionRequest, ExecutionStatus},
     submission::SubmissionStatus,
 };
 
@@ -59,7 +59,9 @@ impl Host {
             }
             snapshot.materialize(&working, &artifacts, false)?;
             let environment = artifacts
-                .put(&serde_json::to_vec(&self.executor.environment())?)
+                .put(&serde_json::to_vec(
+                    &self.executor.environment_for(ExecutionPolicy::Workspace),
+                )?)
                 .map_err(StoreError::from)?;
             let scope_revision = if let Some(task) = state.current_task {
                 Some(self.store.lock().await.load(task)?.scope_revision + 1)
@@ -81,7 +83,7 @@ impl Host {
                 .begin_shell(session, request, job.clone())?;
             let run = self
                 .executor
-                .run(
+                .run_with_policy(
                     &ExecutionRequest {
                         job_id: job.job,
                         workspace: working.clone(),
@@ -90,6 +92,7 @@ impl Host {
                         timeout_ms: spec.timeout_ms,
                         output_bytes: spec.output_bytes,
                     },
+                    ExecutionPolicy::Workspace,
                     cancellation,
                 )
                 .await;

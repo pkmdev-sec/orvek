@@ -16,6 +16,33 @@ Completed in `/Users/pkmdev/orvek-harness-inference` on 2026-09-13. Parent integ
 
 Harness manifest addition: `orvek-executor = { path = "../executor", default-features = false }`. The existing rustix dependency needs both `fs` and `process` features. The executor protocol uses workspace serde/serde_json; the Linux binary's `stub` feature adds libc `0.2.189`. The root workspace's existing `crates/*` membership includes the new crate. Regenerate the parent lockfile; this worktree's complete lockfile includes earlier tasks and is not an integration patch.
 
+## Workspace tools and protected verification
+
+Task workspace reads, writes and commands are available before contract admission and
+while a follow-up awaits admission. Contract-first work is guidance, not a file or
+command permission gate. Writes still invalidate candidate evidence and acquire a
+journaled writer job. Completion still requires the admitted contract and host checks.
+
+`run()` and `environment()` use `ExecutionPolicy::Protected`: no network access.
+Writable task tools and manual shell commands use `run_with_policy(...,
+ExecutionPolicy::Workspace, ...)` and record `environment_for` with the same policy.
+Workspace commands use Docker bridge networking. The environment identity records
+the network mode and executable tmpfs options. Sessions bound to an older environment
+may require a new session after restarting the Host; do not bypass admission mismatches.
+Read-only auxiliary and child tools
+keep the protected policy. Neither policy mounts the host socket or credentials.
+
+Both policies run commands as a non-root UID with a read-only container root and
+quota-limited writable `/workspace`, `/cache`, `/tmp` and `/dev/shm`. These mounts
+allow execution so built binaries and user-installed tools can run; `nosuid` and
+`nodev` remain set. User-level package
+installs and downloaded tools must target these writable paths. Only validated
+`/workspace` exports persist between commands. Cache, temporary files and running
+processes do not persist. System package installation (for example `apt install`)
+is not supported. Required verification dependencies must be in the pinned image or
+workspace; verification cannot download them. Bridge networking is outbound-capable,
+not an egress allowlist, and can reach services routable from the Docker network.
+
 ## Public contract
 
 `ExecutionRequest`, `ExecutionResult`, `ExecutionStatus` and `RuntimeError` retain their prior fields/variants. `DockerExecutor::connect(image)`, `environment()`, `image_id()`, `run(request, cancellation)` and `reconcile(job_id)` remain available.
@@ -70,6 +97,6 @@ The native cases cover host-secret/socket isolation; normal writes/deletes/execu
 
 ## Explicit prerequisites and limits
 
-See `crates/executor/README.md` for build and installation instructions. Require a Unix host and a local non-rootless, non-userns-remapped Docker backend with cgroup v2, builtin seccomp and hard resource controls. Reject remote/DOCKER_HOST routes, dynamic or mismatched helpers, non-Linux images and images declaring writable VOLUMEs. Image healthchecks are disabled. The image must contain `/bin/sh` and the tools/dependencies the command needs; caches are ephemeral and network is disabled. Only arm64 sidecar execution was verified here; x86_64 build selection is provided but unverified.
+See `crates/executor/README.md` for build and installation instructions. Require a Unix host and a local non-rootless, non-userns-remapped Docker backend with cgroup v2, builtin seccomp and hard resource controls. Reject remote/DOCKER_HOST routes, dynamic or mismatched helpers, non-Linux images and images declaring writable VOLUMEs. Image healthchecks are disabled. The image must contain `/bin/sh`. Verification dependencies must be in the image or workspace because protected verification disables networking. Workspace commands use bridge networking and can install user-level tools into the workspace; caches remain ephemeral. Only arm64 sidecar execution was verified here; x86_64 build selection is provided but unverified.
 
 The controller must serialize host publication and exclude other host writers; atomic whole-tree compare-and-swap against arbitrary noncooperating writers is not a POSIX primitive. Pre/post exchange validation detects races and preserves recovery trees on uncertainty. Source ownership and the host-managed workspace root mode are not mutable exports. Special files, hardlinks, special mode bits and owner-unreadable source entries are rejected. Host filesystem calls cannot be preempted while the OS is blocked, and bounded teardown can extend past the requested deadline; late success is rejected. Fencing failures retain `Unknown` diagnostics for parent recovery.

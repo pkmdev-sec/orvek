@@ -1771,7 +1771,8 @@ impl Store {
             false,
             |state, transaction, artifacts| {
                 admit_job(state)?;
-                if mutates_candidate && state.amendment_pending {
+                // Request-owned workspace execution does not require contract admission.
+                if invocation.is_none() && mutates_candidate && state.amendment_pending {
                     return Err(StoreError::Invalid(
                         "user follow-up awaits contract admission",
                     ));
@@ -1797,7 +1798,10 @@ impl Store {
                         ));
                     }
                 }
-                if mutates_candidate && !state.accepted_contract()?.open_questions.is_empty() {
+                if invocation.is_none()
+                    && mutates_candidate
+                    && !state.accepted_contract()?.open_questions.is_empty()
+                {
                     return Err(StoreError::Invalid(
                         "material product decisions remain unresolved",
                     ));
