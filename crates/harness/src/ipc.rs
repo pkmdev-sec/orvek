@@ -60,6 +60,28 @@ impl Request {
     deny_unknown_fields
 )]
 pub enum Command {
+    RegisterEventSource {
+        config: crate::event_intake::SourceConfig,
+    },
+    EventSource {
+        source: Uuid,
+    },
+    DisableEventSource {
+        source: Uuid,
+    },
+    DeliverEvent {
+        source: Uuid,
+        key: String,
+        payload: String,
+    },
+    InspectEvent {
+        source: Uuid,
+        key: String,
+    },
+    CancelEvent {
+        source: Uuid,
+        key: String,
+    },
     RecordReview {
         session: SessionId,
         manifest: Digest,
@@ -337,6 +359,8 @@ impl From<(SessionState, u64, crate::session::ProviderCostSummary)> for SessionV
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum Response {
+    EventSource(crate::event_intake::SourceRecord),
+    Event(crate::event_intake::EventRecord),
     ReviewFeedback(Digest),
     TaskReview {
         view: crate::controller::ArtifactView,
@@ -406,6 +430,16 @@ pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<(
     let runs = Arc::new(Semaphore::new(4));
     let watchers = Arc::new(Semaphore::new(8));
     let mut handlers = JoinSet::new();
+    let intake_host = host.clone();
+    let intake_shutdown = shutdown.child_token();
+    handlers.spawn(async move {
+        tokio::select! {
+            () = intake_shutdown.cancelled() => {},
+            result = intake_host.run_event_intake() => {
+                if let Err(error) = result { eprintln!("event intake stopped: {error}"); }
+            }
+        }
+    });
     let recovery_host = host.clone();
     let recovery_shutdown = shutdown.child_token();
     handlers.spawn(async move {
@@ -499,6 +533,22 @@ async fn execute(
     shutdown: CancellationToken,
 ) -> Result<Response, crate::controller::HostError> {
     Ok(match request.command {
+        Command::RegisterEventSource { config } => {
+            Response::EventSource(host.register_event_source(config).await?)
+        }
+        Command::EventSource { source } => Response::EventSource(host.event_source(source).await?),
+        Command::DisableEventSource { source } => {
+            Response::EventSource(host.disable_event_source(source).await?)
+        }
+        Command::DeliverEvent {
+            source,
+            key,
+            payload,
+        } => Response::Event(host.deliver_event(source, &key, &payload).await?),
+        Command::InspectEvent { source, key } => Response::Event(host.event(source, &key).await?),
+        Command::CancelEvent { source, key } => {
+            Response::Event(host.cancel_event(source, &key).await?)
+        }
         Command::RecordReview {
             session,
             manifest,

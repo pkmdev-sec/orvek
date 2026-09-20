@@ -44,6 +44,7 @@ use tokio::sync::{Mutex, Semaphore, broadcast};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 mod auxiliary;
+mod event_intake;
 mod imports;
 mod manual;
 pub mod notification;
@@ -382,6 +383,7 @@ impl Drop for TaskDeadline {
 
 /// Host-owned orchestration. Views receive projections and never own this future.
 pub struct Host {
+    event_intake: Mutex<()>,
     completion_hook: Option<String>,
     root: PathBuf,
     store: Arc<Mutex<Store>>,
@@ -474,6 +476,7 @@ impl Host {
             store.pin_session_admission(id, profile)?;
         }
         Ok(Self {
+            event_intake: Mutex::new(()),
             completion_hook: None,
             root: root.canonicalize()?,
             store: Arc::new(Mutex::new(store)),

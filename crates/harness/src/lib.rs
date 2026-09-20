@@ -13,6 +13,7 @@ pub mod contract;
 pub mod controller;
 pub mod delivery;
 pub mod digest;
+pub mod event_intake;
 pub mod feedback;
 pub mod import;
 pub mod inference;

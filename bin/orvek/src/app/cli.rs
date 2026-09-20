@@ -182,6 +182,11 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Configure schedules and forward local webhook deliveries to the host queue.
+    Event {
+        #[command(subcommand)]
+        command: super::event_intake::EventCommand,
+    },
     /// Export, inspect, and replay local trace bundles.
     Trace {
         #[command(subcommand)]
@@ -503,6 +508,7 @@ impl Command {
 
     async fn run_with_config(self, config: &Config) -> Result<()> {
         match self {
+            Self::Event { command } => command.run(config).await,
             Self::Host => crate::app::host::serve(config).await,
             Self::Trace { command } => command.reexecute(config).await,
             Self::Auth { command } => command.run(config).await.map_err(Into::into),
