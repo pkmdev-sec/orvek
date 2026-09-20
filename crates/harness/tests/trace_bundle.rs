@@ -356,3 +356,43 @@ fn nested_closure_enforces_hop_bounds_on_export_and_replay() {
         "offline replay must not consult the original workspace or store"
     );
 }
+
+#[test]
+fn inline_skill_content_is_self_contained_only_when_its_digest_matches() {
+    use orvek_harness::Digest;
+    let original = "exact skill body";
+    let digest = Digest::of(original.as_bytes());
+    for body in [original, "changed skill body"] {
+        let (root, mut store, id) = fixture();
+        let output = json!({"path":"/source/SKILL.md","digest":digest,"content":body});
+        let receipt = store
+            .public_artifacts()
+            .write(
+                &serde_json::to_vec(&json!({"kind":"diagnostic","output":output.to_string()}))
+                    .unwrap(),
+            )
+            .unwrap()
+            .digest();
+        let state = store.load_session(id).unwrap();
+        store
+            .session_command(
+                id,
+                state.revision,
+                Uuid::new_v4(),
+                SessionCommand::TraceRecorded {
+                    request: Uuid::new_v4(),
+                    record: receipt,
+                },
+            )
+            .unwrap();
+        let mut bundle = export(root.path());
+        assert_eq!(bundle.replay().unwrap().exact, body == original);
+        if body == original {
+            assert!(matches!(bundle.artifacts[&digest], Payload::Identity));
+        } else {
+            assert!(matches!(bundle.artifacts[&digest], Payload::Missing));
+            bundle.exact = true;
+            assert!(bundle.replay().is_err());
+        }
+    }
+}

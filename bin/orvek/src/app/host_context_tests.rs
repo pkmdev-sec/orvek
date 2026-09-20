@@ -9,10 +9,11 @@ use orvek_harness::{
     inference::ModelSettings,
     session::{SessionAdmissionRequest, SessionId},
     submission::{SubmissionStatus, SubmitIntent},
+    trace::{TraceBundle, TraceLimits},
 };
 use orvek_memory::MemoryStore;
 use serde_json::{Value, json};
-use std::net::SocketAddr;
+use std::{collections::BTreeSet, net::SocketAddr};
 use tokio::{io::AsyncWriteExt, net::TcpListener, task::JoinHandle};
 
 async fn provider(outputs: Vec<Vec<Value>>) -> (String, JoinHandle<Vec<Value>>) {
@@ -319,6 +320,20 @@ async fn request_wiring(auxiliary: bool, sandbox: bool) {
                 .contains("fixture new conclusion")
         );
     }
+    let bundle = TraceBundle::export(
+        &state_directory(fixture.config.path()),
+        None,
+        TraceLimits::default(),
+        &BTreeSet::new(),
+        None,
+    )
+    .unwrap();
+    let replay = bundle.replay().unwrap();
+    assert!(
+        replay.exact,
+        "host context broke portable replay: {:?}",
+        replay.unresolved
+    );
 }
 
 #[tokio::test]

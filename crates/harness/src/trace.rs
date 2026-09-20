@@ -846,8 +846,20 @@ fn references(value: &Value, depth: usize, out: &mut VecDeque<(Digest, usize, bo
             }
             Value::Object(values) => {
                 for (key, value) in values {
-                    let identity = (key == "input"
-                        && (values.contains_key("segments") || values.contains_key("input_range")))
+                    let digest = value.as_str().and_then(|text| text.parse::<Digest>().ok());
+                    let identity = (key == "identity"
+                        && values.contains_key("backend")
+                        && values.contains_key("window_limit")
+                        && values.contains_key("keys"))
+                        || (key == "digest"
+                            && values.contains_key("path")
+                            && values
+                                .get("content")
+                                .and_then(Value::as_str)
+                                .is_some_and(|body| digest == Some(Digest::of(body.as_bytes()))))
+                        || (key == "input"
+                            && (values.contains_key("segments")
+                                || values.contains_key("input_range")))
                         || (key == "environment" && values.contains_key("protocol"))
                         || (key == "executable_digest"
                             && values.contains_key("executable")
@@ -860,7 +872,7 @@ fn references(value: &Value, depth: usize, out: &mut VecDeque<(Digest, usize, bo
                                     && (values.contains_key("size_bytes")
                                         || values.contains_key("written_bytes")))
                                 || values.get("kind").is_some_and(|kind| kind == "digest")));
-                    if identity && let Some(digest) = value.as_str().and_then(|s| s.parse().ok()) {
+                    if identity && let Some(digest) = digest {
                         out.push_back((digest, depth, true));
                     } else {
                         walk(value, key, depth, out);
