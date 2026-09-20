@@ -9,6 +9,7 @@ assistant prose. This is deterministic wiring coverage, not a model-quality test
 
 Build `orvek` with `cargo build --locked --package orvek --bin orvek`.
 Pass the built binary path as the only argument to each scenario below.
+Ordinary runs do not export traces or upload data.
 Do not use Python's `-O` flag: it disables assertions.
 
 Native, reconnect, hook and memory/skill scenarios require Unix, but not Docker.
@@ -31,8 +32,11 @@ these examples control the provider and use only the temporary workspace.
   local store. It checks real scan keys, full reads, explicit skill bytes/digests,
   and stored context manifests. It does not test remote memory or a host restart.
   `scripts/test-host-context.py` separately checks the restart path.
-- **Sanitized trace links: pending T04.** Journal assertions below are not portable
-  trace bundles. No trace exports or offline replay claims are made here.
+- The linked traces are **sanitized, non-exact review bundles** from these controlled
+  fixtures. Every artifact payload is omitted. Original journal events, their hashes,
+  fixture-only temporary workspace paths and replay identities remain unchanged.
+  They cannot prove missing model/tool payloads or fresh execution. See the
+  [sanitization boundary and regeneration commands](trace-bundles.md#documentation-fixture-bundles).
 - Reconnect drops an IPC acknowledgement and reconnects a journal watch. It does
   not kill or restart the host.
 - The hook writes only a local payload, then exits with code 9. A failed delivery
@@ -42,16 +46,19 @@ these examples control the provider and use only the temporary workspace.
   from `crates/harness/tests/controller_execution.rs`, through public IPC rather
   than a second verification implementation. Delivery does not overwrite source.
 
-T11 remains partial until sanitized trace links are verified.
-
 ## Runnable scenarios
 
 Generated from the complete executable files. Edit the source files, then run
-`python3 scripts/check-doc-examples.py`. CI uses `--check` and runs the scenarios.
+`python3 scripts/check-doc-examples.py`. CI uses `--check`, verifies local trace
+provenance, and runs all five scenarios with export and replay assertions. The
+[trace index](../examples/host-docs/traces/index.json) records source and bundle hashes.
+UUIDs and timings vary on regeneration; artifacts need not be byte-identical.
 
 ### Native completion without certification
 
 Classification: **runnable**. [Source](../examples/host-docs/native.py).
+
+[Sanitized trace bundle](../examples/host-docs/traces/native.trace.json) (non-exact).
 
 Run `python3 examples/host-docs/native.py /absolute/path/to/orvek`.
 
@@ -61,7 +68,7 @@ import sys
 from fixture import HostFixture, message, tool
 
 
-def main(binary):
+def main(binary, *, export=None):
     outputs = [tool("write_file", {"operation": "replace", "path": "result.txt",
                "expected": {"kind": "absent"}, "content": "local result\n"}), message()]
     with HostFixture(binary, outputs) as host:
@@ -73,6 +80,8 @@ def main(binary):
         assert (host.workspace / "result.txt").read_text() == "local result\n"
         assert host.query("session", id=session)["outcome"] == "finished_unverified"
         host.assert_provider_consumed()
+        if export is not None:
+            export(host)
     print("PASS native: live bytes changed; FinishedUnverified; no certificate")
 
 
@@ -83,6 +92,8 @@ if __name__ == "__main__":
 ### Verified sandbox completion
 
 Classification: **runnable**. [Source](../examples/host-docs/sandbox.py).
+
+[Sanitized trace bundle](../examples/host-docs/traces/sandbox.trace.json) (non-exact).
 
 Run `python3 examples/host-docs/sandbox.py /absolute/path/to/orvek`.
 
@@ -98,7 +109,7 @@ BEFORE = "#!/bin/sh\nprintf '3\\n'\n"
 AFTER = "#!/bin/sh\nprintf '%s\\n' \"$(($1 + $2))\"\n"
 
 
-def main(binary):
+def main(binary, *, export=None):
     outputs = [message(), tool("write_file", {
         "operation": "replace", "path": "add", "content": AFTER,
         "expected": {"kind": "digest", "digest": hashlib.sha256(BEFORE.encode()).hexdigest()}}), message()]
@@ -139,6 +150,8 @@ def main(binary):
         assert delivery.read_text() == AFTER
         assert (host.workspace / "add").read_text() == BEFORE
         host.assert_provider_consumed()
+        if export is not None:
+            export(host)
     print("PASS sandbox: Complete; baseline/candidate checks; certificate; delivered bytes")
 
 
@@ -150,6 +163,8 @@ if __name__ == "__main__":
 
 Classification: **runnable**. [Source](../examples/host-docs/reconnect.py).
 
+[Sanitized trace bundle](../examples/host-docs/traces/reconnect.trace.json) (non-exact).
+
 Run `python3 examples/host-docs/reconnect.py /absolute/path/to/orvek`.
 
 ```python
@@ -158,7 +173,7 @@ import sys
 from fixture import HostFixture, LIMITS, POLICY, message, request, send_frame, read_frame, tool
 
 
-def main(binary):
+def main(binary, *, export=None):
     outputs = [tool("exec_command", {"command": "printf once >> effects.txt"}), message()]
     with HostFixture(binary, outputs) as host:
         session = host.session()
@@ -191,6 +206,8 @@ def main(binary):
                     replay.append(frame["data"])
         assert replay == expected
         host.assert_provider_consumed()
+        if export is not None:
+            export(host)
     print("PASS reconnect: one submission/effect; same receipt; exact journal replay")
 
 
@@ -202,6 +219,8 @@ if __name__ == "__main__":
 
 Classification: **runnable**. [Source](../examples/host-docs/completion_hook.py).
 
+[Sanitized trace bundle](../examples/host-docs/traces/completion_hook.trace.json) (non-exact).
+
 Run `python3 examples/host-docs/completion_hook.py /absolute/path/to/orvek`.
 
 ```python
@@ -211,7 +230,7 @@ import sys
 from fixture import HostFixture, message, wait_until
 
 
-def main(binary):
+def main(binary, *, export=None):
     # No external notification. Append one payload, then deliberately fail the shell.
     with HostFixture(binary, [message()], hook="cat >> completion.jsonl; exit 9") as host:
         session, receipt = host.run()
@@ -234,6 +253,8 @@ def main(binary):
         task = host.query("task", id=payload["task"])
         assert task["outcome"] == "finished_unverified" and task["certificate"] is None
         host.assert_provider_consumed()
+        if export is not None:
+            export(host)
     print("PASS completion hook: one local payload; failed receipt; unchanged task outcome")
 
 
@@ -244,6 +265,8 @@ if __name__ == "__main__":
 ### Local memory and on-demand skills across sessions
 
 Classification: **runnable**. [Source](../examples/host-docs/memory_skills.py).
+
+[Sanitized trace bundle](../examples/host-docs/traces/memory_skills.trace.json) (non-exact).
 
 Run `python3 examples/host-docs/memory_skills.py /absolute/path/to/orvek`.
 
@@ -259,7 +282,7 @@ MEMORY = "Fixture notebooks use blue ink. Keep each durable finding self-contain
 SKILL = "---\nname: check-note\ndescription: Check fixture notes.\n---\nBODY-SENTINEL: use blue ink.\n"
 
 
-def main(binary):
+def main(binary, *, export=None):
     stored_key = None
 
     def respond(index, request):
@@ -345,6 +368,8 @@ def main(binary):
         assert manifests[2]["memory"]["keys"] == [stored_key]
         assert all(manifest == manifests[2] for manifest in manifests[3:])
         host.assert_provider_consumed(6)
+        if export is not None:
+            export(host)
     print("PASS memory/skills: two sessions; put/scan/read; exact skill bytes/digest; context manifests")
 
 
@@ -392,8 +417,9 @@ The existing `scripts/check-docs.py` still checks links and syntax separately.
 | [docs/sessions.md](../docs/sessions.md) #1 | illustrative | Interactive selector and SESSION_ID need existing user state. |
 | [docs/sessions.md](../docs/sessions.md) #2 | external-service | Downloads browser dependencies and installs development assets. |
 | [docs/subagents.md](../docs/subagents.md) #1 | illustrative | Configuration fragment; does not drive child admission or outcomes. |
-| [docs/trace-bundles.md](../docs/trace-bundles.md) #1 | illustrative | Commands require a real private host journal or bundle. Isolated trace tests provide those fixtures; these path placeholders are not standalone scenarios. |
-| [docs/trace-bundles.md](../docs/trace-bundles.md) #2 | external-service | Experimental reexecution needs configured provider credentials and can run tools or incur cost in a fresh workspace. |
+| [docs/trace-bundles.md](../docs/trace-bundles.md) #1 | illustrative | Manual export/replay paths are placeholders; doc-traces.py executes the controlled fixture equivalent. |
+| [docs/trace-bundles.md](../docs/trace-bundles.md) #2 | external-service | Experimental online re-execution needs configured authentication and a chosen task; never part of offline fixture replay. |
+| [docs/trace-bundles.md](../docs/trace-bundles.md) #3 | illustrative | Regeneration and validation commands require a built CLI and local Docker; CI executes the same generator with isolated output. |
 | [docs/tui-scrolling.md](../docs/tui-scrolling.md) #1 | illustrative | Contributor test commands; no terminal interaction is driven here. |
 | [docs/workspace-execution.md](../docs/workspace-execution.md) #1 | illustrative | Workspace placeholder and interactive session; native coverage is below. |
 | [docs/workspace-execution.md](../docs/workspace-execution.md) #2 | illustrative | Platform-specific manual sandbox setup; executable sandbox coverage is below. |

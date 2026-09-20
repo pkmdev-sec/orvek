@@ -4,7 +4,7 @@ import sys
 from fixture import HostFixture, message, wait_until
 
 
-def main(binary):
+def main(binary, *, export=None):
     # No external notification. Append one payload, then deliberately fail the shell.
     with HostFixture(binary, [message()], hook="cat >> completion.jsonl; exit 9") as host:
         session, receipt = host.run()
@@ -27,6 +27,8 @@ def main(binary):
         task = host.query("task", id=payload["task"])
         assert task["outcome"] == "finished_unverified" and task["certificate"] is None
         host.assert_provider_consumed()
+        if export is not None:
+            export(host)
     print("PASS completion hook: one local payload; failed receipt; unchanged task outcome")
 
 

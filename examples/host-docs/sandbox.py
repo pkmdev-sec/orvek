@@ -9,7 +9,7 @@ BEFORE = "#!/bin/sh\nprintf '3\\n'\n"
 AFTER = "#!/bin/sh\nprintf '%s\\n' \"$(($1 + $2))\"\n"
 
 
-def main(binary):
+def main(binary, *, export=None):
     outputs = [message(), tool("write_file", {
         "operation": "replace", "path": "add", "content": AFTER,
         "expected": {"kind": "digest", "digest": hashlib.sha256(BEFORE.encode()).hexdigest()}}), message()]
@@ -50,6 +50,8 @@ def main(binary):
         assert delivery.read_text() == AFTER
         assert (host.workspace / "add").read_text() == BEFORE
         host.assert_provider_consumed()
+        if export is not None:
+            export(host)
     print("PASS sandbox: Complete; baseline/candidate checks; certificate; delivered bytes")
 
 

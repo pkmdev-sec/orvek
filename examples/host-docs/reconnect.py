@@ -3,7 +3,7 @@ import sys
 from fixture import HostFixture, LIMITS, POLICY, message, request, send_frame, read_frame, tool
 
 
-def main(binary):
+def main(binary, *, export=None):
     outputs = [tool("exec_command", {"command": "printf once >> effects.txt"}), message()]
     with HostFixture(binary, outputs) as host:
         session = host.session()
@@ -36,6 +36,8 @@ def main(binary):
                     replay.append(frame["data"])
         assert replay == expected
         host.assert_provider_consumed()
+        if export is not None:
+            export(host)
     print("PASS reconnect: one submission/effect; same receipt; exact journal replay")
 
 

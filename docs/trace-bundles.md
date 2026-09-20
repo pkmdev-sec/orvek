@@ -87,3 +87,71 @@ supply any required starting material through the new task's normal workflow.
 Unresolved jobs or effects block this path; reconcile them with the original
 host. This check sees only the pinned prefix, not later activity in the original
 host. New commands can have side effects and model calls can incur cost.
+
+## Documentation fixture bundles
+
+The [executable examples](executable-examples.md) link to five checked-in bundles
+under `examples/host-docs/traces/`. These are **sanitized, non-exact review bundles**,
+not full replay records. They come only from the isolated scripted-provider
+fixtures. No live provider, real credentials, user workspace, or upload is involved.
+
+The generator exports a private trace inside each fixture's temporary directory.
+It then uses `--omit` for every artifact reference and pins the same journal cursor.
+It checks that original event bytes, aggregate hashes and expected replay identities
+are unchanged. It vets the retained events, including embedded JSON and byte arrays.
+Every artifact payload is absent, including request bodies, context, machine-specific
+execution metadata and any credential-bearing artifact data. Cleanup removes the
+private trace even when a scenario or export fails. Ordinary example runs do not export.
+
+Omitting artifacts does **not** sanitize arbitrary traces. Version 1 also stores some
+input, tool results and paths directly in journal events. These fixtures retain only
+controlled example data, compiled behavior instructions, generated IDs/timings,
+non-identifying platform names (such as `macos`/`aarch64`), and
+synthetic `/tmp/ov-doc-...` workspace/skill paths (sometimes prefixed with `/private`).
+Those are not user directories. If the event vetting fails, review the fixture and
+stop publication; do not rewrite its events. The checks are guards for these audited
+fixtures, not general secret detection. Do not use this generator on a real host.
+
+An exact record replay validates recorded events, payloads and reconstructed state.
+It still does not rerun tools or certify changed code. These sanitized bundles instead
+allow **non-exact offline review** of retained events and outcome/certificate identities.
+Missing artifacts stay explicit. Request details, model/tool payloads, context and
+patch bodies may be unavailable. An omitted report cannot support a complete cost
+claim. The behavioral assertions run during generation, not during replay. The native
+outcome remains `finished_unverified`; only the sandbox fixture records `complete`
+and a certificate. Neither provider-hidden reasoning nor external state is captured.
+
+### Regenerate and check locally
+
+Build the current CLI first, as described in [the examples](executable-examples.md).
+Set `ORVEK_EXECUTOR_HELPER` to a matching Linux helper and make
+`debian:bookworm-slim` available in local Docker. Generation runs all five scenarios,
+including actual sandbox execution. No scenario silently skips.
+
+```sh
+python3 -B scripts/doc-traces.py --generate --binary /absolute/path/to/orvek
+python3 -B scripts/check-doc-examples.py
+python3 -B scripts/check-doc-examples.py --check
+python3 -B scripts/doc-traces.py --binary /absolute/path/to/orvek
+```
+
+The [index](../examples/host-docs/traces/index.json) records scenario/shared-fixture/
+generator hashes, a runtime-input hash, the binary hash, exporter revision, original
+export digests, journal hashes and bundle hashes. It also records the local Docker
+image ID and executor-helper hash, without recording their host paths. Runtime
+inputs include Rust/Cargo sources and the embedded font under `bin`, `crates`,
+`vendor` and `.cargo`.
+The generator trusts the supplied CLI. Its binary hash identifies what ran; the
+runtime-input hash describes the checkout, not proof that the binary was built
+from it. Build the current CLI before generation. This is not a signed attestation
+or proof of reproducible compilation. Exporter revision identifies the exporting
+binary; it must not be presented as an inferred historical execution revision. Source hashes also identify
+dirty source content. UUIDs and timings make regeneration intentionally non-byte-identical.
+
+`python3 -B scripts/doc-traces.py` checks files, source drift, envelope/artifact policy,
+original event hash chains and event vetting without Docker or a built CLI. Supplying
+`--binary` also runs the real offline reducer/reviewer and proves that changing
+`exact` to `true`, even with a recomputed envelope hash, is rejected. CI checks these
+local artifacts and regenerates all five in a temporary output directory. It does
+not fetch or publish trace artifacts. Regenerate after a source-hash check fails;
+do not update index hashes alone to advertise an old trace as current.

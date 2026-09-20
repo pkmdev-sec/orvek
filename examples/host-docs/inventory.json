@@ -217,6 +217,13 @@
     "reason": "Experimental reexecution needs configured provider credentials and can run tools or incur cost in a fresh workspace."
   },
   {
+    "guide": "docs/trace-bundles.md",
+    "block": 3,
+    "sha256": "aa3743864a5033ddc55086957330e806b4a84c29cff08a5f13315d0d18e205e3",
+    "kind": "illustrative",
+    "reason": "Regeneration and validation commands require a built CLI and local Docker; CI executes the same generator with isolated output."
+  },
+  {
     "guide": "docs/tui-scrolling.md",
     "block": 1,
     "sha256": "298c5e0a0f791cf1c5256288e73966510d1adb8df3d6565421a988abfdc0c8dc",

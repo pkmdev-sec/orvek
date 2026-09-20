@@ -3,7 +3,7 @@ import sys
 from fixture import HostFixture, message, tool
 
 
-def main(binary):
+def main(binary, *, export=None):
     outputs = [tool("write_file", {"operation": "replace", "path": "result.txt",
                "expected": {"kind": "absent"}, "content": "local result\n"}), message()]
     with HostFixture(binary, outputs) as host:
@@ -15,6 +15,8 @@ def main(binary):
         assert (host.workspace / "result.txt").read_text() == "local result\n"
         assert host.query("session", id=session)["outcome"] == "finished_unverified"
         host.assert_provider_consumed()
+        if export is not None:
+            export(host)
     print("PASS native: live bytes changed; FinishedUnverified; no certificate")
 
 

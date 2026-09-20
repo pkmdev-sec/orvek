@@ -118,13 +118,10 @@ jobs:
         run: cargo build --locked --package orvek-executor --bin orvek-executor
       - name: Build the CLI for executable documentation
         run: cargo build --locked --package orvek --bin orvek
-      - name: Run isolated host documentation examples
-        run: |
-          python3 -B examples/host-docs/native.py target/debug/orvek
-          python3 -B examples/host-docs/reconnect.py target/debug/orvek
-          python3 -B examples/host-docs/completion_hook.py target/debug/orvek
-          python3 -B examples/host-docs/memory_skills.py target/debug/orvek
-          python3 -B examples/host-docs/sandbox.py target/debug/orvek
+      - name: Replay checked-in sanitized documentation traces
+        run: python3 -B scripts/doc-traces.py --binary target/debug/orvek
+      - name: Run all five host examples with sanitized export and replay assertions
+        run: python3 -B scripts/doc-traces.py --generate --binary target/debug/orvek --output "${{ runner.temp }}/doc-traces"
       - name: Test controller isolation
         run: cargo test --locked --package orvek-harness --test controller_execution -- --ignored --test-threads=1
       - name: Test Docker runtime boundaries

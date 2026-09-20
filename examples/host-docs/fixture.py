@@ -254,3 +254,16 @@ class HostFixture:
         if expected is None:
             expected = len(self.outputs)
         assert len(self.requests) == expected, (len(self.requests), expected)
+
+    def export_trace(self, output, *, through=None, omit=()):
+        """Export only this isolated host; the caller owns sanitization and publication."""
+        command = self.command + ["trace", "export", "--host-root", str(self.root / "host/v1"),
+                                  "--output", str(output)]
+        if through is not None:
+            command += ["--through", str(through)]
+        for digest in omit:
+            command += ["--omit", digest]
+        result = subprocess.run(command, cwd=self.workspace, env=self.env,
+                                text=True, capture_output=True, timeout=120)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        return json.loads(result.stdout)

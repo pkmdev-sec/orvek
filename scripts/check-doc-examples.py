@@ -2,6 +2,7 @@
 """Check explicit guide-fence classifications and render real host examples."""
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -10,6 +11,9 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES = Path("examples/host-docs")
 DOCUMENT = Path("docs/executable-examples.md")
+TRACE_SPEC = importlib.util.spec_from_file_location("doc_traces", ROOT / "scripts/doc-traces.py")
+traces = importlib.util.module_from_spec(TRACE_SPEC)
+TRACE_SPEC.loader.exec_module(traces)
 FENCES = re.compile(r"^```([^\n]*)\n(.*?)^```\s*$", re.MULTILINE | re.DOTALL)
 SCENARIOS = {
     "native": "Native completion without certification",
@@ -61,6 +65,7 @@ assistant prose. This is deterministic wiring coverage, not a model-quality test
 
 Build `orvek` with `cargo build --locked --package orvek --bin orvek`.
 Pass the built binary path as the only argument to each scenario below.
+Ordinary runs do not export traces or upload data.
 Do not use Python's `-O` flag: it disables assertions.
 
 Native, reconnect, hook and memory/skill scenarios require Unix, but not Docker.
@@ -83,8 +88,11 @@ these examples control the provider and use only the temporary workspace.
   local store. It checks real scan keys, full reads, explicit skill bytes/digests,
   and stored context manifests. It does not test remote memory or a host restart.
   `scripts/test-host-context.py` separately checks the restart path.
-- **Sanitized trace links: pending T04.** Journal assertions below are not portable
-  trace bundles. No trace exports or offline replay claims are made here.
+- The linked traces are **sanitized, non-exact review bundles** from these controlled
+  fixtures. Every artifact payload is omitted. Original journal events, their hashes,
+  fixture-only temporary workspace paths and replay identities remain unchanged.
+  They cannot prove missing model/tool payloads or fresh execution. See the
+  [sanitization boundary and regeneration commands](trace-bundles.md#documentation-fixture-bundles).
 - Reconnect drops an IPC acknowledgement and reconnects a journal watch. It does
   not kill or restart the host.
 - The hook writes only a local payload, then exits with code 9. A failed delivery
@@ -94,16 +102,18 @@ these examples control the provider and use only the temporary workspace.
   from `crates/harness/tests/controller_execution.rs`, through public IPC rather
   than a second verification implementation. Delivery does not overwrite source.
 
-T11 remains partial until sanitized trace links are verified.
-
 ## Runnable scenarios
 
 Generated from the complete executable files. Edit the source files, then run
-`python3 scripts/check-doc-examples.py`. CI uses `--check` and runs the scenarios.
+`python3 scripts/check-doc-examples.py`. CI uses `--check`, verifies local trace
+provenance, and runs all five scenarios with export and replay assertions. The
+[trace index](../examples/host-docs/traces/index.json) records source and bundle hashes.
+UUIDs and timings vary on regeneration; artifacts need not be byte-identical.
 """
     for name, title in SCENARIOS.items():
         source = EXAMPLES / (name + ".py")
         text += f"\n### {title}\n\nClassification: **runnable**. [Source](../{source}).\n\n"
+        text += f"[Sanitized trace bundle](../{EXAMPLES}/traces/{name}.trace.json) (non-exact).\n\n"
         text += f"Run `python3 {source} /absolute/path/to/orvek`.\n\n```python\n"
         text += (root / source).read_text().rstrip() + "\n```\n"
     text += """
@@ -125,7 +135,7 @@ The existing `scripts/check-docs.py` still checks links and syntax separately.
 
 
 def check(root, rows):
-    errors = inventory_errors(root, rows)
+    errors = inventory_errors(root, rows) + traces.check(root)
     expected = render(root, rows)
     destination = root / DOCUMENT
     if not destination.exists() or destination.read_text() != expected:
@@ -138,7 +148,7 @@ def main():
     parser.add_argument("--check", action="store_true", help="reject drift without writing files")
     args = parser.parse_args()
     rows = json.loads((ROOT / EXAMPLES / "inventory.json").read_text())
-    errors = check(ROOT, rows) if args.check else inventory_errors(ROOT, rows)
+    errors = check(ROOT, rows) if args.check else inventory_errors(ROOT, rows) + traces.check(ROOT)
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1

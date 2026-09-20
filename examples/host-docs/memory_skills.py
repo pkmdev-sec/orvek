@@ -9,7 +9,7 @@ MEMORY = "Fixture notebooks use blue ink. Keep each durable finding self-contain
 SKILL = "---\nname: check-note\ndescription: Check fixture notes.\n---\nBODY-SENTINEL: use blue ink.\n"
 
 
-def main(binary):
+def main(binary, *, export=None):
     stored_key = None
 
     def respond(index, request):
@@ -95,6 +95,8 @@ def main(binary):
         assert manifests[2]["memory"]["keys"] == [stored_key]
         assert all(manifest == manifests[2] for manifest in manifests[3:])
         host.assert_provider_consumed(6)
+        if export is not None:
+            export(host)
     print("PASS memory/skills: two sessions; put/scan/read; exact skill bytes/digest; context manifests")
 
 
