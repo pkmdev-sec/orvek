@@ -84,7 +84,7 @@ fn internal_context_pages_bypass_user_media_limits_and_preserve_provider_order()
     let message = input::materialize_internal_context_media(&pages, &artifacts).unwrap();
     let parts = message["content"].as_array().unwrap();
     assert_eq!(parts.len(), 18);
-    for (index, pair) in parts.chunks_exact(2).enumerate() {
+    for (index, pair) in parts.as_chunks::<2>().0.iter().enumerate() {
         assert!(
             pair[0]["text"]
                 .as_str()

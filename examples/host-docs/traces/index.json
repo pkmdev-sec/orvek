@@ -10,11 +10,11 @@
     "examples/host-docs/fixture.py": "4dc0676f835d808906c9ba70837a65d92f34103e72b19a86416097571436d4de",
     "scripts/doc-traces.py": "1819a31877f8b3f38432478f7ab07b62af116aa1b4f5a76b9a1b40d4a60c2bdb"
   },
-  "runtime_sha256": "1b3400f0347849ac93db5a4918f7a90169a3947fd784bd68834abd0316f5bf04",
+  "runtime_sha256": "a30e4cacf6781ff460bb549e977e1d6b6444b98472cbcb8373c144119bf2a137",
   "binary_sha256": "cab0247590ff8b4b08534ddcf3a9b5aefd997b6eae4e584c1016c8e60dc5a803",
   "scenarios": {
     "native": {
-      "sha256": "8feec66a8129f85bd72179496f318d870fffd5a49070032cf55c51ac8b5e9dc0",
+      "sha256": "7c517b6206080d2253a3be7649651f7e52a173d9bd9923eb8461a7a04fac2760",
       "bytes": 25898,
       "records": 24,
       "replay": {
@@ -23,11 +23,11 @@
         "tasks": 1
       },
       "original_exact": true,
-      "original_digest": "6798ecdd105f5ae4a001ca0f0d1887fa75c87d123e3cfdd3c1b7c9db95dd6d94",
-      "records_sha256": "7c610dcd9a9daca7b81455b5cab67625bab27a8ec417772f53897c12b9e82d01"
+      "original_digest": "707da3d617f17d0566d2330bccbfc468e50192deac2f5383ff662dfd8944fcd4",
+      "records_sha256": "0f18f9f9b62dd09013f3901f6319d382aafd7dfbadafcaaa1a0d9949383ebacd"
     },
     "sandbox": {
-      "sha256": "c5694647f24ee4f4dec38a6e6eed8875eab160cebecb35edfc87d189830b51d5",
+      "sha256": "01f29864ddffae816c9a54f4a27a7fafa67df9a799e2ccb77e099376bc7d86fe",
       "bytes": 39957,
       "records": 41,
       "replay": {
@@ -36,11 +36,11 @@
         "tasks": 1
       },
       "original_exact": true,
-      "original_digest": "30d03bcf2a70adaa138eb4803e90dafb2cb034ff05887b5f462c0c9e065e6edb",
-      "records_sha256": "534b4c695ecca4080162f6016864b8037cd653bb366ebb6203fe71f51659bc0d"
+      "original_digest": "5c70f5df261f9f9c1328f47414079794a4d14b030fd89deda2536c965a67cc5c",
+      "records_sha256": "8566f112d00a292ecedda27d505cfcd67c2788f2c48e05db5ae46fae29bac12e"
     },
     "reconnect": {
-      "sha256": "2a15b999e751fd5621ecb1df36e22ebb66972d7e7c8738166744235140a0232c",
+      "sha256": "5618112322ababf4509e4985d3aa8887bcef29204dec9f06d0733e2d7ca545aa",
       "bytes": 26130,
       "records": 24,
       "replay": {
@@ -49,11 +49,11 @@
         "tasks": 1
       },
       "original_exact": true,
-      "original_digest": "84517a5299290169fbde752a1c7f26b47d2aaeb9834c239a35db0b981cb52932",
-      "records_sha256": "7b2a1e9be801cbf3b1ad9bfa7dcd68064f727748789198b09465db989316e04d"
+      "original_digest": "4598e4de4b1550965e71837949f3cfb76ea54d4b543ffda5afe9e49aae9cfea3",
+      "records_sha256": "124d4056d4c5e7f40610ae4b797911227fba45720265e68a6d3f4381035b2725"
     },
     "completion_hook": {
-      "sha256": "12ffd82b892b1cbbd6b05015236f5d7b2fbdd4fb2419c32df21250f123e4dcf6",
+      "sha256": "587c27b48846982a8d75b1047952b422f2a805f9bb782b61b5734e82bcb44e49",
       "bytes": 20810,
       "records": 18,
       "replay": {
@@ -62,11 +62,11 @@
         "tasks": 1
       },
       "original_exact": true,
-      "original_digest": "b426e3d66649a69d5b4eac6e297aa8a1a45f0d21b27256cd6f9f9168a93c5783",
-      "records_sha256": "9f81344aa70d1109cb9976f3dc286d7e89db95ab21a4a205411288e1214751f2"
+      "original_digest": "55a6df3afa42391aed4b0a6fa6cf4a238e205d85741bebbc279ef71012832161",
+      "records_sha256": "e180bde0b5f4cc9ad0f7dfba72e41ef4e58f22a62b8db307c1bbe122165be2ba"
     },
     "memory_skills": {
-      "sha256": "87471e8dc1d0ed6115197ebd813ca6105092bc0f333eba22596c24783395372b",
+      "sha256": "8876b625ca61b22c773b14d272b654c5c5e7743d06308ad68da8ac5ab7b4a5ba",
       "bytes": 64025,
       "records": 65,
       "replay": {
@@ -75,8 +75,8 @@
         "tasks": 2
       },
       "original_exact": true,
-      "original_digest": "818d1b637dced2602e6a714db7de7b78f316f421b61a9f5eedf7faf9f4b47d3e",
-      "records_sha256": "8a8f19951f360a8fd4a0be91ae97ffffdf1c2af53eb2a128b16d86e0b7c93fba"
+      "original_digest": "82d667df58aacd6d6cee870073f19af1ae9ed60212a44bd3855ad39df8c8e258",
+      "records_sha256": "a76cfd70e225d2e80067303e6835f1c0990f4185f8ce5b46771b1bbcc347d3f0"
     }
   },
   "sandbox": {
