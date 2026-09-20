@@ -366,6 +366,7 @@ impl DockerExecutor {
         let mut file = fs::File::create(&helper)?;
         file.write_all(&bytes)?;
         file.sync_all()?;
+        drop(file);
         fs::set_permissions(&helper, fs::Permissions::from_mode(0o555))?;
         let source_target = if request.readonly {
             "/workspace"
