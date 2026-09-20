@@ -1,5 +1,5 @@
 [profile.default]
 
 [[profile.default.overrides]]
-filter = "binary(completion_hook) | binary(trace_cli) | test(~app::host::context_tests)"
+filter = "binary(completion_hook) | binary(trace_cli) | test(~app::host::context_tests) | test(history_pages_cover_maximum_interpreter_value_json_expansion) | test(idle_timeout_is_bounded_and_does_not_retry) | test(monitor_large_result_intake_keeps_native_host_status_responsive)"
 threads-required = "num-cpus"

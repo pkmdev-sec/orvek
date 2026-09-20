@@ -439,15 +439,16 @@ fn verify_quota(path: &Path, bytes: u64, inodes: u64) -> io::Result<Quota> {
     Ok(q)
 }
 fn verify_readonly(path: &Path) -> io::Result<()> {
-    let name = CString::new(path.as_os_str().as_bytes())?;
-    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    if unsafe { libc::statvfs(name.as_ptr(), stat.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
+    let permissions = fs::metadata(path)?.permissions();
+    readonly_probe(fs::set_permissions(path, permissions))
+}
+
+fn readonly_probe(result: io::Result<()>) -> io::Result<()> {
+    match result {
+        Err(error) if error.raw_os_error() == Some(libc::EROFS) => Ok(()),
+        Err(error) => Err(error),
+        Ok(()) => Err(io::Error::other("source mount is writable")),
     }
-    if unsafe { stat.assume_init() }.f_flag & libc::ST_RDONLY == 0 {
-        return Err(io::Error::other("source mount is writable"));
-    }
-    Ok(())
 }
 fn safe(path: &str) -> bool {
     !path.is_empty()
@@ -624,4 +625,18 @@ fn copy_source(request: &Request, started: Instant, uid: u32) -> io::Result<()> 
     )?;
     chown(Path::new("/workspace"), uid)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::readonly_probe;
+    use std::io;
+
+    #[test]
+    fn readonly_probe_accepts_only_erofs() {
+        assert!(readonly_probe(Err(io::Error::from_raw_os_error(libc::EROFS))).is_ok());
+        assert!(readonly_probe(Ok(())).is_err());
+        assert!(readonly_probe(Err(io::Error::from_raw_os_error(libc::EPERM))).is_err());
+        assert!(readonly_probe(Err(io::Error::from_raw_os_error(libc::EACCES))).is_err());
+    }
 }
