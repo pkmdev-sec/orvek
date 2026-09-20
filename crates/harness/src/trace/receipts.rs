@@ -1057,7 +1057,12 @@ fn validate_events(
                 .manifest
                 .segments
                 .iter()
-                .filter(|s| s.role == ContextSegmentRole::StableHistory)
+                .filter(|s| {
+                    matches!(
+                        s.role,
+                        ContextSegmentRole::StableHistory | ContextSegmentRole::DerivedSummary
+                    )
+                })
                 .map(|segment| {
                     let range = usize::try_from(segment.input_range.start)
                         .ok()

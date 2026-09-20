@@ -1138,7 +1138,6 @@ async fn trace_reexecution_uses_only_intent_and_fresh_admitted_identities() {
     );
 }
 
-
 #[tokio::test]
 async fn post_run_context_work_never_holds_task_settlement_or_changes_its_outcome() {
     use futures_util::future::BoxFuture;
@@ -1248,7 +1247,6 @@ async fn post_run_context_work_never_holds_task_settlement_or_changes_its_outcom
     }
     server.await.unwrap();
 }
-
 
 #[tokio::test]
 async fn experimental_transition_keeps_goal_exact_source_and_unverified_completion_after_restart() {
@@ -1416,3 +1414,69 @@ async fn context_transition_is_default_disabled_even_when_provider_invents_the_t
     }
 }
 
+#[tokio::test]
+async fn transition_trace_is_replayable() {
+    let fixture = Fixture::new();
+    let (endpoint, server) = provider(vec![
+        vec![final_message("research_done")],
+        vec![function_call(
+            "transition",
+            "phase",
+            "transition_context",
+            json!({
+                "range":{"start":0,"end":2},
+                "purpose":"research done; implement",
+                "summary":"Historical evidence only; exact source remains available.",
+                "pending_obligations":["Implement requested behavior"]
+            }),
+        )],
+        vec![final_message("done")],
+    ])
+    .await;
+    let host = Arc::new(
+        Host::open_native(
+            &fixture.state_root(),
+            client(&endpoint),
+            Digest::of(b"config"),
+        )
+        .unwrap()
+        .with_experimental_context_transitions(true),
+    );
+    let session = fixture.admit_session(&host).await;
+    for prompt in [
+        "Research before implementation",
+        "Implement the original goal",
+    ] {
+        let request = Uuid::new_v4();
+        host.submit(
+            session,
+            request,
+            vec![json!({"type":"input_text","text":prompt})],
+            new_task_intent(),
+        )
+        .await
+        .unwrap();
+        wait_submission(&host, session, request).await;
+    }
+    let state = host.session(session).await.unwrap();
+    assert_eq!(state.context_transitions.len(), 1);
+    let requests = server.await.unwrap();
+    assert!(
+        requests[2]["input"]
+            .to_string()
+            .contains("DERIVED CONTEXT VIEW")
+    );
+    let bundle = orvek_harness::trace::TraceBundle::export(
+        host.state_directory(),
+        None,
+        Default::default(),
+        &Default::default(),
+        None,
+    )
+    .unwrap();
+    let replay = bundle
+        .replay()
+        .expect("an accepted transition must not break trace replay");
+    assert!(replay.exact, "{:?}", replay.unresolved);
+    assert_eq!(replay.sessions[&session], state);
+}
