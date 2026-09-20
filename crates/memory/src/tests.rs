@@ -440,15 +440,15 @@ fn newer_database_schema_versions_are_rejected_without_relabeling_them() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("memory.sqlite3");
     let connection = Connection::open(&path).unwrap();
-    connection.pragma_update(None, "user_version", 2).unwrap();
+    connection.pragma_update(None, "user_version", 3).unwrap();
     drop(connection);
     let store = MemoryStore::new(path.clone());
 
     assert!(matches!(
         store.list(0),
         Err(MemoryError::UnsupportedSchemaVersion {
-            found: 2,
-            supported: 1
+            found: 3,
+            supported: 2
         })
     ));
 
@@ -456,7 +456,7 @@ fn newer_database_schema_versions_are_rejected_without_relabeling_them() {
     let schema_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(schema_version, 2);
+    assert_eq!(schema_version, 3);
 }
 
 #[test]
@@ -526,6 +526,7 @@ fn local_keys_keep_the_original_wire_shape() {
 
 fn remote_record(namespace: &str, id: i64, content: &str) -> MemoryRecord {
     MemoryRecord {
+        metadata: Default::default(),
         key: MemoryKey::remote(namespace.to_owned(), id, 1),
         content: content.to_owned(),
         created_at_ms: 1,
@@ -539,7 +540,7 @@ fn remote_record(namespace: &str, id: i64, content: &str) -> MemoryRecord {
 }
 
 #[tokio::test]
-async fn pulling_remote_memories_merges_atomically_without_changing_schema_v1() {
+async fn pulling_remote_memories_preserves_each_namespace_in_schema_v2() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("memory/v1.sqlite3");
     let store = ProductionMemoryStore::new(path.clone());
@@ -554,16 +555,25 @@ async fn pulling_remote_memories_merges_atomically_without_changing_schema_v1() 
         .await
         .unwrap();
 
-    assert_eq!(report.inserted, 1);
-    assert_eq!(report.skipped, 2);
+    assert_eq!(report.inserted, 3);
+    assert_eq!(report.skipped, 0);
     let records = store.list().await.unwrap();
-    assert_eq!(records.len(), 2);
+    assert_eq!(records.len(), 4);
     assert!(records.iter().all(|record| record.key.is_local()));
+    let origins = records
+        .iter()
+        .flat_map(|record| record.metadata.imported_from.iter())
+        .filter_map(|key| key.namespace.as_deref())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        origins,
+        std::collections::HashSet::from(["alice", "bob", "carol"])
+    );
     let connection = Connection::open(path).unwrap();
     let schema_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(schema_version, 1);
+    assert_eq!(schema_version, 2);
 }
 
 #[tokio::test]

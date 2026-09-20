@@ -776,3 +776,117 @@ async fn cancellation_interrupts_a_stalled_remote_context_snapshot() {
     stop(&client, host).await;
     remote_server.abort();
 }
+
+#[tokio::test]
+async fn scoped_evidence_and_post_run_proposals_reach_production_context_service() {
+    use orvek_memory::{MemoryKind, MemoryScope, ProposalState};
+    let draft = json!({"scope":"repository","kind":"code_claim","sources":[{"path":"feature.rs"}]});
+    let (endpoint, provider) = provider(vec![
+        vec![call("scan-claim","memory",json!({"operation":"scan","query":"fixture"}))],
+        vec![call("claim","memory",json!({"operation":"put","content":"fixture feature is disabled","metadata":draft}))],
+        vec![call("scan-lesson","memory",json!({"operation":"scan","query":"fixture"}))],
+        vec![call("lesson","memory",json!({"operation":"propose_lesson","content":"fixture feature needs a behavior test","metadata":{"scope":"repository","kind":"procedure","sources":[{"path":"feature.rs"}]},"behavior_test":{"path":"behavior_test.rs"}}))],
+        vec![answer()],
+        vec![call("recall","memory",json!({"operation":"scan","query":"fixture feature"}))],
+        vec![answer()],
+    ]).await;
+    let fixture = Fixture::new(&endpoint, true, false);
+    let root = fixture.config.agent().workspace();
+    fs::write(root.join("feature.rs"), "const FEATURE: bool = false;\n").unwrap();
+    fs::write(root.join("behavior_test.rs"), "assert!(!FEATURE);\n").unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.name", "Memory Test"],
+        vec!["config", "user.email", "memory@example.invalid"],
+        vec!["add", "."],
+        vec!["commit", "-qm", "baseline"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let memory = crate::core::configured_memory_store(&fixture.config, root)
+        .unwrap()
+        .unwrap();
+    let (client, host) = fixture.start().await;
+    let first = fixture.session(&client).await;
+    submit(&client, first, false).await;
+    // The task settles before its independent consolidation. Wait for the persisted proposal,
+    // not an assistant message or the mere presence of a hook call.
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let records = memory.list().await.unwrap();
+            if records.iter().any(|record| {
+                matches!(
+                    record.metadata.kind,
+                    MemoryKind::LessonProposal {
+                        state: ProposalState::Proposed,
+                        ..
+                    }
+                )
+            }) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let records = memory.list().await.unwrap();
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().all(|record| matches!(
+        record.metadata.scope,
+        MemoryScope::Repository { .. }
+    ) && record.metadata.producing_traces.len() == 1));
+    assert_eq!(
+        records[0].metadata.producing_traces[0].session,
+        first.to_string()
+    );
+    fs::write(root.join("feature.rs"), "const FEATURE: bool = true;\n").unwrap();
+    let second = SessionId::new();
+    client
+        .query(Command::CreateSession {
+            id: second,
+            request: SessionAdmissionRequest::new(
+                root.to_owned(),
+                ModelSettings {
+                    model: orvek_harness::inference::Model::Terra,
+                    ..ModelSettings::default()
+                },
+                32_768,
+                Channel::Stable,
+            ),
+        })
+        .await
+        .unwrap();
+    submit(&client, second, false).await;
+    stop(&client, host).await;
+    let requests = provider.await.unwrap();
+    assert_eq!(
+        requests[5]["model"],
+        orvek_harness::inference::Model::Terra.as_str()
+    );
+    assert_ne!(requests[0]["model"], requests[5]["model"]);
+    assert!(requests[6]["input"].to_string().contains("stale"));
+    assert!(
+        !requests[6]["instructions"]
+            .to_string()
+            .contains("fixture feature is disabled")
+    );
+    assert!(
+        requests[4]["input"]
+            .to_string()
+            .contains("cited_not_executed")
+    );
+    assert_eq!(
+        memory.list().await.unwrap().len(),
+        2,
+        "recall never relearns or rewrites records"
+    );
+}

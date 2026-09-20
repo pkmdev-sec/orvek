@@ -19,12 +19,18 @@ The SQLite store is `<config-dir>/memory/v1.sqlite3`. `<config-dir>` is the pare
 `config.toml`, including one selected through `--config`, `ORVEK_CONFIG`, or `ORVEK_HOME`.
 
 All sessions and agents using that directory share one local store, subject to their tool
-permissions. There are no workspace, repository, branch, session, or author namespaces. State any
-workspace scope in the record itself. Local memory needs no network service or Cloudflare account.
+permissions. Records have a typed global, repository, or legacy-unscoped scope. Repository identity
+is a hash of sorted Git root commits, so clones and linked worktrees can reuse records. This is a
+retrieval boundary, not a credential or authorization boundary. Branches sharing those roots share
+repository scope. Local memory needs no network service or Cloudflare account.
+
+Schema v2 migrates the existing `v1.sqlite3` file in place. Old records stay legacy-unscoped with
+unknown origin and unverified evidence. An older build rejects the new schema rather than dropping
+provenance. Back up the database before downgrading.
 
 ## Operations and limits
 
-Primary coding tasks can use all four memory-tool operations. Auxiliary conversation and other
+Primary coding tasks can use all five memory-tool operations. Auxiliary conversation and other
 read-only assistance can only `scan` and `read`. The host does not currently install memory tools
 for delegated children.
 
@@ -32,7 +38,8 @@ for delegated children.
 | --- | --- |
 | `scan` | Search with `query` and optional `limit`, from 1 to 5. Return ranked previews. |
 | `read` | Fetch complete records using `keys` returned by scan. Omit missing or stale keys. |
-| `put` | Store `content`. Supply `replace` with the current key to replace a record. |
+| `put` | Store `content` and optional typed `metadata`. Supply `replace` for atomic content-and-evidence CAS refresh. |
+| `propose_lesson` | Nominate a short lesson with source evidence and a behavior-test citation. After settlement, the host asynchronously marks it proposed. |
 | `delete` | Delete the record identified by `key`. An absent record succeeds; a stale version conflicts. |
 
 Preserve each key's ID, version, and remote namespace:
@@ -77,6 +84,58 @@ Version checks, writes, telemetry, and capacity checks are transactional at the 
 The local database is unencrypted. Orvek rejects writes flagged by its secret detector and filters
 flagged records before use, but memory is not a secret store. Deletion does not erase copies in
 SQLite sidecars, backups, transcripts, model-provider records, or other storage.
+
+## Evidence and lesson proposals
+
+Model-facing `metadata` accepts only `scope`, `kind`, and source requests. Scope is `global` or
+`repository`; kind is `preference`, `procedure`, or `code_claim`. The host observes the repository
+identity, checked revision, complete-file SHA-256 digest, optional line range, and producing
+session/request/task trace address. It sets origin to `model`. A model cannot supply a host origin,
+source hash, trace identity, or authority flag. Put without metadata remains legacy-unscoped.
+
+```json
+{"operation":"put","content":"The feature flag is enabled.","metadata":{"scope":"repository","kind":"code_claim","sources":[{"path":"src/feature.rs","range":{"start":1,"end":8}}]}}
+```
+
+Scan before each put or proposal. To correct a claim, send the new content and source requests with
+the exact `replace` key. Content, metadata, and version commit together. A conflict or failed
+transaction leaves the old evidence unchanged. A dispatched transaction can finish after caller
+cancellation; read the current version before deciding whether another write is needed.
+
+Scan/read return `freshness`:
+
+- `current`: every cited file matches its stored content digest. This does **not** mean the claim
+  is true or a behavior test passed.
+- `stale`: cited bytes changed, including an uncommitted edit at the same Git revision. This does
+  **not** mean the claim is false.
+- `unavailable`: a cited source is deleted, inaccessible, outside the mounted repository, or is an
+  artifact without a mounted resolver.
+- `unverified`: no source evidence was recorded. Preferences and old records can remain useful in
+  this state. Reads and probation telemetry never certify them.
+
+Only returned records' citations are inspected. Unrelated files and changed Git revisions do not
+trigger a corpus-wide review. Reverting a cited file to its recorded bytes restores `current`.
+Line ranges identify the citation; the digest covers the complete file. Source reads accept only
+regular, non-symlink files up to 8 MiB. Unix descriptor-relative opens reject path escape races.
+Other platforms report source observation unavailable. The source boundary is the admitted host
+repository, not an uncommitted sandbox candidate. The output identifies exactly which bytes were
+observed. Artifact citations survive transfer but are unavailable until their source is mounted.
+
+```json
+{"operation":"propose_lesson","content":"Test the feature flag before claiming it works.","metadata":{"scope":"repository","kind":"procedure","sources":[{"path":"src/feature.rs"}]},"behavior_test":{"path":"tests/feature.rs"}}
+```
+
+A proposal must cite evidence and a behavior-test file. The host stores a pending candidate during
+the task and starts consolidation after terminal settlement. Repeated normalized lessons in the
+same scope merge citations and producing traces with CAS. No provider call, test execution, or
+instruction-file rewrite occurs. A cited test is labelled `cited_not_executed`; it is not a passing
+result. The resulting record remains a proposal and reference data, never promoted host policy.
+Failure or host exit can leave a pending proposal; the error is logged and task verification is
+unchanged. This phase does not promise crash-resumable consolidation or autonomous lesson quality.
+
+Metadata is bounded to 16 KiB, 16 source citations, 32 trace references, and 32 import keys. The
+same store is independent of model selection. Mechanical reuse is tested with two scripted model
+identities. Live-model learning quality and stale-claim avoidance have not been measured.
 
 ## Remote memory
 
@@ -162,6 +221,7 @@ Verify the no-TUI restart path with a local fake provider:
 ```sh
 cargo build -p orvek
 python3 scripts/test-host-context.py target/debug/orvek
+python3 scripts/test-memory-evidence.py target/debug/orvek
 ```
 
 The test starts two fresh headless clients with a host restart between them. It checks real memory
@@ -170,10 +230,12 @@ temporary data and loopback HTTP, not a live model account.
 
 ## Explicit transfer commands
 
-Transfers use the global local store from any directory. They ignore `memory.enabled` and workspace
-scope, but still require configured remote credentials.
+Transfers use the local store from any directory. They ignore `memory.enabled` and workspace scope.
+Remote push/pull require configured remote credentials. File archives do not.
 
 ```sh
+orvek memory export ./memory-archive
+orvek memory import ./memory-archive
 orvek memory push --dry-run
 orvek memory push
 orvek memory pull --all
@@ -186,32 +248,43 @@ identical records and reconciles concurrent local changes for up to three passes
 reports the local snapshot without contacting the service.
 
 `pull` accepts either role and requires `--all` or one or more `--namespace` options. It merges
-remote records into local memory, preserves existing content, and skips normalized duplicates.
-Imported records lose namespace provenance because local schema v1 has no author field. Validation,
-pagination, and capacity checks must all succeed before the local transaction commits. Failure
-leaves local memory unchanged.
+remote records into local memory. Original owning keys (including namespace and version), origin,
+scope, evidence, and producing traces survive in import provenance. Equal content from different
+namespaces remains distinct. Repeating the same imported snapshot skips identical records.
+Validation, pagination, and capacity checks must all succeed before the local transaction commits.
+Failure leaves local memory unchanged.
+
+`export` creates a new directory with `manifest.json` and readable, digest-addressed JSON records.
+The manifest records the format version and exact source keys. It is written last, so an interrupted
+export is not importable. `import` validates all record digests before one local transaction. It
+allocates local owning IDs and retains source keys and versions in `metadata.imported_from`.
+Archives contain plaintext reference data; they must not be treated as trusted host instructions.
 
 ## Remote server integration
 
 The unpublished [`orvek-memory` crate](../crates/memory/README.md) defines `MemoryStore` and the
 Axum `server::MemoryServer<S>` wrapper. The wrapper authenticates requests and creates a store
 bound to the authenticated namespace. Stores own transactions, persistence, capacity checks,
-pagination, and server-assigned timestamps. Client-side secret filtering is separate from the
+pagination, and server-assigned timestamps. Implement `scan_scoped` and `put_with_metadata` to
+support v2 host tools; the default methods reject unsupported metadata operations rather than
+silently dropping scope or provenance. Client-side secret filtering is separate from the
 server store's storage rules.
 
-Protocol generation `orvek_memory::VERSION` is currently `1`. Routes and session negotiation use
-that value:
+Protocol generation `orvek_memory::VERSION` is currently `2`. Routes and session negotiation use
+that value. Upgrade remote servers and clients together; v1 is intentionally incompatible.
+Apply the Cloudflare `0002_evidence.sql` migration before using the new Worker.
+
 
 | Route | Required role | Operation |
 | --- | --- | --- |
-| `GET /v1/session` | reader | Return version, namespace, and role. |
-| `POST /v1/memories/scan` | reader | Search and return at most five candidates. |
-| `POST /v1/memories/read` | reader | Read exact visible keys. |
-| `POST /v1/memories/list` | reader | Return at most 512 visible records without telemetry changes. |
-| `POST /v1/memories/put` | writer | Insert or replace within the writer's namespace. |
-| `POST /v1/memories/delete` | writer | Delete within the writer's namespace. |
-| `POST /v1/memories/sync` | writer | Atomically replace the writer's namespace from a snapshot. |
-| `POST /v1/memories/export` | reader | Export visible records in pages of at most 128. |
+| `GET /v2/session` | reader | Return version, namespace, and role. |
+| `POST /v2/memories/scan` | reader | Search and return at most five candidates. |
+| `POST /v2/memories/read` | reader | Read exact visible keys. |
+| `POST /v2/memories/list` | reader | Return at most 512 visible records without telemetry changes. |
+| `POST /v2/memories/put` | writer | Insert or replace within the writer's namespace. |
+| `POST /v2/memories/delete` | writer | Delete within the writer's namespace. |
+| `POST /v2/memories/sync` | writer | Atomically replace the writer's namespace from a snapshot. |
+| `POST /v2/memories/export` | reader | Export visible records in pages of at most 128. |
 
 Requests carry a bearer token and namespace assertion. The server rejects mismatches. Ordinary
 puts cannot supply IDs, versions, timestamps, or telemetry. Export preserves namespaced records in

@@ -4,9 +4,24 @@
 ///
 /// Route paths and session negotiation derive from this single value. Increment it only when
 /// clients and servers must intentionally stop interoperating.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
+mod evidence;
+mod lessons;
 mod model;
+pub use lessons::{finalize_lessons, propose_lesson};
+#[cfg(feature = "local")]
+mod archive;
+#[cfg(feature = "local")]
+mod sources;
+#[cfg(feature = "local")]
+pub use archive::{ArchiveEntry, MemoryArchive};
+pub use evidence::{
+    EvidenceState, LineRange, MemoryKind, MemoryMetadata, MemoryOrigin, MemoryScope, ProposalState,
+    SourceEvidence, TraceReference,
+};
+#[cfg(feature = "local")]
+pub use sources::WorkspaceSources;
 mod retrieval;
 #[cfg(any(feature = "client", feature = "local"))]
 mod secrets;

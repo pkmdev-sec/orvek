@@ -1385,6 +1385,32 @@ impl Host {
             result
         }
         .await;
+        if let Ok(run) = &result
+            && run.task.outcome.is_some()
+            && let Some(service) = &self.context_service
+        {
+            let workspace = self
+                .store
+                .lock()
+                .await
+                .load_session(session)
+                .map(|state| state.workspace().clone());
+            if let Ok(workspace) = workspace {
+                let post_run = service.post_run(
+                    workspace,
+                    crate::services::ContextRun {
+                        session,
+                        request,
+                        task: run.task.id,
+                    },
+                );
+                tokio::spawn(async move {
+                    if let Err(error) = post_run.await {
+                        eprintln!("post-run memory proposal failed: {error}");
+                    }
+                });
+            }
+        }
         if let Err(error) = self.deliver_completion_hooks(session).await {
             eprintln!("completion hook delivery record failed: {error}");
         }
@@ -1497,6 +1523,13 @@ impl Host {
         });
         let mut provider_retries = 0_u32;
         let mut context_session = self.open_context(session.workspace())?;
+        if let Some(context) = &mut context_session {
+            context.bind_run(crate::services::ContextRun {
+                session: session_id,
+                request,
+                task: task.id,
+            });
+        }
         let mut force_native_context = false;
         loop {
             self.install_finished_context_render(session_id).await?;

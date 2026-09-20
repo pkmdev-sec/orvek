@@ -71,10 +71,20 @@ pub struct SessionResponse {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScanRequest {
+    /// None retains legacy all-scope scanning. Some filters before ranking.
+    #[serde(default)]
+    pub scope: Option<ScanScope>,
     /// Search text, bounded by [`crate::MemoryLimits::query_bytes`].
     pub query: String,
     /// Maximum candidates requested from the server.
     pub limit: usize,
+}
+
+/// Global and legacy records plus this repository, when present.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScanScope {
+    pub repository: Option<String>,
 }
 
 /// Response to [`ScanRequest`].
@@ -114,6 +124,9 @@ pub struct ListResponse {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PutRequest {
+    /// Scope and evidence atomically stored with content.
+    #[serde(default)]
+    pub metadata: crate::MemoryMetadata,
     /// New record content.
     pub content: String,
     /// Current key of the record to replace, or `None` to insert.

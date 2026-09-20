@@ -6,11 +6,13 @@ source and has no crates.io release.
 | API | Purpose |
 | --- | --- |
 | `MemoryStore` | Async operations with version checks and storage limits. |
-| `LocalMemoryStore` | Local SQLite storage using schema v1. |
+| `LocalMemoryStore` | Local SQLite storage using schema v2 with legacy migration. |
 | `SelectedMemoryStore` | Select one local or remote backend per runtime. |
 | `RemoteMemoryClient`, `server::MemoryServer` | Authenticated HTTP operations with author namespaces. |
 | `MemorySession`, `MemoryPermission` | Provider-neutral operations and host-supplied access. |
-| `MemoryTool`, `MutationAuthorizer` | Agent scan, read, put, and delete with application-controlled write access. |
+| `MemoryMetadata`, `WorkspaceSources` | Typed scope, provenance, and cited-source freshness (not truth certification). |
+| `MemoryArchive` | Portable manifest and readable records, with atomic validated import. |
+| `MemoryTool`, `MutationAuthorizer` | Agent scan, read, put, lesson proposals, and delete with application-controlled write access. |
 
 Default features are `client`, `local`, `native-server`, and `tool`. For a server without native
 client or SQLite dependencies, disable default features and enable `server`.

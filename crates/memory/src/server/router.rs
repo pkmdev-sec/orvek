@@ -168,7 +168,16 @@ async fn scan<S: MemoryStore>(
     match run_store(
         operation,
         counts,
-        store.scan(&request.query, request.limit),
+        async {
+            match &request.scope {
+                Some(scope) => {
+                    store
+                        .scan_scoped(&request.query, request.limit, scope.repository.as_deref())
+                        .await
+                }
+                None => store.scan(&request.query, request.limit).await,
+            }
+        },
         |scan| OperationCounts::candidates(scan.candidates.len()),
     )
     .await
@@ -284,7 +293,7 @@ async fn put<S: MemoryStore>(
     match run_store(
         operation,
         counts,
-        store.put(&request.content, request.replacement),
+        store.put_with_metadata(&request.content, &request.metadata, request.replacement),
         |_| OperationCounts::records(1),
     )
     .await
@@ -681,7 +690,9 @@ impl From<MemoryError> for ApiError {
             return Self::unavailable();
         }
         match error {
-            MemoryError::EmptyContent => Self::bad_request(),
+            MemoryError::InvalidMetadata
+            | MemoryError::MetadataUnsupported
+            | MemoryError::EmptyContent => Self::bad_request(),
             MemoryError::ContentTooLarge { .. } => Self::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 RemoteErrorCode::ContentTooLarge,

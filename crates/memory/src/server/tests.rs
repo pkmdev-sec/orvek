@@ -108,6 +108,7 @@ impl MemoryStore for TestMemoryStore {
                     && seen.insert(normalize_identity(&record.content))
             })
             .map(|record| MemoryCandidate {
+                metadata: Default::default(),
                 key: record.key,
                 preview: record.content,
                 score: 1.0,
@@ -135,6 +136,20 @@ impl MemoryStore for TestMemoryStore {
         })
     }
 
+    async fn scan_scoped(
+        &self,
+        query: &str,
+        limit: usize,
+        repository: Option<&str>,
+    ) -> Result<MemoryScan, MemoryError> {
+        let records = self
+            .list()
+            .await?
+            .into_iter()
+            .filter(|record| record.metadata.visible_in(repository))
+            .collect::<Vec<_>>();
+        Ok(MemoryScan::rank(query, &records, limit))
+    }
     async fn read(
         &self,
         ids: &[i64],
@@ -184,7 +199,17 @@ impl MemoryStore for TestMemoryStore {
         content: &str,
         replacement: Option<MemoryKey>,
     ) -> Result<MemoryRecord, MemoryError> {
-        let identity = normalize_identity(content);
+        self.put_with_metadata(content, &crate::MemoryMetadata::default(), replacement)
+            .await
+    }
+    async fn put_with_metadata(
+        &self,
+        content: &str,
+        metadata: &crate::MemoryMetadata,
+        replacement: Option<MemoryKey>,
+    ) -> Result<MemoryRecord, MemoryError> {
+        metadata.validate()?;
+        let identity = metadata.identity(content);
         if identity.is_empty() {
             return Err(MemoryError::EmptyContent);
         }
@@ -193,7 +218,7 @@ impl MemoryStore for TestMemoryStore {
         prune_expired(&mut state, now);
         if state.records.values().any(|record| {
             record.key.namespace.as_deref() == Some(&self.namespace)
-                && normalize_identity(&record.content) == identity
+                && record.metadata.identity(&record.content) == identity
                 && replacement
                     .as_ref()
                     .is_none_or(|key| key.id != record.key.id)
@@ -246,6 +271,7 @@ impl MemoryStore for TestMemoryStore {
             (id, 1, now)
         };
         let memory = MemoryRecord {
+            metadata: metadata.clone(),
             key: MemoryKey::remote(self.namespace.clone(), id, version),
             content: content.to_owned(),
             created_at_ms,
@@ -390,6 +416,7 @@ impl MemoryStore for TestMemoryStore {
 
 fn record(id: i64, version: u64, content: &str) -> MemoryRecord {
     MemoryRecord {
+        metadata: Default::default(),
         key: MemoryKey::local(id, version),
         content: content.to_owned(),
         created_at_ms: 10,
@@ -462,6 +489,7 @@ async fn put(app: &Router, namespace: &str, token: &str, content: &str) -> Memor
         token,
         namespace,
         &PutRequest {
+            metadata: Default::default(),
             content: content.to_owned(),
             replacement: None,
         },
@@ -535,6 +563,7 @@ async fn authentication_namespace_and_role_are_enforced() {
         READER_TOKEN,
         "reader",
         &PutRequest {
+            metadata: Default::default(),
             content: "reader cannot write".to_owned(),
             replacement: None,
         },
@@ -604,6 +633,7 @@ async fn scan_read_and_list_return_only_caller_visible_records() {
         ALICE_TOKEN,
         "alice",
         &ScanRequest {
+            scope: None,
             query: "concurrent sqlite".to_owned(),
             limit: 5,
         },
@@ -643,6 +673,7 @@ async fn put_replace_and_delete_are_server_authored() {
         ALICE_TOKEN,
         "alice",
         &PutRequest {
+            metadata: Default::default(),
             content: "replacement server-authored note".to_owned(),
             replacement: Some(inserted.key.clone()),
         },
@@ -709,6 +740,7 @@ async fn foreign_keys_cannot_be_mutated() {
         ALICE_TOKEN,
         "alice",
         &PutRequest {
+            metadata: Default::default(),
             content: "alice cannot replace bob".to_owned(),
             replacement: Some(bob.key.clone()),
         },
@@ -917,6 +949,7 @@ async fn body_and_request_bounds_are_content_free_client_errors() {
             ALICE_TOKEN,
             "alice",
             &ScanRequest {
+                scope: None,
                 query: "q".repeat(MemoryLimits::PRODUCTION.query_bytes + 1),
                 limit: 1,
             },
@@ -928,6 +961,7 @@ async fn body_and_request_bounds_are_content_free_client_errors() {
             ALICE_TOKEN,
             "alice",
             &PutRequest {
+                metadata: Default::default(),
                 content: "c".repeat(MemoryLimits::PRODUCTION.content_bytes + 1),
                 replacement: None,
             },
@@ -954,6 +988,7 @@ async fn body_and_request_bounds_are_content_free_client_errors() {
         ALICE_TOKEN,
         "alice",
         &ScanRequest {
+            scope: None,
             query: "bounded".to_owned(),
             limit: MemoryLimits::PRODUCTION.scan_results + 1,
         },
@@ -1010,6 +1045,7 @@ async fn body_and_request_bounds_are_content_free_client_errors() {
         ALICE_TOKEN,
         "alice",
         &PutRequest {
+            metadata: Default::default(),
             content: "duplicate response marker".to_owned(),
             replacement: None,
         },
@@ -1131,6 +1167,7 @@ async fn oversized_list() -> Json<ListResponse> {
 async fn unsafe_scan() -> Json<ScanResponse> {
     Json(ScanResponse {
         candidates: vec![MemoryCandidate {
+            metadata: Default::default(),
             key: MemoryKey::remote("alice".to_owned(), 1, 1),
             preview: "password=hunter2".to_owned(),
             score: 1.0,
@@ -1142,6 +1179,7 @@ async fn oversized_scan() -> Json<ScanResponse> {
     Json(ScanResponse {
         candidates: (1..=2)
             .map(|id| MemoryCandidate {
+                metadata: Default::default(),
                 key: MemoryKey::remote("alice".to_owned(), id, 1),
                 preview: format!("candidate {id}"),
                 score: 1.0,
@@ -1154,6 +1192,7 @@ async fn ambiguous_version_scan() -> Json<ScanResponse> {
     Json(ScanResponse {
         candidates: (1..=2)
             .map(|version| MemoryCandidate {
+                metadata: Default::default(),
                 key: MemoryKey::remote("alice".to_owned(), 1, version),
                 preview: format!("version {version}"),
                 score: 1.0,
@@ -1166,6 +1205,7 @@ async fn ascending_score_scan() -> Json<ScanResponse> {
     Json(ScanResponse {
         candidates: (1..=2)
             .map(|id| MemoryCandidate {
+                metadata: Default::default(),
                 key: MemoryKey::remote("alice".to_owned(), id, 1),
                 preview: format!("candidate {id}"),
                 score: id as f64,
@@ -1703,6 +1743,7 @@ impl MemoryStore for AsyncStore {
                 .unwrap()
                 .push((namespace.clone(), content.clone()));
             Ok(MemoryRecord {
+                metadata: Default::default(),
                 key: MemoryKey::remote(namespace, 41, 1),
                 content,
                 created_at_ms: 1,
@@ -1764,6 +1805,7 @@ async fn generic_async_store_implementors_plug_into_the_public_server() {
         ALICE_TOKEN,
         "bob",
         &PutRequest {
+            metadata: Default::default(),
             content: "must not bind".to_owned(),
             replacement: None,
         },
@@ -1784,6 +1826,7 @@ async fn generic_async_store_implementors_plug_into_the_public_server() {
             ALICE_TOKEN,
             "alice",
             &PutRequest {
+                metadata: Default::default(),
                 content: "native async custom store".to_owned(),
                 replacement: None,
             },
@@ -1850,4 +1893,89 @@ async fn router_limits_store_operations_to_64_in_flight() {
         assert_eq!(result.unwrap().status(), StatusCode::OK);
     }
     assert_eq!(gate.maximum_active.load(Ordering::SeqCst), 64);
+}
+
+#[tokio::test]
+async fn remote_metadata_scoped_scan_and_import_keep_original_provenance() {
+    use crate::{
+        MemoryKind, MemoryMetadata, MemoryOrigin, MemoryScope, SourceEvidence, TraceReference,
+    };
+    let (endpoint, task) = live_server(memory_app(vec![credential(
+        "alice",
+        RemoteRole::Writer,
+        ALICE_TOKEN,
+    )]))
+    .await;
+    let client = RemoteMemoryClient::new(
+        &endpoint,
+        "alice".into(),
+        RemoteToken::new(ALICE_TOKEN.into()).unwrap(),
+    )
+    .unwrap();
+    client.session().await.unwrap();
+    let metadata = MemoryMetadata {
+        scope: MemoryScope::Repository {
+            identity: "repository-one".into(),
+        },
+        kind: MemoryKind::CodeClaim,
+        origin: MemoryOrigin::Model,
+        evidence: vec![SourceEvidence::Artifact {
+            digest: "a".repeat(64),
+            source: "test-artifact".into(),
+        }],
+        producing_traces: vec![TraceReference {
+            session: "s".into(),
+            request: "r".into(),
+            task: "t".into(),
+        }],
+        ..Default::default()
+    };
+    let original = client
+        .put_with_metadata("portable remote claim", &metadata, None)
+        .await
+        .unwrap();
+    assert_eq!(original.metadata, metadata);
+    assert_eq!(
+        client
+            .scan_scoped("portable", 5, Some("repository-one"))
+            .await
+            .unwrap()
+            .candidates[0]
+            .metadata,
+        metadata
+    );
+    assert!(
+        client
+            .scan_scoped("portable", 5, Some("repository-two"))
+            .await
+            .unwrap()
+            .abstained
+    );
+    let replacement = client
+        .put_with_metadata(
+            "corrected remote claim",
+            &metadata,
+            Some(original.key.clone()),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        client
+            .put_with_metadata("stale write", &metadata, Some(original.key))
+            .await,
+        Err(MemoryError::Conflict)
+    ));
+    let records = client.export_all(None).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let local = crate::LocalMemoryStore::new(dir.path().join("memory.db"));
+    local.merge_remote_export(records).await.unwrap();
+    let imported = local.list().await.unwrap().remove(0);
+    assert_eq!(imported.metadata.evidence, metadata.evidence);
+    assert_eq!(imported.metadata.origin, metadata.origin);
+    assert_eq!(
+        imported.metadata.producing_traces,
+        metadata.producing_traces
+    );
+    assert_eq!(imported.metadata.imported_from, vec![replacement.key]);
+    task.abort();
 }

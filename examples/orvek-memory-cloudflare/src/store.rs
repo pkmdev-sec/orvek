@@ -8,8 +8,7 @@
 mod row;
 
 use orvek_memory::{
-    MemoryError, MemoryKey, MemoryLimits, MemoryRecord, MemoryScan, MemoryStore,
-    normalize_identity,
+    MemoryError, MemoryKey, MemoryLimits, MemoryMetadata, MemoryRecord, MemoryScan, MemoryStore,
     server::protocol::{self, ExportCursor, SyncReport},
 };
 use row::{CapacityRow, CorpusRow, DecodeResult, ReplaceRow, SyncRow, VersionRow};
@@ -22,7 +21,11 @@ use worker::{
     send::SendFuture,
 };
 
-const RECORD_COLUMNS: &str = "memories.namespace AS namespace, CAST(memories.id AS TEXT) AS id, CAST(memories.version AS TEXT) AS version, memories.content AS content, CAST(memories.created_at_ms AS TEXT) AS created_at_ms, CAST(memories.updated_at_ms AS TEXT) AS updated_at_ms, CAST(memories.last_scanned_at_ms AS TEXT) AS last_scanned_at_ms, CAST(memories.scan_count AS TEXT) AS scan_count, CAST(memories.last_used_at_ms AS TEXT) AS last_used_at_ms, CAST(memories.use_count AS TEXT) AS use_count, CAST(memories.probation_until_ms AS TEXT) AS probation_until_ms";
+const SYNC_MEMORY_SQL: &str = "INSERT INTO memories (namespace, metadata, id, version, content, identity, created_at_ms, updated_at_ms, last_scanned_at_ms, scan_count, last_used_at_ms, use_count, probation_until_ms) SELECT ?, value ->> '$.metadata', CAST(value ->> '$.id' AS INTEGER), CAST(value ->> '$.version' AS INTEGER), value ->> '$.content', value ->> '$.identity', CAST(value ->> '$.created_at_ms' AS INTEGER), CAST(value ->> '$.updated_at_ms' AS INTEGER), CAST(value ->> '$.last_scanned_at_ms' AS INTEGER), CAST(value ->> '$.scan_count' AS INTEGER), CAST(value ->> '$.last_used_at_ms' AS INTEGER), CAST(value ->> '$.use_count' AS INTEGER), CAST(value ->> '$.probation_until_ms' AS INTEGER) FROM json_each(?)";
+const INSERT_MEMORY_SQL: &str = "INSERT INTO memories (namespace, id, version, metadata, content, identity, created_at_ms, updated_at_ms, probation_until_ms) SELECT namespace, next_id, 1, ?, ?, ?, CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER) FROM memory_namespaces WHERE namespace = ? AND (SELECT COUNT(*) FROM memories WHERE namespace = ?) < ? AND (SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) FROM memories WHERE namespace = ?) + ? <= ? AND NOT EXISTS (SELECT 1 FROM memories WHERE namespace = ? AND identity = ?)";
+const REPLACE_MEMORY_SQL: &str = "UPDATE memories SET version = CAST(? AS INTEGER), metadata = ?, content = ?, identity = ?, updated_at_ms = CAST(? AS INTEGER), last_scanned_at_ms = NULL, scan_count = 0, last_used_at_ms = NULL, use_count = 0, probation_until_ms = CAST(? AS INTEGER) WHERE namespace = ? AND id = CAST(? AS INTEGER) AND version = CAST(? AS INTEGER) AND NOT EXISTS (SELECT 1 FROM memories other WHERE other.namespace = ? AND other.identity = ? AND other.id != CAST(? AS INTEGER)) AND (SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) FROM memories WHERE namespace = ?) - length(CAST(memories.content AS BLOB)) + ? <= ?";
+
+const RECORD_COLUMNS: &str = "memories.metadata AS metadata, memories.namespace AS namespace, CAST(memories.id AS TEXT) AS id, CAST(memories.version AS TEXT) AS version, memories.content AS content, CAST(memories.created_at_ms AS TEXT) AS created_at_ms, CAST(memories.updated_at_ms AS TEXT) AS updated_at_ms, CAST(memories.last_scanned_at_ms AS TEXT) AS last_scanned_at_ms, CAST(memories.scan_count AS TEXT) AS scan_count, CAST(memories.last_used_at_ms AS TEXT) AS last_used_at_ms, CAST(memories.use_count AS TEXT) AS use_count, CAST(memories.probation_until_ms AS TEXT) AS probation_until_ms";
 const PRUNE_SQL: &str =
     "DELETE FROM memories WHERE probation_until_ms <= CAST(? AS INTEGER) AND use_count = 0";
 const VISIBLE_RECORD_SQL: &str = "(memories.probation_until_ms IS NULL OR memories.probation_until_ms > CAST(? AS INTEGER) OR memories.use_count != 0)";
@@ -43,6 +46,68 @@ pub(crate) struct CloudflareMemoryStore {
 }
 
 impl CloudflareMemoryStore {
+    fn scan_filtered(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: Option<protocol::ScanScope>,
+    ) -> impl Future<Output = Result<MemoryScan, MemoryError>> + Send {
+        let store = self.clone();
+        let query = query.to_owned();
+        SendFuture::new(async move {
+            let limits = MemoryLimits::PRODUCTION;
+            if query.len() > limits.query_bytes {
+                return Err(MemoryError::QueryTooLarge {
+                    maximum_bytes: limits.query_bytes,
+                });
+            }
+            let now = current_time_ms().to_string();
+            let scan_budget = store.scan_budget;
+            let corpus_size_sql = format!(
+                "SELECT COUNT(*) AS record_count, COALESCE(SUM(length(CAST(content AS BLOB))), 0) AS content_bytes FROM memories WHERE {VISIBLE_RECORD_SQL}"
+            );
+            let corpus_sql = format!(
+                "SELECT {RECORD_COLUMNS} FROM memories WHERE {VISIBLE_RECORD_SQL} AND (SELECT COUNT(*) FROM memories WHERE {VISIBLE_RECORD_SQL}) <= {} AND (SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) FROM memories WHERE {VISIBLE_RECORD_SQL}) <= {} ORDER BY namespace, id",
+                scan_budget.records, scan_budget.content_bytes
+            );
+            let statements = vec![
+                store.statement(corpus_size_sql, &[D1Type::Text(&now)])?,
+                store.statement(
+                    corpus_sql,
+                    &[D1Type::Text(&now), D1Type::Text(&now), D1Type::Text(&now)],
+                )?,
+            ];
+            let results = store.batch(statements).await?;
+            let corpus = results[0].one::<CorpusRow>()?;
+            if corpus.record_count > scan_budget.records
+                || corpus.content_bytes > scan_budget.content_bytes
+            {
+                return Err(MemoryError::StorageCapacity);
+            }
+            let mut records = results[1].records()?;
+            if let Some(scope) = scope {
+                records.retain(|record| record.metadata.visible_in(scope.repository.as_deref()));
+            }
+            let scan = MemoryScan::rank(&query, &records, limit.min(limits.scan_results));
+            let mut updates = Vec::with_capacity(scan.candidates.len() + 1);
+            updates.push(store.statement(PRUNE_SQL, &[D1Type::Text(&now)])?);
+            for candidate in &scan.candidates {
+                let namespace = candidate.key.namespace.as_deref().unwrap_or_default();
+                updates.push(store.statement(
+                    "UPDATE memories SET last_scanned_at_ms = CAST(? AS INTEGER), scan_count = CASE WHEN scan_count < 9223372036854775807 THEN scan_count + 1 ELSE scan_count END WHERE namespace = ? AND id = CAST(? AS INTEGER) AND version = CAST(? AS INTEGER)",
+                    &[
+                        D1Type::Text(&now),
+                        D1Type::Text(namespace),
+                        D1Type::Text(&candidate.key.id.to_string()),
+                        D1Type::Text(&candidate.key.version.to_string()),
+                    ],
+                )?);
+            }
+            store.batch(updates).await?;
+            Ok(scan)
+        })
+    }
+
     /// Binds a request-scoped D1 session to one writer namespace; reads remain shared.
     pub(crate) fn new(
         session: Arc<D1DatabaseSession>,
@@ -94,57 +159,21 @@ impl MemoryStore for CloudflareMemoryStore {
         query: &str,
         limit: usize,
     ) -> impl Future<Output = Result<MemoryScan, MemoryError>> + Send {
-        let store = self.clone();
-        let query = query.to_owned();
-        SendFuture::new(async move {
-            let limits = MemoryLimits::PRODUCTION;
-            if query.len() > limits.query_bytes {
-                return Err(MemoryError::QueryTooLarge {
-                    maximum_bytes: limits.query_bytes,
-                });
-            }
-            let now = current_time_ms().to_string();
-            let scan_budget = store.scan_budget;
-            let corpus_size_sql = format!(
-                "SELECT COUNT(*) AS record_count, COALESCE(SUM(length(CAST(content AS BLOB))), 0) AS content_bytes FROM memories WHERE {VISIBLE_RECORD_SQL}"
-            );
-            let corpus_sql = format!(
-                "SELECT {RECORD_COLUMNS} FROM memories WHERE {VISIBLE_RECORD_SQL} AND (SELECT COUNT(*) FROM memories WHERE {VISIBLE_RECORD_SQL}) <= {} AND (SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) FROM memories WHERE {VISIBLE_RECORD_SQL}) <= {} ORDER BY namespace, id",
-                scan_budget.records, scan_budget.content_bytes
-            );
-            let statements = vec![
-                store.statement(corpus_size_sql, &[D1Type::Text(&now)])?,
-                store.statement(
-                    corpus_sql,
-                    &[D1Type::Text(&now), D1Type::Text(&now), D1Type::Text(&now)],
-                )?,
-            ];
-            let results = store.batch(statements).await?;
-            let corpus = results[0].one::<CorpusRow>()?;
-            if corpus.record_count > scan_budget.records
-                || corpus.content_bytes > scan_budget.content_bytes
-            {
-                return Err(MemoryError::StorageCapacity);
-            }
-            let records = results[1].records()?;
-            let scan = MemoryScan::rank(&query, &records, limit.min(limits.scan_results));
-            let mut updates = Vec::with_capacity(scan.candidates.len() + 1);
-            updates.push(store.statement(PRUNE_SQL, &[D1Type::Text(&now)])?);
-            for candidate in &scan.candidates {
-                let namespace = candidate.key.namespace.as_deref().unwrap_or_default();
-                updates.push(store.statement(
-                    "UPDATE memories SET last_scanned_at_ms = CAST(? AS INTEGER), scan_count = CASE WHEN scan_count < 9223372036854775807 THEN scan_count + 1 ELSE scan_count END WHERE namespace = ? AND id = CAST(? AS INTEGER) AND version = CAST(? AS INTEGER)",
-                    &[
-                        D1Type::Text(&now),
-                        D1Type::Text(namespace),
-                        D1Type::Text(&candidate.key.id.to_string()),
-                        D1Type::Text(&candidate.key.version.to_string()),
-                    ],
-                )?);
-            }
-            store.batch(updates).await?;
-            Ok(scan)
-        })
+        self.scan_filtered(query, limit, None)
+    }
+    fn scan_scoped(
+        &self,
+        query: &str,
+        limit: usize,
+        repository: Option<&str>,
+    ) -> impl Future<Output = Result<MemoryScan, MemoryError>> + Send {
+        self.scan_filtered(
+            query,
+            limit,
+            Some(protocol::ScanScope {
+                repository: repository.map(str::to_owned),
+            }),
+        )
     }
 
     fn read(
@@ -197,10 +226,24 @@ impl MemoryStore for CloudflareMemoryStore {
         content: &str,
         replacement: Option<MemoryKey>,
     ) -> impl Future<Output = Result<MemoryRecord, MemoryError>> + Send {
+        async move {
+            self.put_with_metadata(content, &MemoryMetadata::default(), replacement)
+                .await
+        }
+    }
+
+    fn put_with_metadata(
+        &self,
+        content: &str,
+        metadata: &MemoryMetadata,
+        replacement: Option<MemoryKey>,
+    ) -> impl Future<Output = Result<MemoryRecord, MemoryError>> + Send {
+        let metadata = metadata.clone();
         let store = self.clone();
         let content = content.to_owned();
         SendFuture::new(async move {
             validate_content(&content)?;
+            metadata.validate()?;
             if replacement
                 .as_ref()
                 .is_some_and(|key| key.namespace.as_deref() != Some(store.namespace.as_ref()))
@@ -208,8 +251,8 @@ impl MemoryStore for CloudflareMemoryStore {
                 return Err(MemoryError::RemoteReadOnly);
             }
             match replacement {
-                Some(key) => store.replace(content, key).await,
-                None => store.insert(content).await,
+                Some(key) => store.replace(content, metadata, key).await,
+                None => store.insert(content, metadata).await,
             }
         })
     }
@@ -254,7 +297,7 @@ impl MemoryStore for CloudflareMemoryStore {
                 format!("SELECT {RECORD_COLUMNS} FROM memories WHERE namespace = ? ORDER BY id");
             // Replacing the namespace as a set permits identities to move between stable IDs.
             let delete_sql = "DELETE FROM memories WHERE namespace = ?";
-            let insert_sql = "INSERT INTO memories (namespace, id, version, content, identity, created_at_ms, updated_at_ms, last_scanned_at_ms, scan_count, last_used_at_ms, use_count, probation_until_ms) SELECT ?, CAST(value ->> '$.id' AS INTEGER), CAST(value ->> '$.version' AS INTEGER), value ->> '$.content', value ->> '$.identity', CAST(value ->> '$.created_at_ms' AS INTEGER), CAST(value ->> '$.updated_at_ms' AS INTEGER), CAST(value ->> '$.last_scanned_at_ms' AS INTEGER), CAST(value ->> '$.scan_count' AS INTEGER), CAST(value ->> '$.last_used_at_ms' AS INTEGER), CAST(value ->> '$.use_count' AS INTEGER), CAST(value ->> '$.probation_until_ms' AS INTEGER) FROM json_each(?)";
+            let insert_sql = SYNC_MEMORY_SQL;
             let next_sql = "UPDATE memory_namespaces SET next_id = MAX(next_id, COALESCE((SELECT MAX(CAST(value ->> '$.id' AS INTEGER)) + 1 FROM json_each(?)), 1)) WHERE namespace = ?";
             let results = store.batch(vec![
                 store.statement(PRUNE_SQL, &[D1Type::Text(&now)])?,
@@ -326,14 +369,19 @@ impl MemoryStore for CloudflareMemoryStore {
 
 impl CloudflareMemoryStore {
     /// Inserts one record while atomically enforcing namespace capacity and deduplication.
-    async fn insert(&self, content: String) -> Result<MemoryRecord, MemoryError> {
+    async fn insert(
+        &self,
+        content: String,
+        metadata: MemoryMetadata,
+    ) -> Result<MemoryRecord, MemoryError> {
         let limits = MemoryLimits::PRODUCTION;
         let now_ms = current_time_ms();
         let now = now_ms.to_string();
-        let identity = normalize_identity(&content);
+        let identity = metadata.identity(&content);
+        let metadata_json = serde_json::to_string(&metadata).map_err(MessageError::backend)?;
         let namespace = self.namespace.as_ref();
         let diagnostics = "SELECT EXISTS(SELECT 1 FROM memories WHERE namespace = ? AND identity = ?) AS duplicate, (SELECT COUNT(*) FROM memories WHERE namespace = ?) AS record_count, (SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) FROM memories WHERE namespace = ?) AS content_bytes";
-        let insert_sql = "INSERT INTO memories (namespace, id, version, content, identity, created_at_ms, updated_at_ms, probation_until_ms) SELECT namespace, next_id, 1, ?, ?, CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER) FROM memory_namespaces WHERE namespace = ? AND (SELECT COUNT(*) FROM memories WHERE namespace = ?) < ? AND (SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) FROM memories WHERE namespace = ?) + ? <= ? AND NOT EXISTS (SELECT 1 FROM memories WHERE namespace = ? AND identity = ?)";
+        let insert_sql = INSERT_MEMORY_SQL;
         let probation = now_ms
             .saturating_add(limits.probation_duration_ms)
             .to_string();
@@ -360,6 +408,7 @@ impl CloudflareMemoryStore {
             self.statement(
                 insert_sql,
                 &[
+                    D1Type::Text(&metadata_json),
                     D1Type::Text(&content),
                     D1Type::Text(&identity),
                     D1Type::Text(&now),
@@ -403,7 +452,12 @@ impl CloudflareMemoryStore {
     }
 
     /// Replaces one record with optimistic concurrency and namespace capacity checks.
-    async fn replace(&self, content: String, key: MemoryKey) -> Result<MemoryRecord, MemoryError> {
+    async fn replace(
+        &self,
+        content: String,
+        metadata: MemoryMetadata,
+        key: MemoryKey,
+    ) -> Result<MemoryRecord, MemoryError> {
         let limits = MemoryLimits::PRODUCTION;
         if key.version >= i64::MAX as u64 {
             return Err(MemoryError::Conflict);
@@ -413,7 +467,8 @@ impl CloudflareMemoryStore {
         let probation = now_ms
             .saturating_add(limits.probation_duration_ms)
             .to_string();
-        let identity = normalize_identity(&content);
+        let identity = metadata.identity(&content);
+        let metadata_json = serde_json::to_string(&metadata).map_err(MessageError::backend)?;
         let namespace = self.namespace.as_ref();
         let id = key.id.to_string();
         let old_version = key.version.to_string();
@@ -423,7 +478,7 @@ impl CloudflareMemoryStore {
             .ok_or(MemoryError::Conflict)?
             .to_string();
         let diagnostics = "SELECT EXISTS(SELECT 1 FROM memories WHERE namespace = ? AND identity = ? AND id != CAST(? AS INTEGER)) AS duplicate, CAST((SELECT version FROM memories WHERE namespace = ? AND id = CAST(? AS INTEGER)) AS TEXT) AS version, (SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) FROM memories WHERE namespace = ?) AS content_bytes, (SELECT length(CAST(content AS BLOB)) FROM memories WHERE namespace = ? AND id = CAST(? AS INTEGER)) AS replaced_bytes";
-        let update = "UPDATE memories SET version = CAST(? AS INTEGER), content = ?, identity = ?, updated_at_ms = CAST(? AS INTEGER), last_scanned_at_ms = NULL, scan_count = 0, last_used_at_ms = NULL, use_count = 0, probation_until_ms = CAST(? AS INTEGER) WHERE namespace = ? AND id = CAST(? AS INTEGER) AND version = CAST(? AS INTEGER) AND NOT EXISTS (SELECT 1 FROM memories other WHERE other.namespace = ? AND other.identity = ? AND other.id != CAST(? AS INTEGER)) AND (SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) FROM memories WHERE namespace = ?) - length(CAST(memories.content AS BLOB)) + ? <= ?";
+        let update = REPLACE_MEMORY_SQL;
         let content_len = content.len().to_string();
         let byte_limit = limits.total_content_bytes.to_string();
         let select_sql = format!(
@@ -449,6 +504,7 @@ impl CloudflareMemoryStore {
                     update,
                     &[
                         D1Type::Text(&new_version),
+                        D1Type::Text(&metadata_json),
                         D1Type::Text(&content),
                         D1Type::Text(&identity),
                         D1Type::Text(&now),
@@ -612,7 +668,8 @@ fn validate_snapshot(memories: &[MemoryRecord]) -> Result<(), MemoryError> {
             return Err(MemoryError::Conflict);
         }
         validate_content(&memory.content)?;
-        if !identities.insert(normalize_identity(&memory.content)) {
+        memory.metadata.validate()?;
+        if !identities.insert(memory.metadata.identity(&memory.content)) {
             return Err(MemoryError::Duplicate);
         }
         bytes = bytes
@@ -654,9 +711,10 @@ mod tests {
                     scan_count INTEGER NOT NULL,
                     last_used_at_ms INTEGER,
                     use_count INTEGER NOT NULL,
-                    probation_until_ms INTEGER
+                    probation_until_ms INTEGER,
+                    metadata TEXT NOT NULL DEFAULT '{}'
                 );
-                INSERT INTO memories VALUES ('ben', 1, 1, 'fixture', 1, 1, NULL, 0, NULL, 0, NULL);",
+                INSERT INTO memories VALUES ('ben', 1, 1, 'fixture', 1, 1, NULL, 0, NULL, 0, NULL, '{}');",
             )
             .unwrap();
         let sql = format!(
@@ -671,5 +729,104 @@ mod tests {
             .unwrap();
 
         assert_eq!(content, "fixture");
+    }
+    #[test]
+    fn metadata_migration_insert_replace_and_snapshot_use_the_same_sql_contract() {
+        use super::{INSERT_MEMORY_SQL, REPLACE_MEMORY_SQL, SYNC_MEMORY_SQL};
+        let database = Connection::open_in_memory().unwrap();
+        database
+            .execute_batch(include_str!("../migrations/0001_initial.sql"))
+            .unwrap();
+        database
+            .execute_batch(include_str!("../migrations/0002_evidence.sql"))
+            .unwrap();
+        database
+            .execute(
+                "INSERT INTO memory_namespaces(namespace) VALUES ('alice')",
+                [],
+            )
+            .unwrap();
+        let metadata = r#"{"scope":{"type":"global"},"origin":{"type":"model"}}"#;
+        database
+            .execute(
+                INSERT_MEMORY_SQL,
+                params![
+                    metadata,
+                    "claim",
+                    "global:claim",
+                    "1",
+                    "1",
+                    "100000",
+                    "alice",
+                    "alice",
+                    "512",
+                    "alice",
+                    "5",
+                    "262144",
+                    "alice",
+                    "global:claim"
+                ],
+            )
+            .unwrap();
+        let read = || {
+            database.query_row("SELECT metadata, content, version FROM memories WHERE namespace='alice' AND id=1",[],|row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,i64>(2)?))).unwrap()
+        };
+        assert_eq!(read(), (metadata.into(), "claim".into(), 1));
+        let corrected = r#"{"scope":{"type":"global"},"origin":{"type":"user"}}"#;
+        database
+            .execute(
+                REPLACE_MEMORY_SQL,
+                params![
+                    "2",
+                    corrected,
+                    "corrected claim",
+                    "global:corrected claim",
+                    "2",
+                    "100000",
+                    "alice",
+                    "1",
+                    "1",
+                    "alice",
+                    "global:corrected claim",
+                    "1",
+                    "alice",
+                    "15",
+                    "262144"
+                ],
+            )
+            .unwrap();
+        assert_eq!(read(), (corrected.into(), "corrected claim".into(), 2));
+        assert_eq!(
+            database
+                .execute(
+                    REPLACE_MEMORY_SQL,
+                    params![
+                        "2",
+                        metadata,
+                        "stale",
+                        "global:stale",
+                        "3",
+                        "100000",
+                        "alice",
+                        "1",
+                        "1",
+                        "alice",
+                        "global:stale",
+                        "1",
+                        "alice",
+                        "5",
+                        "262144"
+                    ]
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(read(), (corrected.into(), "corrected claim".into(), 2));
+        let snapshot = serde_json::json!([{"id":"1","version":"7","content":"transferred claim","identity":"global:transferred claim","metadata":metadata,"created_at_ms":"1","updated_at_ms":"3","last_scanned_at_ms":null,"scan_count":"0","last_used_at_ms":null,"use_count":"0","probation_until_ms":null}]);
+        database.execute("DELETE FROM memories", []).unwrap();
+        database
+            .execute(SYNC_MEMORY_SQL, params!["alice", snapshot.to_string()])
+            .unwrap();
+        assert_eq!(read(), (metadata.into(), "transferred claim".into(), 7));
     }
 }

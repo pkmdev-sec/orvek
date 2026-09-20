@@ -1137,3 +1137,113 @@ async fn trace_reexecution_uses_only_intent_and_fresh_admitted_identities() {
             .all(|request| !request.to_string().contains(&first.task.id.to_string()))
     );
 }
+
+#[tokio::test]
+async fn post_run_context_work_never_holds_task_settlement_or_changes_its_outcome() {
+    use futures_util::future::BoxFuture;
+    use orvek_harness::services::{
+        ContextAccess, ContextManifest, ContextRun, ContextService, ContextSession,
+    };
+    use std::{io, path::Path};
+    use tokio::sync::Notify;
+    struct Service {
+        started: Arc<Notify>,
+        release: Arc<Notify>,
+        failed: Arc<Notify>,
+    }
+    struct Session;
+    impl ContextSession for Session {
+        fn snapshot(&mut self) -> BoxFuture<'_, io::Result<ContextManifest>> {
+            Box::pin(async {
+                Ok(ContextManifest {
+                    version: 1,
+                    skills: String::new(),
+                    memory: None,
+                    diagnostics: Vec::new(),
+                })
+            })
+        }
+        fn definitions(&self, _: ContextAccess) -> Vec<Value> {
+            Vec::new()
+        }
+        fn execute<'a>(
+            &'a mut self,
+            _: &'a str,
+            _: Value,
+            _: ContextAccess,
+        ) -> BoxFuture<'a, io::Result<Value>> {
+            Box::pin(async { Err(io::Error::other("no context tools admitted")) })
+        }
+    }
+    impl ContextService for Service {
+        fn open(&self, _: &Path) -> io::Result<Box<dyn ContextSession>> {
+            Ok(Box::new(Session))
+        }
+        fn post_run(&self, _: PathBuf, _: ContextRun) -> BoxFuture<'static, io::Result<()>> {
+            let started = self.started.clone();
+            let release = self.release.clone();
+            let failed = self.failed.clone();
+            Box::pin(async move {
+                started.notify_one();
+                release.notified().await;
+                failed.notify_one();
+                Err(io::Error::other("injected proposal storage failure"))
+            })
+        }
+    }
+    let fixture = Fixture::new();
+    let (endpoint, server) =
+        provider(vec![vec![final_message("one")], vec![final_message("two")]]).await;
+    let started = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let failed = Arc::new(Notify::new());
+    let host = Arc::new(
+        Host::open_native(
+            &fixture.state_root(),
+            client(&endpoint),
+            Digest::of(b"config"),
+        )
+        .unwrap()
+        .with_context_service(Arc::new(Service {
+            started: started.clone(),
+            release: release.clone(),
+            failed: failed.clone(),
+        })),
+    );
+    let session = fixture.admit_session(&host).await;
+    let mut tasks = Vec::new();
+    for text in ["first task", "next task while proposal consumer is stalled"] {
+        let request = Uuid::new_v4();
+        host.submit(
+            session,
+            request,
+            vec![json!({"type":"input_text","text":text})],
+            new_task_intent(),
+        )
+        .await
+        .unwrap();
+        let run = timeout(
+            Duration::from_secs(5),
+            wait_submission(&host, session, request),
+        )
+        .await
+        .unwrap();
+        assert_eq!(run.task.outcome, Some(Outcome::FinishedUnverified));
+        assert!(run.task.certificates.is_empty());
+        timeout(Duration::from_secs(5), started.notified())
+            .await
+            .unwrap();
+        tasks.push(run.task.id);
+    }
+    release.notify_waiters();
+    timeout(Duration::from_secs(5), failed.notified())
+        .await
+        .unwrap();
+    for id in tasks {
+        assert_eq!(
+            host.task(id).await.unwrap().outcome,
+            Some(Outcome::FinishedUnverified)
+        );
+    }
+    server.await.unwrap();
+}

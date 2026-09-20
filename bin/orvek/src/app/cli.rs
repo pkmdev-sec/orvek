@@ -229,6 +229,10 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum MemoryCommand {
+    /// Export the local store as a portable manifest and readable records.
+    Export { directory: PathBuf },
+    /// Import a portable archive into local storage, preserving provenance.
+    Import { directory: PathBuf },
     /// Replace the remote personal namespace with the complete local corpus.
     Push {
         /// Report the local corpus that would be pushed without contacting the remote.
@@ -551,6 +555,29 @@ impl Command {
 impl MemoryCommand {
     async fn run(self, config: &Config) -> Result<()> {
         match self {
+            Self::Export { directory } => {
+                let store = orvek_memory::LocalMemoryStore::new(config.memory_path());
+                let manifest = orvek_memory::MemoryArchive::export(&store, &directory)
+                    .await
+                    .map_err(crate::app::error::MemoryTransferError::Archive)?;
+                println!(
+                    "Exported {} records to {}",
+                    manifest.records.len(),
+                    directory.display()
+                );
+                Ok(())
+            }
+            Self::Import { directory } => {
+                let store = orvek_memory::LocalMemoryStore::new(config.memory_path());
+                let report = orvek_memory::MemoryArchive::import(&directory, &store)
+                    .await
+                    .map_err(crate::app::error::MemoryTransferError::Archive)?;
+                println!(
+                    "Imported {} records; skipped {}",
+                    report.inserted, report.skipped
+                );
+                Ok(())
+            }
             Self::Push { dry_run } => push_memories(config, dry_run).await,
             Self::Pull { all, namespace } => pull_memories(config, all, namespace).await,
         }
@@ -841,6 +868,7 @@ mod tests {
     #[test]
     fn replication_snapshot_includes_memory_telemetry() {
         let original = orvek_memory::MemoryRecord {
+            metadata: Default::default(),
             key: orvek_memory::MemoryKey::local(1, 1),
             content: "telemetry".to_owned(),
             created_at_ms: 1,

@@ -1,6 +1,10 @@
 //! Explicit agent access to the global memory store.
 
 use super::{MemoryAccess, MemoryError, MemoryKey, MemoryRecord, MemoryStore, SelectedMemoryStore};
+use crate::{
+    EvidenceState, LineRange, MemoryKind, MemoryMetadata, MemoryOrigin, MemoryScope, ProposalState,
+    TraceReference, WorkspaceSources,
+};
 use nanocodex::{
     Tool,
     tools::contract::{
@@ -32,10 +36,49 @@ enum MemoryOperation {
         content: MemoryContent,
         #[serde(default)]
         replace: Option<MemoryKey>,
+        #[serde(default)]
+        metadata: Option<MemoryDraft>,
+    },
+    ProposeLesson {
+        content: MemoryContent,
+        metadata: MemoryDraft,
+        behavior_test: SourceRequest,
     },
     Delete {
         key: MemoryKey,
     },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceRequest {
+    path: String,
+    #[serde(default)]
+    range: Option<LineRange>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DraftKind {
+    Preference,
+    Procedure,
+    CodeClaim,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DraftScope {
+    Global,
+    Repository,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MemoryDraft {
+    scope: DraftScope,
+    kind: DraftKind,
+    #[serde(default)]
+    sources: Vec<SourceRequest>,
 }
 
 /// Zeroizes Orvek's typed copy even when object deserialization later rejects the call.
@@ -68,13 +111,15 @@ struct ToolCandidate {
     key: MemoryKey,
     preview: String,
     score: f64,
+    metadata: MemoryMetadata,
+    freshness: EvidenceState,
 }
 
 #[derive(Serialize)]
 struct ReadOutput {
     operation: &'static str,
     backend: MemoryAccess,
-    memories: Vec<MemoryRecord>,
+    memories: Vec<Value>,
 }
 
 #[derive(Serialize)]
@@ -126,6 +171,8 @@ pub enum MemoryOperationError {
 pub struct MemorySession {
     store: SelectedMemoryStore,
     searched: AtomicBool,
+    sources: Option<WorkspaceSources>,
+    trace: Option<TraceReference>,
 }
 
 impl MemorySession {
@@ -134,7 +181,87 @@ impl MemorySession {
         Self {
             store,
             searched: AtomicBool::new(false),
+            sources: None,
+            trace: None,
         }
+    }
+
+    /// Installs the host workspace source boundary; non-repositories remain explicit unknowns.
+    pub fn with_workspace(mut self, workspace: &std::path::Path) -> Self {
+        self.sources = WorkspaceSources::open(workspace).ok();
+        self
+    }
+
+    /// Producing run identity comes from the host, not model arguments.
+    pub fn bind_trace(&mut self, trace: TraceReference) {
+        self.trace = Some(trace);
+    }
+
+    fn freshness(&self, metadata: &MemoryMetadata) -> EvidenceState {
+        if metadata.evidence.is_empty()
+            && !matches!(metadata.kind, MemoryKind::LessonProposal { .. })
+        {
+            return EvidenceState::Unverified;
+        }
+        self.sources.as_ref().map_or_else(
+            || EvidenceState::Unavailable {
+                reason: "repository is not mounted".into(),
+            },
+            |sources| sources.assess(metadata),
+        )
+    }
+
+    fn metadata(&self, draft: Option<MemoryDraft>) -> Result<MemoryMetadata, MemoryOperationError> {
+        let mut metadata = MemoryMetadata {
+            origin: MemoryOrigin::Model,
+            ..MemoryMetadata::default()
+        };
+        if let Some(trace) = &self.trace {
+            metadata.producing_traces.push(trace.clone());
+        }
+        if let Some(draft) = draft {
+            metadata.scope = match draft.scope {
+                DraftScope::Global => MemoryScope::Global,
+                DraftScope::Repository => MemoryScope::Repository {
+                    identity: self
+                        .sources
+                        .as_ref()
+                        .ok_or(MemoryOperationError::Invalid(
+                            "repository identity is unavailable",
+                        ))?
+                        .repository()
+                        .into(),
+                },
+            };
+            metadata.kind = match draft.kind {
+                DraftKind::Preference => MemoryKind::Preference,
+                DraftKind::Procedure => MemoryKind::Procedure,
+                DraftKind::CodeClaim => MemoryKind::CodeClaim,
+            };
+            if draft.sources.len() > 16 {
+                return Err(MemoryOperationError::Invalid(
+                    "at most 16 sources are accepted",
+                ));
+            }
+            for request in draft.sources {
+                metadata.evidence.push(self.capture(request)?);
+            }
+        }
+        metadata.validate()?;
+        Ok(metadata)
+    }
+
+    fn capture(
+        &self,
+        request: SourceRequest,
+    ) -> Result<crate::SourceEvidence, MemoryOperationError> {
+        self.sources
+            .as_ref()
+            .ok_or(MemoryOperationError::Invalid(
+                "repository sources are unavailable",
+            ))?
+            .capture(&request.path, request.range)
+            .map_err(|_| MemoryOperationError::Invalid("evidence source is unavailable or invalid"))
     }
 
     /// Executes a closed operation shape. Permission comes from the host, never arguments.
@@ -147,7 +274,9 @@ impl MemorySession {
             .map_err(|_| MemoryOperationError::Invalid("invalid memory operation arguments"))?;
         if matches!(
             operation,
-            MemoryOperation::Put { .. } | MemoryOperation::Delete { .. }
+            MemoryOperation::Put { .. }
+                | MemoryOperation::ProposeLesson { .. }
+                | MemoryOperation::Delete { .. }
         ) && permission == MemoryPermission::ReadOnly
         {
             return Err(MemoryOperationError::Invalid(
@@ -157,7 +286,16 @@ impl MemorySession {
         match operation {
             MemoryOperation::Scan { query, limit } => self.scan(query, limit).await,
             MemoryOperation::Read { keys } => self.read(keys).await,
-            MemoryOperation::Put { content, replace } => self.put(content, replace).await,
+            MemoryOperation::Put {
+                content,
+                replace,
+                metadata,
+            } => self.put(content, replace, metadata).await,
+            MemoryOperation::ProposeLesson {
+                content,
+                metadata,
+                behavior_test,
+            } => self.propose(content, metadata, behavior_test).await,
             MemoryOperation::Delete { key } => self.delete(key).await,
         }
     }
@@ -190,7 +328,8 @@ impl MemorySession {
             ));
         }
         let backend = self.store.access().await?;
-        let scan = self.store.scan(&query, limit).await?;
+        let repository = self.sources.as_ref().map(WorkspaceSources::repository);
+        let scan = self.store.scan_scoped(&query, limit, repository).await?;
         self.searched.store(true, Ordering::Release);
         json_output(&ScanOutput {
             operation: "scan",
@@ -203,6 +342,8 @@ impl MemorySession {
                     key: candidate.key,
                     preview: candidate.preview,
                     score: candidate.score,
+                    freshness: self.freshness(&candidate.metadata),
+                    metadata: candidate.metadata,
                 })
                 .collect(),
         })
@@ -215,7 +356,20 @@ impl MemorySession {
             ));
         }
         let backend = self.store.access().await?;
-        let memories = self.store.read(&[], &keys).await?;
+        let repository = self.sources.as_ref().map(WorkspaceSources::repository);
+        let memories = self
+            .store
+            .read(&[], &keys)
+            .await?
+            .into_iter()
+            .filter(|record| record.metadata.visible_in(repository))
+            .map(|record| {
+                let freshness = self.freshness(&record.metadata);
+                let mut value = serde_json::to_value(record)?;
+                value["freshness"] = serde_json::to_value(freshness)?;
+                Ok(value)
+            })
+            .collect::<Result<Vec<_>, serde_json::Error>>()?;
         json_output(&ReadOutput {
             operation: "read",
             backend,
@@ -227,6 +381,7 @@ impl MemorySession {
         &self,
         content: MemoryContent,
         replace: Option<MemoryKey>,
+        draft: Option<MemoryDraft>,
     ) -> Result<Value, MemoryOperationError> {
         let content = content.0;
         if !self.searched.swap(false, Ordering::AcqRel) {
@@ -236,13 +391,58 @@ impl MemorySession {
         }
         let backend = self.store.access().await?;
         let replaced = replace.is_some();
-        let memory = self.store.put(content.as_str(), replace).await?;
+        let mut metadata = self.metadata(draft)?;
+        if let Some(key) = &replace
+            && let Some(previous) = self
+                .store
+                .read(&[], std::slice::from_ref(key))
+                .await?
+                .first()
+        {
+            metadata.imported_from = previous.metadata.imported_from.clone();
+        }
+        let memory = self
+            .store
+            .put_with_metadata(content.as_str(), &metadata, replace)
+            .await?;
         json_output(&PutOutput {
             operation: "put",
             backend,
             memory,
             replaced,
         })
+    }
+
+    async fn propose(
+        &self,
+        content: MemoryContent,
+        draft: MemoryDraft,
+        behavior_test: SourceRequest,
+    ) -> Result<Value, MemoryOperationError> {
+        if self.trace.is_none() {
+            return Err(MemoryOperationError::Invalid(
+                "lesson proposals require a host-bound producing run",
+            ));
+        }
+        if !self.searched.swap(false, Ordering::AcqRel) {
+            return Err(MemoryOperationError::Invalid(
+                "scan memory before proposing a lesson",
+            ));
+        }
+        let mut metadata = self.metadata(Some(draft))?;
+        if metadata.evidence.is_empty() {
+            return Err(MemoryOperationError::Invalid(
+                "lesson proposals require evidence",
+            ));
+        }
+        metadata.kind = MemoryKind::LessonProposal {
+            behavior_test: self.capture(behavior_test)?,
+            state: ProposalState::Pending,
+        };
+        let record = crate::propose_lesson(&self.store, &content.0, metadata).await?;
+        Ok(
+            json!({"operation":"propose_lesson", "memory":record, "authority":"reference_data", "behavior_test_status":"cited_not_executed"}),
+        )
     }
 
     async fn delete(&self, key: MemoryKey) -> Result<Value, MemoryOperationError> {
@@ -290,7 +490,9 @@ where
         let operation = input.decode_json::<MemoryOperation>()?;
         if matches!(
             operation,
-            MemoryOperation::Put { .. } | MemoryOperation::Delete { .. }
+            MemoryOperation::Put { .. }
+                | MemoryOperation::ProposeLesson { .. }
+                | MemoryOperation::Delete { .. }
         ) {
             self.authorizer
                 .authorize_memory_mutation(context.session_id())
@@ -299,7 +501,16 @@ where
         let value = match operation {
             MemoryOperation::Scan { query, limit } => self.session.scan(query, limit).await,
             MemoryOperation::Read { keys } => self.session.read(keys).await,
-            MemoryOperation::Put { content, replace } => self.session.put(content, replace).await,
+            MemoryOperation::Put {
+                content,
+                replace,
+                metadata,
+            } => self.session.put(content, replace, metadata).await,
+            MemoryOperation::ProposeLesson {
+                content,
+                metadata,
+                behavior_test,
+            } => self.session.propose(content, metadata, behavior_test).await,
             MemoryOperation::Delete { key } => self.session.delete(key).await,
         }?;
         Ok(ToolOutput::from_json(value, true))
@@ -311,7 +522,7 @@ fn json_output(value: &impl Serialize) -> Result<Value, MemoryOperationError> {
 }
 
 fn memory_input_schema() -> Value {
-    json!({
+    let mut schema = json!({
         "oneOf": [
             {
                 "type": "object",
@@ -342,7 +553,8 @@ fn memory_input_schema() -> Value {
                 "properties": {
                     "operation": { "type": "string", "const": "put" },
                     "content": { "type": "string", "minLength": 1, "maxLength": 1024 },
-                    "replace": memory_key_schema()
+                    "replace": memory_key_schema(),
+                    "metadata": draft_schema()
                 },
                 "required": ["operation", "content"],
                 "additionalProperties": false
@@ -357,13 +569,25 @@ fn memory_input_schema() -> Value {
                 "additionalProperties": false
             }
         ]
-    })
+    });
+    schema["oneOf"].as_array_mut().expect("closed schema").push(json!({
+        "type":"object", "properties": {"operation":{"const":"propose_lesson","type":"string"}, "content":{"type":"string","maxLength":1024}, "metadata":draft_schema(), "behavior_test":source_schema()},
+        "required":["operation","content","metadata","behavior_test"], "additionalProperties":false
+    }));
+    schema
+}
+
+fn source_schema() -> Value {
+    json!({"type":"object","properties":{"path":{"type":"string"},"range":{"type":"object","properties":{"start":{"type":"integer","minimum":1},"end":{"type":"integer","minimum":1}},"required":["start","end"],"additionalProperties":false}},"required":["path"],"additionalProperties":false})
+}
+fn draft_schema() -> Value {
+    json!({"type":"object","properties":{"scope":{"type":"string","enum":["global","repository"]},"kind":{"type":"string","enum":["preference","procedure","code_claim"]},"sources":{"type":"array","maxItems":16,"items":source_schema()}},"required":["scope","kind"],"additionalProperties":false})
 }
 
 fn memory_output_schema() -> Value {
     let record = memory_record_schema();
     let backend = memory_backend_schema();
-    json!({
+    let mut schema = json!({
         "oneOf": [
             {
                 "type": "object",
@@ -379,7 +603,7 @@ fn memory_output_schema() -> Value {
                             "properties": {
                                 "key": memory_key_schema(),
                                 "preview": { "type": "string", "maxLength": 64 },
-                                "score": { "type": "number" }
+                                "score": { "type": "number" }, "metadata": { "type": "object" }, "freshness": { "type": "object" }
                             },
                             "required": ["key", "preview", "score"],
                             "additionalProperties": false
@@ -421,7 +645,10 @@ fn memory_output_schema() -> Value {
                 "additionalProperties": false
             }
         ]
-    })
+    });
+    schema["oneOf"].as_array_mut().expect("closed schema").push(json!({"type":"object","properties":{
+        "operation":{"type":"string","const":"propose_lesson"},"memory":memory_record_schema(),"authority":{"const":"reference_data"},"behavior_test_status":{"const":"cited_not_executed"}},"required":["operation","memory","authority","behavior_test_status"],"additionalProperties":false}));
+    schema
 }
 
 fn memory_backend_schema() -> Value {
@@ -456,7 +683,7 @@ fn memory_record_schema() -> Value {
         "type": "object",
         "properties": {
             "key": memory_key_schema(),
-            "content": { "type": "string" },
+            "content": { "type": "string" }, "metadata": { "type": "object" }, "freshness": { "type": "object" },
             "created_at_ms": { "type": "integer" },
             "updated_at_ms": { "type": "integer" },
             "last_scanned_at_ms": { "type": ["integer", "null"] },
@@ -524,7 +751,7 @@ mod tests {
         let output_schema = definition.output_schema().unwrap().as_value();
 
         assert_eq!(definition.name(), "memory");
-        assert_eq!(schema["oneOf"].as_array().unwrap().len(), 4);
+        assert_eq!(schema["oneOf"].as_array().unwrap().len(), 5);
         assert!(
             schema["oneOf"]
                 .as_array()

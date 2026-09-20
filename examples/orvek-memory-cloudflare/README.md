@@ -76,6 +76,12 @@ The credential uploader validates the TOML and passes the Worker secret to Wrang
 It creates no intermediate plaintext deployment file. Configure clients with the deployed HTTPS
 endpoint.
 
+## Protocol upgrade
+
+This build uses remote protocol v2. Upgrade clients with the Worker and apply all migrations,
+including `0002_evidence.sql`. Existing records remain legacy-unscoped and unverified. Metadata
+and citations persist through put, sync, and export; scoped scans filter before ranking.
+
 ## Limits and operations
 
 Scans rank a bounded shared corpus with BM25 inside the Worker. The configured defaults are

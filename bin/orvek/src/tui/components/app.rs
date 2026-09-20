@@ -1043,6 +1043,7 @@ mod tests {
 
     fn memory_record(id: i64, content: &str) -> MemoryRecord {
         MemoryRecord {
+            metadata: Default::default(),
             key: MemoryKey::local(id, 1),
             content: content.to_owned(),
             created_at_ms: 0,
