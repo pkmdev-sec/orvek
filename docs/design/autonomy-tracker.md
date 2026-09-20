@@ -1,6 +1,6 @@
 # Orvek autonomy and harness tracker
 
-Status: T01, T02, and T03 implemented and verified. T09 hooks are verified; event intake is pending. T04 and T11 are in progress. Baseline: `720210c0cbceebe89c123038049e9aebf77ba47d`. Sources inspected on 2026-09-20.
+Status: T01, T02, and T03 implemented and verified. T09 hooks are verified; event intake is pending. T04 and T11 integration is in progress. T05 and T08 implementation has started. Baseline: `720210c0cbceebe89c123038049e9aebf77ba47d`. Sources inspected on 2026-09-20.
 
 ## Decision
 
@@ -8,13 +8,13 @@ Prioritize working host integrations and trustworthy execution records before ad
 
 “Robustness without guardrails” means fewer approval gates and less operator babysitting. It does **not** mean removing isolation, credential boundaries, explicit uncertainty, cancellation, or evidence-based completion. Those mechanisms let an agent act independently. Neither these sources nor the code establish that any harness can eliminate all external operational controls or guarantee safe arbitrary side effects.
 
-This is an implementation tracker, not a feature announcement. Proposed tools, commands, types, and schemas below do not exist unless explicitly marked existing. No LangChain runtime dependency is proposed.
+This is an implementation tracker, not a feature announcement. Checked items and implementation results below identify implemented behavior. Unchecked items remain acceptance work; do not infer completion from a command or type alone. No LangChain runtime dependency is proposed.
 
 ## Scope and evidence
 
 The supplied list contains **15 direct blog links, two X links, and one repository**, rather than 16 direct blog links. Both X pages were readable and have matching LangChain articles. All 18 supplied links are covered below, using L01–L15, X01–X02, and D01. The provisional source selection made before the links arrived is not used as task evidence.
 
-Navigation began with `CODEBASE.md`, `docs/codebase-graph/overview.md`, and `.agent-map/architecture.md`. The agent-map overlay is orientation, not proof of runtime wiring. Findings below follow actual callers and tool definitions. The companion [evidence manifest](autonomy-tracker.sources.json) records source URLs, content hashes, code anchors, dependencies, and statuses. Local source references O01–O33 are indexed at the end.
+Navigation began with `CODEBASE.md`, `docs/codebase-graph/overview.md`, and `.agent-map/architecture.md`. The agent-map overlay is orientation, not proof of runtime wiring. Findings below follow actual callers and tool definitions. The companion [evidence manifest](autonomy-tracker.sources.json) records source URLs, content hashes, code anchors, dependencies, and statuses. Local source references O01–O35 are indexed at the end.
 
 Deep Agents is pinned to `c3a041e3d8f593e4e4c9bfc273d52264ceff165b`. Its current implementation can differ from an older article. Article performance numbers are not Orvek results.
 
@@ -34,6 +34,8 @@ Verification at the research baseline:
 
 - **T02**, `87bc77f`: 11 deterministic child-execution tests pass. Four additional real-Docker tests pass: parent/child command conformance, host crash and exact-container fencing, receipt-commit loss without re-execution, and running-command cancellation. Crash recovery also preserves an unrelated container.
 - **T03**, `757b6b4`: all 32 SnapCompact tests pass, including null measurements, failed/interrupted admissions, malformed logs, child failures, torn records, pairing controls, and report denominators. The original six tests were retained or migrated to schema v2; archived zero-filled records are not accepted as measured evidence.
+- **T04 integration**, `4871c93` through `668200d`: 303 default harness tests, 79 focused trace/provider tests, 20 app-host tests, and three actual-Docker repair/patch/child cases pass. Review found and reproduced receipt memory amplification, wire-payload mismatch, legacy unknown/zero accounting, and context closure defects; their integrated regressions now pass. All-feature compilation and strict Clippy pass. Portable receipt replay is implemented; controller-decision replay and per-call historical causal completeness are not established. T04 remains open for its final acceptance audit.
+- **T11 memory/skills phase**, `d154278`: the parent reran the real two-session put/scan/read and on-demand skill example, including manifest identities. Five executable examples now exist. Sanitized fixture trace links are in progress.
 - The existing Docker boundary suite also passes: 14 tests against Docker 29.7.2 with `debian:bookworm-slim` and the static ARM64 executor helper.
 
 The manifest records rerun commands. No live-model or competitor comparison has run. Repository-wide integration checks remain pending while other work lands.
@@ -149,18 +151,20 @@ T01, T02, and T03 are complete. T09 hooks are verified; event intake remains ope
 
 ### T04: Make traces portable, causal, and executable
 
-**Evidence:** O11/O14/O15/O17; L08/L09/L12/L15. Journal and artifact read APIs, headless JSONL, and Harbor ATIF already exist. The Harbor exporter currently combines a task into a coarse agent step. Child cost records do not provide complete child-call attribution; export alone cannot reconstruct missing causality.
+**Evidence:** O11/O14/O15/O17/O34/O35; L08/L09/L12/L15. Journal and artifact read APIs, headless JSONL, and Harbor ATIF already exist. The Harbor exporter currently combines a task into a coarse agent step. Child cost records do not provide complete child-call attribution; export alone cannot reconstruct missing causality.
 
 **Decision:** Add a read-only trace bundle over a pinned journal range and its artifact closure. Include session/request/task/model-call/job/child IDs, source revision, model settings, context/tool/behavior digests, candidate identity, verification results, and explicit gaps. Keep native unverified outcomes distinct from certificates.
 
-- [ ] Define a versioned manifest and bounded artifact traversal. Record missing or deliberately omitted payloads. Do not upload traces by default.
-- [ ] Record missing child causal links at execution time. Split model/tool/check spans without manufacturing intermediate rationale.
+- [x] Define a versioned manifest and bounded artifact traversal. Record missing or deliberately omitted payloads. Do not upload traces by default.
+- [x] Record missing child causal links at execution time. Split model/tool/check spans without manufacturing intermediate rationale.
 - [ ] Implement offline event/receipt replay with a provider/tool stub. No network calls or command execution in replay mode. Compare state, selected context, and outcome identities.
-- [ ] Add a separate experimental re-execution path in a fresh environment. Reusing old tool outputs is diagnostic replay, not proof that changed code works.
-- [ ] Build N−1 prefix fixtures and a review packet containing user intent, contract, patch, verification, cost confidence, and unresolved facts.
-- [ ] Test child work, retries, rejected completion, successful repair, tampered blobs, missing artifacts, and cursor gaps. Export filtering must mark a bundle non-exact when payloads are removed.
+- [x] Add a separate experimental re-execution path in a fresh environment. Reusing old tool outputs is diagnostic replay, not proof that changed code works.
+- [x] Build N−1 prefix fixtures and a review packet containing user intent, contract, patch, verification, cost confidence, and unresolved facts.
+- [x] Test child work, retries, rejected completion, successful repair, tampered blobs, missing artifacts, and cursor gaps. Export filtering must mark a bundle non-exact when payloads are removed.
 
 **Done:** another local installation explains and replays the same recorded task offline. A redacted review bundle cannot masquerade as an exact replay bundle. Provider-hidden reasoning and unrecorded external state remain unavailable.
+
+**Integration limit:** receipt-driven replay is implemented and tested. The remaining replay acceptance audit must distinguish it from full controller-decision replay and historical causal completeness.
 
 ### T05: Give memory scope, evidence, and a refresh path
 
@@ -257,9 +261,9 @@ T01, T02, and T03 are complete. T09 hooks are verified; event intake remains ope
 
 **Decision:** Extract a small set of executable examples and generate their documentation snippets from those files. Use fake providers for deterministic wiring tests; isolate external-service examples. Do not introduce a large docs framework.
 
-- [ ] Inventory examples as runnable, illustrative, or external-service. Require an explicit reason for non-runnable examples.
-- [ ] Start with memory scan/read, skill discovery, native unverified completion, sandbox verified completion, reconnect, and terminal hook delivery.
-- [ ] Run examples against public CLI/IPC boundaries with setup and teardown. Assert actual resulting state, not “Done” text.
+- [x] Inventory examples as runnable, illustrative, or external-service. Require an explicit reason for non-runnable examples.
+- [x] Start with memory scan/read, skill discovery, native unverified completion, sandbox verified completion, reconnect, and terminal hook delivery.
+- [x] Run examples against public CLI/IPC boundaries with setup and teardown. Assert actual resulting state, not “Done” text.
 - [ ] Generate snippets; check generated content in CI alongside existing syntax/link checks. Link each example to a sanitized trace bundle once T04 exists.
 
 **Done:** documentation cannot advertise enabled memory or hook behavior when the real host does not provide it. Examples remain short enough to read and rerun.
@@ -315,7 +319,7 @@ These anchors identify the latest reviewed source, not permanent line-number API
 | --- | --- |
 | O01 | [bin/orvek/src/core/mod.rs](../../bin/orvek/src/core/mod.rs) at line 72, `configured_memory_store(config, &workspace)?;` |
 | O02 | [bin/orvek/src/core/extensions/skills.rs](../../bin/orvek/src/core/extensions/skills.rs) at line 180, `pub(crate) fn rendered_instructions` |
-| O03 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3546, `fn tool_definitions(discovery: bool)` |
+| O03 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3552, `fn tool_definitions(discovery: bool)` |
 | O04 | [crates/memory/src/model.rs](../../crates/memory/src/model.rs) at line 47, `pub struct MemoryRecord` |
 | O05 | [crates/memory/src/store/local.rs](../../crates/memory/src/store/local.rs) at line 278, `pub async fn merge_remote_export(` |
 | O06 | [crates/harness/src/context.rs](../../crates/harness/src/context.rs) at line 298, `pub fn project(` |
@@ -332,20 +336,22 @@ These anchors identify the latest reviewed source, not permanent line-number API
 | O17 | [bin/orvek/src/app/headless.rs](../../bin/orvek/src/app/headless.rs) at line 26, `orvek.host` |
 | O18 | [crates/harness/src/controller/auxiliary.rs](../../crates/harness/src/controller/auxiliary.rs) at line 275, `let mut instructions = format!(` |
 | O19 | [crates/harness/src/admission_profile.rs](../../crates/harness/src/admission_profile.rs) at line 87, `pub struct HarnessBinding` |
-| O20 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3495, `fn native_tool_definitions(` |
-| O21 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 955, `async fn run_tool(` |
-| O22 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3148, `async fn reconcile_unresolved(` |
+| O20 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3501, `fn native_tool_definitions(` |
+| O21 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 991, `async fn run_tool(` |
+| O22 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3154, `async fn reconcile_unresolved(` |
 | O23 | [evals/snapcompact/run_paired.py](../../evals/snapcompact/run_paired.py) at line 36, `def parse_log(` |
 | O24 | [evals/snapcompact/paired_report.py](../../evals/snapcompact/paired_report.py) at line 30, `def validate(` |
 | O25 | [bin/orvek/src/app/config.rs](../../bin/orvek/src/app/config.rs) at line 2089, `fn completion_hook_can_be_configured(` |
 | O26 | [bin/orvek/src/app/host.rs](../../bin/orvek/src/app/host.rs) at line 424, `config.agent().completion_hook()` |
-| O27 | [crates/harness/tests/native_host.rs](../../crates/harness/tests/native_host.rs) at line 813, `restart_keeps_unknown_native_jobs_unfenced_and_never_replays_them` |
-| O28 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 932, `"submitted": false` |
-| O29 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 1098, `fn child_definitions(` |
+| O27 | [crates/harness/tests/native_host.rs](../../crates/harness/tests/native_host.rs) at line 896, `restart_keeps_unknown_native_jobs_unfenced_and_never_replays_them` |
+| O28 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 967, `"submitted": false` |
+| O29 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 1157, `fn child_definitions(` |
 | O30 | [crates/harness/src/services.rs](../../crates/harness/src/services.rs) at line 17, `pub trait ContextService` |
 | O31 | [bin/orvek/src/core/context.rs](../../bin/orvek/src/core/context.rs) at line 80, `impl ContextSession for ConfiguredContextSession` |
 | O32 | [crates/harness/src/controller/notification.rs](../../crates/harness/src/controller/notification.rs) at line 270, `async fn run_hook` |
 | O33 | [crates/harness/src/ipc.rs](../../crates/harness/src/ipc.rs) at line 409, `let recovery_host = host.clone();` |
+| O34 | [crates/harness/src/trace.rs](../../crates/harness/src/trace.rs) at line 318, `pub fn replay(&self)` |
+| O35 | [crates/harness/src/inference/transport.rs](../../crates/harness/src/inference/transport.rs) at line 202, `pub enum RequestProvenance` |
 
 ## Rerun this research check
 

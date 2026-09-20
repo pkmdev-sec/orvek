@@ -18,6 +18,9 @@ pinned global cursor. Use `--through N` to select an earlier prefix. Arbitrary
 nonzero baselines are not supported. The default bounds are 100,000 events,
 10,000 artifact references, 64 MiB of decoded data, and 16 artifact hops. An
 oversized journal fails; bounded or missing artifact traversal remains explicit.
+The byte limit separately bounds stored decoded data and the sum of expanded
+receipt bytes plus serialized spans. Repeated receipt references consume that
+second budget each time. These are byte-accounting bounds, not an RSS limit.
 Bundle files are created without overwriting existing files, with mode 0600.
 
 **Treat bundles as private.** They can contain user input, source code, tool
@@ -36,13 +39,21 @@ It does not invoke inference, tool dispatch, verification, Docker, or networking
 It validates selected context against its recorded source and compares the
 reconstructed task, candidate, evidence, certificate, and outcome identities.
 This is a receipt-driven diagnostic stub, **not a fresh verification run**.
+The `exact` flag covers recorded state and artifact consistency. It does not prove
+complete historical causality or replay the controller's decisions. Historical
+missing links are not enumerated per call.
 `finished_unverified` stays distinct from `complete` and has no certificate.
 
-New parent and child model dispatch receipts contain session, request, task,
-call and child IDs, exact request payloads, settings, tools, instructions, and
-context/cache identities. Child tool receipts bind those IDs to the admitted
-job before execution. Retries retain distinct calls. Old absent links are not
-inferred. The review packet includes the recorded intent, contract, candidate,
+New parent and child dispatch receipts contain session, request, task, call and
+child IDs, logical HTTP templates, settings, tools, instructions, and context/cache
+identities. Captured call outcomes separately retain the exact serialized body,
+effective transport, dialect, and route source. A prepared body is not proof of
+dispatch or remote delivery. Crashes before outcome persistence leave that body
+unavailable. Authentication metadata, resolved endpoints, and network framing
+are not recorded. Prompt/source content remains private and is retained verbatim.
+Child tool receipts bind those IDs to the admitted job before execution. Host
+retries retain distinct calls; transport retries retain their attempt numbers
+within a call. Old absent links are not inferred. The review packet includes the recorded intent, contract, candidate,
 delivery/patch identities, the patch payload (base64), checks, certificates, costs,
 and unresolved data.
 `exporter_revision` identifies the exporting binary, not the code that executed
@@ -51,12 +62,13 @@ flag (or `unknown` when Git metadata is absent). Session harness bindings and ca
 available execution provenance. An unrecorded original Git revision is unknown.
 
 Costs report the sum of recorded exact USD receipts and a completeness flag.
+Legacy or unlinked usage makes token totals unknown and cost totals incomplete.
 Unknown receipts are not converted to measured zero. Provider-hidden reasoning
 and unrecorded external state remain unavailable.
 
 Prefix fixtures end immediately before each recorded model dispatch. The paired
-`decision-*.json` file carries that request's available input, instructions and
-tools, but not its response. Future receipt artifacts are removed from the
+`decision-*.json` file carries that request's logical input, instructions and
+tools, but not its response or a future effective body. Future receipt artifacts are removed from the
 prefix. Historical calls without a dispatch receipt cannot yield such a fixture.
 
 ## Experimental fresh re-execution
@@ -73,4 +85,5 @@ allocates fresh session, request, task and call IDs. It does not import old tool
 outputs, checks, certificates, or workspace contents as evidence. You must
 supply any required starting material through the new task's normal workflow.
 Unresolved jobs or effects block this path; reconcile them with the original
+host. This check sees only the pinned prefix, not later activity in the original
 host. New commands can have side effects and model calls can incur cost.

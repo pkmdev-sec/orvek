@@ -198,13 +198,13 @@
       "id": "O03",
       "path": "crates/harness/src/controller.rs",
       "anchor": "fn tool_definitions(discovery: bool)",
-      "line": 3546,
-      "sha256": "0c9051af4b22a91b849f97cdefa96494b1192ee60fcfd6d357ef30718854e717",
+      "line": 3552,
+      "sha256": "ea4a40ffd628c5da5732653237569b79f687fc74031ea4ec6631497c72f0d175",
       "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
       "research_line": 3421,
       "research_anchor": "fn tool_definitions(discovery: bool)",
-      "reviewed_revision": "7684a17",
-      "review_note": "T01 composes context-service definitions with sandbox tools at provider boundaries; T09 notifications run only after settlement. The static base registry is not the complete runtime list."
+      "reviewed_revision": "668200d",
+      "review_note": "Reviewed T04 call recording and unchanged public tool registry; interpreter remains T06 work."
     },
     {
       "id": "O04",
@@ -246,11 +246,11 @@
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "async fn spawn(",
       "line": 453,
-      "sha256": "681e033c26f49cf2e8708405f8e0d98a24ee100b397f6ddf738c077ab2e53e73",
+      "sha256": "24a625f6672a6c8e4c793d87916ddb4e35460832f15d7581e2b9b074e5e47be1",
       "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
       "research_line": 448,
-      "reviewed_revision": "87bc77f",
-      "review_note": "T02 retained spawn semantics; child execution identity now reaches the backend unchanged. T08 lifecycle/context work remains open."
+      "reviewed_revision": "668200d",
+      "review_note": "Reviewed child dispatch/response/tool links and unchanged in-memory lifecycle; T08 remains required."
     },
     {
       "id": "O10",
@@ -268,7 +268,11 @@
       "path": "crates/harness/src/store.rs",
       "anchor": "pub struct Store",
       "line": 99,
-      "sha256": "6596b46f427eef5e69d2019223ac8784c3968ac0f2e871f76ae0c117338c1fc0"
+      "sha256": "c570ccf37cefd0cee4181cf4ba72d26d5d542abcd9cb5112edc9f14645cdbe92",
+      "research_sha256": "6596b46f427eef5e69d2019223ac8784c3968ac0f2e871f76ae0c117338c1fc0",
+      "research_line": 99,
+      "reviewed_revision": "668200d",
+      "review_note": "Reviewed admission-profile validation and crate-private aggregate hashing reused by offline replay; no second writer or recovery path."
     },
     {
       "id": "O12",
@@ -335,36 +339,36 @@
       "id": "O20",
       "path": "crates/harness/src/controller.rs",
       "anchor": "fn native_tool_definitions(",
-      "line": 3495,
-      "sha256": "0c9051af4b22a91b849f97cdefa96494b1192ee60fcfd6d357ef30718854e717",
+      "line": 3501,
+      "sha256": "ea4a40ffd628c5da5732653237569b79f687fc74031ea4ec6631497c72f0d175",
       "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
       "research_line": 3370,
       "research_anchor": "fn native_tool_definitions(",
-      "reviewed_revision": "7684a17",
-      "review_note": "T01 composes memory and skills into native requests; native completion remains FinishedUnverified. T09 cannot alter that outcome."
+      "reviewed_revision": "668200d",
+      "review_note": "Reviewed native definitions and causal recording; native outcomes remain unverified."
     },
     {
       "id": "O21",
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "async fn run_tool(",
-      "line": 955,
-      "sha256": "681e033c26f49cf2e8708405f8e0d98a24ee100b397f6ddf738c077ab2e53e73",
+      "line": 991,
+      "sha256": "24a625f6672a6c8e4c793d87916ddb4e35460832f15d7581e2b9b074e5e47be1",
       "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
       "research_line": 950,
-      "reviewed_revision": "87bc77f",
-      "review_note": "T02 fixed admitted ToolContext, execution receipts/status, durable settlement errors, and no-replay recovery; verified 11 deterministic and 4 real-Docker tests."
+      "reviewed_revision": "668200d",
+      "review_note": "Reviewed original admitted job/environment retention plus causal child-tool receipt written before execution."
     },
     {
       "id": "O22",
       "path": "crates/harness/src/controller.rs",
       "anchor": "async fn reconcile_unresolved(",
-      "line": 3148,
-      "sha256": "0c9051af4b22a91b849f97cdefa96494b1192ee60fcfd6d357ef30718854e717",
+      "line": 3154,
+      "sha256": "ea4a40ffd628c5da5732653237569b79f687fc74031ea4ec6631497c72f0d175",
       "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
       "research_line": 3023,
       "research_anchor": "async fn reconcile_unresolved(",
-      "reviewed_revision": "7684a17",
-      "review_note": "Reviewed after T01/T09 integrations: exact-backend unresolved-job reconciliation is unchanged; optional context and notifications do not replay uncertain tools."
+      "reviewed_revision": "668200d",
+      "review_note": "Reviewed unchanged reconciliation with additional trace recording; uncertain effects are not reexecuted."
     },
     {
       "id": "O23",
@@ -405,41 +409,45 @@
       "path": "bin/orvek/src/app/host.rs",
       "anchor": "config.agent().completion_hook()",
       "line": 424,
-      "sha256": "06efb2f44cb0c334e4cc996f96c73ff7454dd5146c3186d61a34affa5c7bf672",
+      "sha256": "6f4c93d76a0da310e38483bc390d72de730180806c78e3242923749710d1aeee",
       "research_sha256": "99ef0f522c905c812719d2e1e11668349a0c646b5eb374534a990cc075289e1e",
       "research_line": 422,
       "research_anchor": "config.agent().completion_hook()",
-      "reviewed_revision": "7684a17",
-      "review_note": "Host bootstrap installs both context service and versioned completion hook. Hooks are host-owned, not client callbacks; IPC recovery runs in a cancellable background task."
+      "reviewed_revision": "668200d",
+      "review_note": "Reviewed completion-hook wiring and new trace-version host identity; hook delivery remains independent of verification."
     },
     {
       "id": "O27",
       "path": "crates/harness/tests/native_host.rs",
       "anchor": "restart_keeps_unknown_native_jobs_unfenced_and_never_replays_them",
-      "line": 813,
-      "sha256": "c06974a427a25ddd1e15bda8928f4b7e2c98a992db91fc4e916a70ca84d1d319"
+      "line": 896,
+      "sha256": "c7a8238d8103704b71ce1aef43716a368dc7b3f87cbc6cf4ce05865f33c370d1",
+      "research_sha256": "c06974a427a25ddd1e15bda8928f4b7e2c98a992db91fc4e916a70ca84d1d319",
+      "research_line": 813,
+      "reviewed_revision": "668200d",
+      "review_note": "Reviewed parent request-body/retry capture additions alongside unchanged unknown-native-job recovery regression."
     },
     {
       "id": "O28",
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "\"submitted\": false",
-      "line": 932,
-      "sha256": "681e033c26f49cf2e8708405f8e0d98a24ee100b397f6ddf738c077ab2e53e73",
+      "line": 967,
+      "sha256": "24a625f6672a6c8e4c793d87916ddb4e35460832f15d7581e2b9b074e5e47be1",
       "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
       "research_line": 927,
-      "reviewed_revision": "87bc77f",
-      "review_note": "Reviewed after T02 changes: prose fallback submitted:false remains unchanged; T08 is still required."
+      "reviewed_revision": "668200d",
+      "review_note": "Reviewed trace receipts around the still-unsubmitted prose fallback; T08 must repair its lifecycle meaning."
     },
     {
       "id": "O29",
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "fn child_definitions(",
-      "line": 1098,
-      "sha256": "681e033c26f49cf2e8708405f8e0d98a24ee100b397f6ddf738c077ab2e53e73",
+      "line": 1157,
+      "sha256": "24a625f6672a6c8e4c793d87916ddb4e35460832f15d7581e2b9b074e5e47be1",
       "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
       "research_line": 1061,
-      "reviewed_revision": "87bc77f",
-      "review_note": "Reviewed after T02 changes: tool registry and schema exposure gap remain unchanged; T08 is still required."
+      "reviewed_revision": "668200d",
+      "review_note": "Reviewed unchanged caller-schema exposure gap after T04 recording; T08 implementation is now active."
     },
     {
       "id": "O30",
@@ -476,6 +484,24 @@
       "sha256": "22f7adade020d67af6169c96563222f6474b8c191908583d77d66357b55ca562",
       "reviewed_revision": "7684a17",
       "review_note": "Recovery starts after socket binding and is cancelled on host shutdown; a blocked hook does not block IPC."
+    },
+    {
+      "id": "O34",
+      "path": "crates/harness/src/trace.rs",
+      "anchor": "pub fn replay(&self)",
+      "line": 318,
+      "sha256": "5482684785d977d34c97dd2c05e66eb10594601bb8d82b99ffa4eabeb5115086",
+      "reviewed_revision": "668200d",
+      "review_note": "Pinned portable bundles; validated closure plus bounded receipt materialization. Exactness is record consistency, not full decision replay."
+    },
+    {
+      "id": "O35",
+      "path": "crates/harness/src/inference/transport.rs",
+      "anchor": "pub enum RequestProvenance",
+      "line": 202,
+      "sha256": "54803a5e6f3198cf46fefbffc04d1046d6d0373529a202f28eaf36d95fc8fca5",
+      "reviewed_revision": "668200d",
+      "review_note": "Prepared effective serialized bodies, transport, dialect and route source. Historical/uncaptured bodies remain unavailable; no remote-delivery claim."
     }
   ],
   "competitor_context": [
@@ -632,20 +658,30 @@
         "O11",
         "O14",
         "O15",
-        "O17"
+        "O17",
+        "O34",
+        "O35"
       ],
-      "owner": "resume-causal-traces",
-      "implementation_revision": null,
-      "results": [],
-      "next_action": "Implement versioned local bundles, causal spans, offline replay, and separate fresh re-execution.",
-      "worktree": "/tmp/orvek-autonomy-t04",
-      "branch": "work/autonomy-t04"
+      "owner": "parent-integration",
+      "implementation_revision": "668200d",
+      "results": [
+        "303 default harness tests passed;45 opt-in tests ignored (t04-full-harness-integrated.log).",
+        "79 focused trace/provider/native/child/journal tests passed after review fixes (t04-review-fixes-integrated.log).",
+        "20 app host tests passed, including native/sandbox/aux context and restart/refresh (t04-host-integration.log).",
+        "3 actual-Docker repair/patch/parent-child cases passed (t04-docker-repair-integrated.log,t04-docker-child-integrated.log).",
+        "All-feature check and strict all-target/all-feature clippy passed on integrated tree (t04-all-feature-check.log,t04-integrated-clippy.log).",
+        "Portable event/receipt replay and review implemented. Exact means record/closure consistency, not full controller-decision replay or complete historical causality.",
+        "Final integrated CLI 3 plus release-pipeline 22 tests passed (t04-final-cli.log); all five CLI/IPC examples and27 Python script tests passed. Acceptance distinction documented in .agent-map/autonomy/T04-INTEGRATED.md."
+      ],
+      "next_action": "Finish acceptance audit for receipt-stub replay and causal gap reporting; retain explicit limitations. T04 remains open pending that audit.",
+      "worktree": "/Users/pumaurya/orvek",
+      "branch": "feat/autonomy-tracker"
     },
     {
       "id": "T05",
       "title": "Evidence-backed memory",
       "rank": 5,
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "T01",
         "T04"
@@ -659,10 +695,12 @@
         "O04",
         "O05"
       ],
-      "owner": null,
+      "owner": "implement-evidence-memory",
       "implementation_revision": null,
       "results": [],
-      "next_action": "Complete dependencies, then implement the first unchecked step in the work card."
+      "next_action": "Design and implement scoped, evidence-backed memory with honest freshness and portable provenance.",
+      "worktree": "/tmp/orvek-autonomy-t05",
+      "branch": "work/autonomy-t05"
     },
     {
       "id": "T06",
@@ -714,7 +752,7 @@
       "id": "T08",
       "title": "Durable context-aware children",
       "rank": 8,
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "T02",
         "T04"
@@ -729,10 +767,12 @@
         "O28",
         "O29"
       ],
-      "owner": null,
+      "owner": "implement-durable-delegation",
       "implementation_revision": null,
       "results": [],
-      "next_action": "Complete dependencies, then implement the first unchecked step in the work card."
+      "next_action": "Implement schema delivery, durable child lifecycle, repeatable results, and permission-independent context forks.",
+      "worktree": "/tmp/orvek-autonomy-t08",
+      "branch": "work/autonomy-t08"
     },
     {
       "id": "T09",
@@ -835,7 +875,7 @@
         "O16",
         "O25"
       ],
-      "owner": "finish-context-doc-examples",
+      "owner": "finish-sanitized-doc-traces",
       "implementation_revision": "89011b5",
       "results": [
         {
@@ -867,9 +907,11 @@
           "command": "python3 -B -m unittest discover -s scripts/tests -p \"test_*.py\"",
           "passed": 25,
           "log": ".agent-map/autonomy/t11-checker-tests.log"
-        }
+        },
+        "Memory/skills example integrated as d154278; parent reproduced two-session put/scan/read, exact skill bytes/digest, and six context manifests (t11-memory-skills.log).",
+        "All five examples rerun successfully against post-wire-fix integrated CLI (t04-example-*.log);27 Python script tests and34 guide-fence checks pass. Sanitized trace links pending."
       ],
-      "next_action": "Add short memory/skill example; sanitized trace links remain pending T04.",
+      "next_action": "Generate sanitized fixture traces and source-linked checks; rerun five examples on final integrated CLI.",
       "phase_dependencies": {
         "inventory": [],
         "end_to_end_examples": [
@@ -877,8 +919,8 @@
           "T09"
         ]
       },
-      "worktree": "/tmp/orvek-autonomy-t11-context",
-      "branch": "work/autonomy-t11-context",
+      "worktree": "/tmp/orvek-autonomy-doc-traces",
+      "branch": "work/autonomy-doc-traces",
       "followup_revisions": [
         "2a40464"
       ]
