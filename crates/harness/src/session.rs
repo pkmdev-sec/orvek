@@ -4,6 +4,7 @@ use crate::{
         BaselineReason, Channel, HarnessBinding, HarnessProvenance, ModelIdentity, PolicyIdentity,
         TargetProfile, ValidatedHarnessRevision,
     },
+    controller::notification::{CompletionDelivery, DeliveryEvent},
     inference::ModelSettings,
     state::{Outcome, RequestKind, TaskId},
 };
@@ -337,6 +338,8 @@ pub struct SessionBranch {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionState {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub completion_deliveries: BTreeMap<Uuid, CompletionDelivery>,
     pub feedbacks: std::collections::BTreeSet<Digest>,
     pub branch: SessionBranch,
     pub id: SessionId,
@@ -419,6 +422,7 @@ pub enum SessionEvent {
     deny_unknown_fields
 )]
 pub enum SessionCommand {
+    CompletionHook(DeliveryEvent),
     AdmissionPinned {
         profile: Box<SessionAdmissionProfile>,
         legacy_config_digest: Digest,
@@ -577,6 +581,7 @@ impl SessionState {
             BTreeMap::new()
         };
         Self {
+            completion_deliveries: BTreeMap::new(),
             branch,
             feedbacks: std::collections::BTreeSet::new(),
             id,
@@ -611,6 +616,9 @@ impl SessionState {
         command: &SessionCommand,
     ) -> Result<(), serde_json::Error> {
         match command {
+            SessionCommand::CompletionHook(event) => {
+                event.apply(self.id, &mut self.completion_deliveries)?;
+            }
             SessionCommand::AdmissionPinned {
                 profile,
                 legacy_config_digest,

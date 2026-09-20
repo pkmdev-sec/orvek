@@ -1192,7 +1192,14 @@ async fn repeated_rate_limits_stop_without_fabricated_spend_or_completion() {
     exercise(DeliveryKind::Source, Mode::RateLimitExhaustion).await;
 }
 
+#[tokio::test]
+#[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
+async fn completion_hook_failure_cannot_revoke_a_verified_sandbox_result() {
+    exercise(DeliveryKind::Source, Mode::CompletionHook).await;
+}
+
 enum Mode {
+    CompletionHook,
     RateLimitRetry,
     RateLimitExhaustion,
     OpenQuestions,
@@ -1455,7 +1462,13 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
     let executor = DockerExecutor::connect("debian:bookworm-slim")
         .await
         .unwrap();
-    let mut host = Arc::new(Host::open(&state_root, client, executor).unwrap());
+    let hook = matches!(mode, Mode::CompletionHook)
+        .then(|| "printf '%s' \"$ORVEK_OUTCOME\" > completion-hook; exit 9".into());
+    let mut host = Arc::new(
+        Host::open(&state_root, client, executor)
+            .unwrap()
+            .with_completion_hook(hook),
+    );
     let session = host
         .create_session(SessionAdmissionRequest::new(
             source.clone(),
@@ -1830,6 +1843,23 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         3
     };
     assert_eq!(result.task.outcome, Some(Outcome::Complete), "{result:?}");
+    if matches!(mode, Mode::CompletionHook) {
+        use orvek_harness::controller::notification::{DeliveryResult, DeliveryState};
+        assert_eq!(
+            fs::read_to_string(source.join("completion-hook")).unwrap(),
+            "complete"
+        );
+        let state = host.session(session.id).await.unwrap();
+        let delivery = state.completion_deliveries.get(&request_id).unwrap();
+        assert!(matches!(
+            delivery.state,
+            DeliveryState::Attempted {
+                result: DeliveryResult::Failed { exit_code: 9 },
+                ..
+            }
+        ));
+        assert_eq!(result.task.certificates.len(), 1);
+    }
     assert_eq!(result.task.usage.model_calls, calls);
     assert_eq!(
         fs::read_to_string(source.join("add")).unwrap(),

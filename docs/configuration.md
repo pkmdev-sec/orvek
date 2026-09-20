@@ -225,6 +225,47 @@ output tokens. These estimates are not subscription charges or verified priority
 Advanced endpoints use `agent.websocket_url` and `agent.api_base_url`, or the matching CLI flags.
 Leave them unset for the configured authentication route.
 
+### Completion notifications
+
+Set `agent.completion_hook` to a shell command, for example:
+
+```toml
+[agent]
+completion_hook = "/path/to/local-notification-handler"
+```
+
+The detached host runs this command after a task turn settles, for both native and sandbox
+execution. Headless and terminal clients use the same path. All recorded terminal task outcomes
+are covered, including blocked, failed, cancelled, and budget-exhausted tasks. Conversation-only
+turns, auxiliary requests, local shell submissions, and requests rejected before a task exists do
+not send task notifications. A resumed task gets a new notification for its new request.
+
+The hook runs as `/bin/sh -c COMMAND` in the session workspace with the host user's permissions
+and environment. This is a host command, even for sandbox tasks. It requires no extra approval.
+The command is pinned in the private session journal before task execution. Do not put credentials
+in its text; use a local handler and environment-based credentials instead.
+
+The receiver gets one JSON object on stdin with `version` (currently `1`), `delivery_id`, `session`,
+`request`, `task`, and `outcome`. These identities are also available as `ORVEK_COMPLETION_ID`,
+`ORVEK_SESSION_ID`, `ORVEK_REQUEST_ID`, `ORVEK_TASK_ID`, and `ORVEK_OUTCOME` environment variables.
+Use `ORVEK_COMPLETION_ID` as the receiver's idempotency key. It is stable for the session/request.
+
+Stdout and stderr are discarded. Hooks have a ten-second wall-time limit. Task cancellation still
+sends the terminal notification; it does not cancel that notification. The host kills ordinary
+process-group descendants at exit or timeout, but cannot contain descendants that deliberately
+detach. Keep notification handlers short and do not launch background services from them.
+
+Intent, claim, and result are separate `completion_hook` session-journal events. A failed command
+cannot change the task outcome or its verification certificate. Reconnect does not run hooks again.
+Restart resumes unclaimed intents after settlement, using their pinned command. A claim is written
+before the process starts. Timeout, signal termination, or restart without acknowledgement leaves
+an **unknown** delivery; Orvek never retries it automatically. Even a failed command may have made
+external changes. Arbitrary shell effects cannot provide exactly-once delivery; receiver-side
+deduplication is required before any operator-initiated retry outside Orvek.
+
+Schedule and webhook event intake are not implemented by this setting.
+
+
 ## Memory and context projection
 
 See [Local and remote memory](#local-and-remote-memory) for opt-in storage setup and

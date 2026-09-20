@@ -12,6 +12,7 @@ use orvek_harness::{
     ipc::{self, Command, Request, Response, WatchFrame},
     runtime::DockerExecutor,
 };
+use serde_json::json;
 use std::{
     fs::{self, OpenOptions},
     io::{self, Read},
@@ -419,7 +420,7 @@ fn configuration_identity_material(config: &Config) -> Result<serde_json::Value>
         "context_window_tokens": config.agent().context_window_tokens(),
         "web_search": config.agent().web_search(),
         "image_generation": config.agent().image_generation(),
-        "completion_hook": config.agent().completion_hook(),
+        "completion_hook": config.agent().completion_hook().map(|command| json!({"version":1,"command":command})),
         "websocket_url": config.agent().websocket_url(),
         "api_base_url": config.agent().api_base_url(),
         "execution": execution,
@@ -544,7 +545,7 @@ pub(crate) async fn serve(config: &Config) -> Result<()> {
     let provider = model_routed_provider(provider, config)?;
     // Native mode never touches Docker; sandbox mode keeps the verified
     // isolated workflow and its executor requirements.
-    let host = Arc::new(if config.agent().execution().is_sandbox() {
+    let host = if config.agent().execution().is_sandbox() {
         let image =
             std::env::var("ORVEK_EXECUTOR_IMAGE").unwrap_or_else(|_| "debian:bookworm-slim".into());
         let executor = DockerExecutor::connect(&image)
@@ -562,7 +563,9 @@ pub(crate) async fn serve(config: &Config) -> Result<()> {
             provider,
             configuration_identity(config)?,
         )?
-    });
+    };
+    let host =
+        Arc::new(host.with_completion_hook(config.agent().completion_hook().map(str::to_owned)));
     host.set_subagent_policy(
         config.subagents().enabled(),
         config.subagents().allow_luna(),
@@ -642,6 +645,23 @@ api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
                 "[models.gpt-5.3-codex-spark] requires ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
             ),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn configured_completion_hook_has_a_versioned_delivery_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        fs::write(&path, "[agent]\ncompletion_hook = \"notify-local\"\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let config = crate::app::config::Config::load(crate::app::config::ConfigOverrides {
+            path: Some(path),
+            ..crate::app::config::ConfigOverrides::default()
+        })
+        .unwrap();
+        assert_eq!(
+            configuration_identity_material(&config).unwrap()["completion_hook"],
+            json!({"version":1,"command":"notify-local"})
         );
     }
 

@@ -312,7 +312,8 @@ impl HostProjection {
                 self.recorded_ms = at_ms;
                 match command {
                     SessionCommand::AdmissionPinned { .. }
-                    | SessionCommand::LegacyImportBound { .. } => Vec::new(),
+                    | SessionCommand::LegacyImportBound { .. }
+                    | SessionCommand::CompletionHook(_) => Vec::new(),
                     SessionCommand::ReviewRecorded { feedback } => {
                         vec![ViewChange::ReviewRecorded { feedback }]
                     }

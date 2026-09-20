@@ -45,6 +45,7 @@ use uuid::Uuid;
 mod auxiliary;
 mod imports;
 mod manual;
+pub mod notification;
 mod review;
 pub mod subagents;
 mod submissions;
@@ -380,6 +381,7 @@ impl Drop for TaskDeadline {
 
 /// Host-owned orchestration. Views receive projections and never own this future.
 pub struct Host {
+    completion_hook: Option<String>,
     root: PathBuf,
     store: Arc<Mutex<Store>>,
     provider: Arc<ResponsesClient>,
@@ -469,6 +471,7 @@ impl Host {
             store.pin_session_admission(id, profile)?;
         }
         Ok(Self {
+            completion_hook: None,
             root: root.canonicalize()?,
             store: Arc::new(Mutex::new(store)),
             provider: Arc::new(provider),
@@ -1205,6 +1208,7 @@ impl Host {
             active.insert(session, cancellation.clone());
         }
         let result = async {
+            self.arm_completion_hook(session, request).await?;
             let task = match &admission {
                 TaskRequest::Continue { request } => match self
                     .store
@@ -1295,6 +1299,9 @@ impl Host {
             result
         }
         .await;
+        if let Err(error) = self.deliver_completion_hooks(session).await {
+            eprintln!("completion hook delivery record failed: {error}");
+        }
         self.active.lock().await.remove(&session);
         drop(_permit);
         self.queue_wake.notify_waiters();

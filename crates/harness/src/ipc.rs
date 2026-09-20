@@ -384,6 +384,9 @@ pub enum Response {
 }
 
 pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<()> {
+    host.recover_completion_hooks()
+        .await
+        .map_err(io::Error::other)?;
     host.start_queued().await.map_err(io::Error::other)?;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let root = host.state_directory();
