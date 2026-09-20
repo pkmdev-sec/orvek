@@ -10,6 +10,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::{
+    collections::{BTreeMap, btree_map::Entry},
     fs,
     sync::{Arc, atomic::Ordering},
     time::Duration,
@@ -100,6 +101,7 @@ impl Host {
             let records = store.journal_page(status.cursor, 64)?;
             let mut measures = Vec::new();
             let mut episodes = Vec::new();
+            let mut cohorts = BTreeMap::new();
             for record in records {
                 inspect(
                     &store,
@@ -107,6 +109,7 @@ impl Host {
                     &mut status,
                     &mut measures,
                     &mut episodes,
+                    &mut cohorts,
                     self.monitor_build,
                 )?;
                 status.cursor = record.sequence;
@@ -242,12 +245,25 @@ impl Host {
     }
 }
 
+fn cached_cohort(
+    store: &Store,
+    cohorts: &mut BTreeMap<SessionId, Option<Cohort>>,
+    session: SessionId,
+) -> Result<Option<Cohort>, StoreError> {
+    // A page holds the store lock, so its verified admission metadata cannot change.
+    match cohorts.entry(session) {
+        Entry::Occupied(entry) => Ok(entry.get().clone()),
+        Entry::Vacant(entry) => Ok(entry.insert(store.monitor_cohort(session)?).clone()),
+    }
+}
+
 fn inspect(
     store: &Store,
     record: &JournalRecord,
     status: &mut crate::monitor::MonitorStatus,
     measures: &mut Vec<Measurement>,
     episodes: &mut Vec<Episode>,
+    cohorts: &mut BTreeMap<SessionId, Option<Cohort>>,
     current_build: Option<Digest>,
 ) -> Result<(), StoreError> {
     if record.kind == "session" {
@@ -255,7 +271,7 @@ fn inspect(
             .aggregate
             .parse()
             .map_err(|_| StoreError::Integrity("monitor session"))?;
-        let Some(cohort) = store.monitor_cohort(session)? else {
+        let Some(cohort) = cached_cohort(store, cohorts, session)? else {
             return Ok(());
         };
         if store.monitor_origin(session)? != Origin::User {
@@ -301,7 +317,7 @@ fn inspect(
     let Some(session) = store.monitor_task_session(task)? else {
         return Ok(());
     };
-    let Some(mut cohort) = store.monitor_cohort(session)? else {
+    let Some(mut cohort) = cached_cohort(store, cohorts, session)? else {
         return Ok(());
     };
     if store.monitor_origin(session)? != Origin::User {

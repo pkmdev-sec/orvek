@@ -477,3 +477,75 @@ async fn only_authenticated_changes_requested_reviews_count_as_user_corrections(
         (3, 1, 3)
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn monitor_large_result_intake_keeps_native_host_status_responsive() {
+    use crate::{session::SessionCommand, state::RequestKind};
+    use std::{
+        future::Future,
+        task::{Context, Waker},
+    };
+    use uuid::Uuid;
+
+    let directory = tempfile::tempdir().unwrap();
+    let host = Arc::new(open(&directory.path().join("state")));
+    let mut session = host
+        .create_session(SessionAdmissionRequest::new(
+            directory.path().to_owned(),
+            ModelSettings::default(),
+            10000,
+            Channel::Stable,
+        ))
+        .await
+        .unwrap();
+    let request = Uuid::new_v4();
+    {
+        let mut store = host.store.lock().await;
+        session = store
+            .session_command(
+                session.id,
+                session.revision,
+                request,
+                SessionCommand::Input {
+                    kind: RequestKind::Conversation,
+                    content: vec![json!({"role":"user","content":"large result"})],
+                },
+            )
+            .unwrap();
+        session = store.session_command(session.id, session.revision, Uuid::new_v4(),
+            SessionCommand::Response { request, items: vec![json!({"type":"function_call","call_id":"large","name":"interpreter_eval","arguments":"{}"})] }).unwrap();
+        store
+            .session_command(
+                session.id,
+                session.revision,
+                Uuid::new_v4(),
+                SessionCommand::ToolResult {
+                    request,
+                    call_id: "large".into(),
+                    output: json!({"output":{"value":"\\".repeat(2 * 1024 * 1024 - 1)}})
+                        .to_string(),
+                },
+            )
+            .unwrap();
+    }
+
+    let guard = host.store.lock().await;
+    let monitoring_host = host.clone();
+    let mut monitor = Box::pin(async move { monitoring_host.monitor_tick().await });
+    let mut status = Box::pin(host.info());
+    // Register the monitor before the status request in the mutex's FIFO queue.
+    {
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(monitor.as_mut().poll(&mut context).is_pending());
+        assert!(status.as_mut().poll(&mut context).is_pending());
+    }
+    let monitor = tokio::spawn(monitor);
+    drop(guard);
+    let result = tokio::time::timeout(Duration::from_secs(5), status).await;
+    monitor.await.unwrap().unwrap();
+    assert!(
+        result.is_ok(),
+        "optional monitoring held the native store beyond the IPC window"
+    );
+    result.unwrap().unwrap();
+}
