@@ -544,6 +544,11 @@
     {
       "kind": "contains",
       "source": "directory:bin/orvek/src/app",
+      "target": "file:bin/orvek/src/app/event_intake.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:bin/orvek/src/app",
       "target": "file:bin/orvek/src/app/headless.rs"
     },
     {
@@ -1064,6 +1069,11 @@
     {
       "kind": "contains",
       "source": "directory:bin/orvek/tests",
+      "target": "file:bin/orvek/tests/event_intake.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:bin/orvek/tests",
       "target": "file:bin/orvek/tests/release_pipeline.rs"
     },
     {
@@ -1204,6 +1214,11 @@
     {
       "kind": "contains",
       "source": "directory:crates/harness/src",
+      "target": "directory:crates/harness/src/trace"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src",
       "target": "directory:crates/harness/src/workspace"
     },
     {
@@ -1270,6 +1285,11 @@
       "kind": "contains",
       "source": "directory:crates/harness/src",
       "target": "file:crates/harness/src/digest.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src",
+      "target": "file:crates/harness/src/event_intake.rs"
     },
     {
       "kind": "contains",
@@ -1409,6 +1429,11 @@
     {
       "kind": "contains",
       "source": "directory:crates/harness/src/controller",
+      "target": "file:crates/harness/src/controller/event_intake.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/controller",
       "target": "file:crates/harness/src/controller/imports.rs"
     },
     {
@@ -1524,6 +1549,11 @@
     {
       "kind": "contains",
       "source": "directory:crates/harness/src/store",
+      "target": "file:crates/harness/src/store/event_intake.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/store",
       "target": "file:crates/harness/src/store/imports.rs"
     },
     {
@@ -1535,6 +1565,16 @@
       "kind": "contains",
       "source": "directory:crates/harness/src/store",
       "target": "file:crates/harness/src/store/submissions.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/trace",
+      "target": "file:crates/harness/src/trace/receipts.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/trace",
+      "target": "file:crates/harness/src/trace/tests.rs"
     },
     {
       "kind": "contains",
@@ -1674,6 +1714,11 @@
     {
       "kind": "contains",
       "source": "directory:crates/memory",
+      "target": "directory:crates/memory/tests"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/memory",
       "target": "file:crates/memory/Cargo.toml"
     },
     {
@@ -1694,6 +1739,21 @@
     {
       "kind": "contains",
       "source": "directory:crates/memory/src",
+      "target": "file:crates/memory/src/archive.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/memory/src",
+      "target": "file:crates/memory/src/evidence.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/memory/src",
+      "target": "file:crates/memory/src/lessons.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/memory/src",
       "target": "file:crates/memory/src/lib.rs"
     },
     {
@@ -1710,6 +1770,11 @@
       "kind": "contains",
       "source": "directory:crates/memory/src",
       "target": "file:crates/memory/src/secrets.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/memory/src",
+      "target": "file:crates/memory/src/sources.rs"
     },
     {
       "kind": "contains",
@@ -1770,6 +1835,16 @@
       "kind": "contains",
       "source": "directory:crates/memory/src/store/remote",
       "target": "file:crates/memory/src/store/remote/mod.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/memory/tests",
+      "target": "file:crates/memory/tests/evidence.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/memory/tests",
+      "target": "file:crates/memory/tests/t05_review.rs"
     },
     {
       "kind": "contains",
@@ -1860,6 +1935,11 @@
       "kind": "contains",
       "source": "directory:docs",
       "target": "file:docs/configuration.md"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:docs",
+      "target": "file:docs/event-intake.md"
     },
     {
       "kind": "contains",
@@ -2398,6 +2478,16 @@
     },
     {
       "kind": "contains",
+      "source": "directory:examples/orvek-memory-cloudflare/migrations",
+      "target": "file:examples/orvek-memory-cloudflare/migrations/0002_evidence.sql"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/orvek-memory-cloudflare/migrations",
+      "target": "file:examples/orvek-memory-cloudflare/migrations/0003_ownership.sql"
+    },
+    {
+      "kind": "contains",
       "source": "directory:examples/orvek-memory-cloudflare/scripts",
       "target": "file:examples/orvek-memory-cloudflare/scripts/credentials.test.ts"
     },
@@ -2495,6 +2585,16 @@
       "kind": "contains",
       "source": "directory:scripts",
       "target": "file:scripts/test-host-context.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:scripts",
+      "target": "file:scripts/test-memory-evidence.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:scripts",
+      "target": "file:scripts/test-memory-transfer.py"
     },
     {
       "kind": "contains",
@@ -4295,6 +4395,11 @@
       "kind": "links_to",
       "source": "file:docs/executable-examples.md",
       "target": "file:docs/configuration.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:docs/event-intake.md"
     },
     {
       "kind": "links_to",
@@ -6514,6 +6619,11 @@
     {
       "kind": "declares_module",
       "source": "module:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::event_intake"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib",
       "target": "module:orvek-harness:lib::feedback"
     },
     {
@@ -6684,6 +6794,11 @@
     {
       "kind": "declares_module",
       "source": "module:orvek-harness:lib::controller",
+      "target": "module:orvek-harness:lib::controller::event_intake"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib::controller",
       "target": "module:orvek-harness:lib::controller::imports"
     },
     {
@@ -6725,6 +6840,11 @@
       "kind": "implemented_by",
       "source": "module:orvek-harness:lib::controller::auxiliary",
       "target": "file:crates/harness/src/controller/auxiliary.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::controller::event_intake",
+      "target": "file:crates/harness/src/controller/event_intake.rs"
     },
     {
       "kind": "implemented_by",
@@ -6790,6 +6910,11 @@
       "kind": "implemented_by",
       "source": "module:orvek-harness:lib::digest",
       "target": "file:crates/harness/src/digest.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::event_intake",
+      "target": "file:crates/harness/src/event_intake.rs"
     },
     {
       "kind": "implemented_by",
@@ -6974,6 +7099,11 @@
     {
       "kind": "declares_module",
       "source": "module:orvek-harness:lib::store",
+      "target": "module:orvek-harness:lib::store::event_intake"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib::store",
       "target": "module:orvek-harness:lib::store::imports"
     },
     {
@@ -6998,6 +7128,11 @@
     },
     {
       "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::store::event_intake",
+      "target": "file:crates/harness/src/store/event_intake.rs"
+    },
+    {
+      "kind": "implemented_by",
       "source": "module:orvek-harness:lib::store::imports",
       "target": "file:crates/harness/src/store/imports.rs"
     },
@@ -7017,9 +7152,29 @@
       "target": "file:crates/harness/src/submission.rs"
     },
     {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib::trace",
+      "target": "module:orvek-harness:lib::trace::receipts"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib::trace",
+      "target": "module:orvek-harness:lib::trace::tests"
+    },
+    {
       "kind": "implemented_by",
       "source": "module:orvek-harness:lib::trace",
       "target": "file:crates/harness/src/trace.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::trace::receipts",
+      "target": "file:crates/harness/src/trace/receipts.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::trace::tests",
+      "target": "file:crates/harness/src/trace/tests.rs"
     },
     {
       "kind": "implemented_by",
@@ -7347,6 +7502,21 @@
       "target": "package:orvek-memory"
     },
     {
+      "kind": "includes",
+      "source": "module:orvek-memory-cloudflare:lib::store",
+      "target": "file:examples/orvek-memory-cloudflare/migrations/0001_initial.sql"
+    },
+    {
+      "kind": "includes",
+      "source": "module:orvek-memory-cloudflare:lib::store",
+      "target": "file:examples/orvek-memory-cloudflare/migrations/0002_evidence.sql"
+    },
+    {
+      "kind": "includes",
+      "source": "module:orvek-memory-cloudflare:lib::store",
+      "target": "file:examples/orvek-memory-cloudflare/migrations/0003_ownership.sql"
+    },
+    {
       "kind": "implemented_by",
       "source": "module:orvek-memory-cloudflare:lib::store::row",
       "target": "file:examples/orvek-memory-cloudflare/src/store/row.rs"
@@ -7355,6 +7525,21 @@
       "kind": "imports",
       "source": "module:orvek-memory-cloudflare:lib::store::row",
       "target": "package:orvek-memory"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-memory:lib",
+      "target": "module:orvek-memory:lib::archive"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-memory:lib",
+      "target": "module:orvek-memory:lib::evidence"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-memory:lib",
+      "target": "module:orvek-memory:lib::lessons"
     },
     {
       "kind": "declares_module",
@@ -7375,6 +7560,11 @@
       "kind": "declares_module",
       "source": "module:orvek-memory:lib",
       "target": "module:orvek-memory:lib::server"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-memory:lib",
+      "target": "module:orvek-memory:lib::sources"
     },
     {
       "kind": "declares_module",
@@ -7400,6 +7590,21 @@
       "kind": "includes",
       "source": "module:orvek-memory:lib",
       "target": "file:crates/memory/README.md"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-memory:lib::archive",
+      "target": "file:crates/memory/src/archive.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-memory:lib::evidence",
+      "target": "file:crates/memory/src/evidence.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-memory:lib::lessons",
+      "target": "file:crates/memory/src/lessons.rs"
     },
     {
       "kind": "implemented_by",
@@ -7462,6 +7667,11 @@
       "target": "file:crates/memory/src/server/tests.rs"
     },
     {
+      "kind": "implemented_by",
+      "source": "module:orvek-memory:lib::sources",
+      "target": "file:crates/memory/src/sources.rs"
+    },
+    {
       "kind": "declares_module",
       "source": "module:orvek-memory:lib::store",
       "target": "module:orvek-memory:lib::store::local"
@@ -7505,6 +7715,26 @@
       "kind": "implemented_by",
       "source": "module:orvek-memory:lib::tool",
       "target": "file:crates/memory/src/tool.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-memory:test:evidence::tests::evidence",
+      "target": "file:crates/memory/tests/evidence.rs"
+    },
+    {
+      "kind": "imports",
+      "source": "module:orvek-memory:test:evidence::tests::evidence",
+      "target": "package:orvek-memory"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-memory:test:t05_review::tests::t05_review",
+      "target": "file:crates/memory/tests/t05_review.rs"
+    },
+    {
+      "kind": "imports",
+      "source": "module:orvek-memory:test:t05_review::tests::t05_review",
+      "target": "package:orvek-memory"
     },
     {
       "kind": "implemented_by",
@@ -7615,6 +7845,11 @@
       "kind": "declares_module",
       "source": "module:orvek:bin:orvek::app",
       "target": "module:orvek:bin:orvek::app::error"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek:bin:orvek::app",
+      "target": "module:orvek:bin:orvek::app::event_intake"
     },
     {
       "kind": "declares_module",
@@ -7740,6 +7975,16 @@
       "kind": "imports",
       "source": "module:orvek:bin:orvek::app::error",
       "target": "package:orvek-memory"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek:bin:orvek::app::event_intake",
+      "target": "file:bin/orvek/src/app/event_intake.rs"
+    },
+    {
+      "kind": "imports",
+      "source": "module:orvek:bin:orvek::app::event_intake",
+      "target": "package:orvek-harness"
     },
     {
       "kind": "implemented_by",
@@ -8833,6 +9078,16 @@
     },
     {
       "kind": "implemented_by",
+      "source": "module:orvek:test:event_intake::tests::event_intake",
+      "target": "file:bin/orvek/tests/event_intake.rs"
+    },
+    {
+      "kind": "imports",
+      "source": "module:orvek:test:event_intake::tests::event_intake",
+      "target": "package:orvek-harness"
+    },
+    {
+      "kind": "implemented_by",
       "source": "module:orvek:test:release_pipeline::tests::release_pipeline",
       "target": "file:bin/orvek/tests/release_pipeline.rs"
     },
@@ -9250,6 +9505,11 @@
       "kind": "defines",
       "source": "package:orvek",
       "target": "target:orvek:test:completion_hook"
+    },
+    {
+      "kind": "defines",
+      "source": "package:orvek",
+      "target": "target:orvek:test:event_intake"
     },
     {
       "kind": "defines",
@@ -9837,6 +10097,16 @@
       "target": "target:orvek-memory:lib"
     },
     {
+      "kind": "defines",
+      "source": "package:orvek-memory",
+      "target": "target:orvek-memory:test:evidence"
+    },
+    {
+      "kind": "defines",
+      "source": "package:orvek-memory",
+      "target": "target:orvek-memory:test:t05_review"
+    },
+    {
       "kind": "depends_on",
       "source": "package:orvek-memory",
       "target": "dependency:axum"
@@ -9860,6 +10130,11 @@
       "kind": "depends_on",
       "source": "package:orvek-memory",
       "target": "dependency:rusqlite"
+    },
+    {
+      "kind": "depends_on",
+      "source": "package:orvek-memory",
+      "target": "dependency:rustix"
     },
     {
       "kind": "depends_on",
@@ -10834,6 +11109,11 @@
     {
       "kind": "contains",
       "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::controller::event_intake"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
       "target": "module:orvek-harness:lib::controller::imports"
     },
     {
@@ -10885,6 +11165,11 @@
       "kind": "contains",
       "source": "target:orvek-harness:lib",
       "target": "module:orvek-harness:lib::digest"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::event_intake"
     },
     {
       "kind": "contains",
@@ -11014,6 +11299,11 @@
     {
       "kind": "contains",
       "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::store::event_intake"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
       "target": "module:orvek-harness:lib::store::imports"
     },
     {
@@ -11035,6 +11325,16 @@
       "kind": "contains",
       "source": "target:orvek-harness:lib",
       "target": "module:orvek-harness:lib::trace"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::trace::receipts"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::trace::tests"
     },
     {
       "kind": "contains",
@@ -11209,6 +11509,21 @@
     {
       "kind": "contains",
       "source": "target:orvek-memory:lib",
+      "target": "module:orvek-memory:lib::archive"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-memory:lib",
+      "target": "module:orvek-memory:lib::evidence"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-memory:lib",
+      "target": "module:orvek-memory:lib::lessons"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-memory:lib",
       "target": "module:orvek-memory:lib::model"
     },
     {
@@ -11249,6 +11564,11 @@
     {
       "kind": "contains",
       "source": "target:orvek-memory:lib",
+      "target": "module:orvek-memory:lib::sources"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-memory:lib",
       "target": "module:orvek-memory:lib::store"
     },
     {
@@ -11275,6 +11595,16 @@
       "kind": "contains",
       "source": "target:orvek-memory:lib",
       "target": "module:orvek-memory:lib::tool"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-memory:test:evidence",
+      "target": "module:orvek-memory:test:evidence::tests::evidence"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-memory:test:t05_review",
+      "target": "module:orvek-memory:test:t05_review::tests::t05_review"
     },
     {
       "kind": "contains",
@@ -11345,6 +11675,11 @@
       "kind": "contains",
       "source": "target:orvek:bin:orvek",
       "target": "module:orvek:bin:orvek::app::error"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek:bin:orvek",
+      "target": "module:orvek:bin:orvek::app::event_intake"
     },
     {
       "kind": "contains",
@@ -11825,6 +12160,11 @@
       "kind": "contains",
       "source": "target:orvek:test:completion_hook",
       "target": "module:orvek:test:completion_hook::tests::completion_hook"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek:test:event_intake",
+      "target": "module:orvek:test:event_intake::tests::event_intake"
     },
     {
       "kind": "contains",
@@ -12532,6 +12872,12 @@
       "path": "crates/harness/src/store"
     },
     {
+      "id": "directory:crates/harness/src/trace",
+      "kind": "directory",
+      "label": "trace",
+      "path": "crates/harness/src/trace"
+    },
+    {
       "id": "directory:crates/harness/src/workspace",
       "kind": "directory",
       "label": "workspace",
@@ -12572,6 +12918,12 @@
       "kind": "directory",
       "label": "remote",
       "path": "crates/memory/src/store/remote"
+    },
+    {
+      "id": "directory:crates/memory/tests",
+      "kind": "directory",
+      "label": "tests",
+      "path": "crates/memory/tests"
     },
     {
       "id": "directory:docker",
@@ -13100,7 +13452,7 @@
       "id": "file:Cargo.lock",
       "kind": "file",
       "label": "Cargo.lock",
-      "lines": 6176,
+      "lines": 6177,
       "path": "Cargo.lock"
     },
     {
@@ -13240,7 +13592,7 @@
       "id": "file:bin/orvek/src/app/cli.rs",
       "kind": "file",
       "label": "cli.rs",
-      "lines": 1479,
+      "lines": 1513,
       "path": "bin/orvek/src/app/cli.rs"
     },
     {
@@ -13256,8 +13608,16 @@
       "id": "file:bin/orvek/src/app/error.rs",
       "kind": "file",
       "label": "error.rs",
-      "lines": 264,
+      "lines": 266,
       "path": "bin/orvek/src/app/error.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:bin/orvek/src/app/event_intake.rs",
+      "kind": "file",
+      "label": "event_intake.rs",
+      "lines": 89,
+      "path": "bin/orvek/src/app/event_intake.rs"
     },
     {
       "file_kind": "rust-source",
@@ -13288,7 +13648,7 @@
       "id": "file:bin/orvek/src/app/host_context_tests.rs",
       "kind": "file",
       "label": "host_context_tests.rs",
-      "lines": 778,
+      "lines": 948,
       "path": "bin/orvek/src/app/host_context_tests.rs"
     },
     {
@@ -13304,7 +13664,7 @@
       "id": "file:bin/orvek/src/app/mod.rs",
       "kind": "file",
       "label": "mod.rs",
-      "lines": 20,
+      "lines": 21,
       "path": "bin/orvek/src/app/mod.rs"
     },
     {
@@ -13352,7 +13712,7 @@
       "id": "file:bin/orvek/src/core/context.rs",
       "kind": "file",
       "label": "context.rs",
-      "lines": 283,
+      "lines": 312,
       "path": "bin/orvek/src/core/context.rs"
     },
     {
@@ -13520,7 +13880,7 @@
       "id": "file:bin/orvek/src/tui/components/app.rs",
       "kind": "file",
       "label": "app.rs",
-      "lines": 1607,
+      "lines": 1608,
       "path": "bin/orvek/src/tui/components/app.rs"
     },
     {
@@ -13616,7 +13976,7 @@
       "id": "file:bin/orvek/src/tui/components/memory.rs",
       "kind": "file",
       "label": "memory.rs",
-      "lines": 1794,
+      "lines": 1795,
       "path": "bin/orvek/src/tui/components/memory.rs"
     },
     {
@@ -13672,7 +14032,7 @@
       "id": "file:bin/orvek/src/tui/components/root.rs",
       "kind": "file",
       "label": "root.rs",
-      "lines": 6629,
+      "lines": 6630,
       "path": "bin/orvek/src/tui/components/root.rs"
     },
     {
@@ -14045,6 +14405,14 @@
     },
     {
       "file_kind": "rust-source",
+      "id": "file:bin/orvek/tests/event_intake.rs",
+      "kind": "file",
+      "label": "event_intake.rs",
+      "lines": 516,
+      "path": "bin/orvek/tests/event_intake.rs"
+    },
+    {
+      "file_kind": "rust-source",
       "id": "file:bin/orvek/tests/release_pipeline.rs",
       "kind": "file",
       "label": "release_pipeline.rs",
@@ -14271,7 +14639,7 @@
       "id": "file:crates/harness/src/controller.rs",
       "kind": "file",
       "label": "controller.rs",
-      "lines": 3688,
+      "lines": 3724,
       "path": "crates/harness/src/controller.rs"
     },
     {
@@ -14281,6 +14649,14 @@
       "label": "auxiliary.rs",
       "lines": 856,
       "path": "crates/harness/src/controller/auxiliary.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/harness/src/controller/event_intake.rs",
+      "kind": "file",
+      "label": "event_intake.rs",
+      "lines": 622,
+      "path": "crates/harness/src/controller/event_intake.rs"
     },
     {
       "file_kind": "rust-source",
@@ -14372,6 +14748,14 @@
     },
     {
       "file_kind": "rust-source",
+      "id": "file:crates/harness/src/event_intake.rs",
+      "kind": "file",
+      "label": "event_intake.rs",
+      "lines": 125,
+      "path": "crates/harness/src/event_intake.rs"
+    },
+    {
+      "file_kind": "rust-source",
       "id": "file:crates/harness/src/feedback.rs",
       "kind": "file",
       "label": "feedback.rs",
@@ -14415,7 +14799,7 @@
       "id": "file:crates/harness/src/inference/protocol.rs",
       "kind": "file",
       "label": "protocol.rs",
-      "lines": 1294,
+      "lines": 1365,
       "path": "crates/harness/src/inference/protocol.rs"
     },
     {
@@ -14423,7 +14807,7 @@
       "id": "file:crates/harness/src/inference/transport.rs",
       "kind": "file",
       "label": "transport.rs",
-      "lines": 931,
+      "lines": 928,
       "path": "crates/harness/src/inference/transport.rs"
     },
     {
@@ -14439,7 +14823,7 @@
       "id": "file:crates/harness/src/ipc.rs",
       "kind": "file",
       "label": "ipc.rs",
-      "lines": 1006,
+      "lines": 1056,
       "path": "crates/harness/src/ipc.rs"
     },
     {
@@ -14447,7 +14831,7 @@
       "id": "file:crates/harness/src/lib.rs",
       "kind": "file",
       "label": "lib.rs",
-      "lines": 40,
+      "lines": 41,
       "path": "crates/harness/src/lib.rs"
     },
     {
@@ -14543,7 +14927,7 @@
       "id": "file:crates/harness/src/services.rs",
       "kind": "file",
       "label": "services.rs",
-      "lines": 51,
+      "lines": 72,
       "path": "crates/harness/src/services.rs"
     },
     {
@@ -14583,7 +14967,7 @@
       "id": "file:crates/harness/src/store.rs",
       "kind": "file",
       "label": "store.rs",
-      "lines": 3602,
+      "lines": 3604,
       "path": "crates/harness/src/store.rs"
     },
     {
@@ -14593,6 +14977,14 @@
       "label": "auxiliary.rs",
       "lines": 460,
       "path": "crates/harness/src/store/auxiliary.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/harness/src/store/event_intake.rs",
+      "kind": "file",
+      "label": "event_intake.rs",
+      "lines": 475,
+      "path": "crates/harness/src/store/event_intake.rs"
     },
     {
       "file_kind": "rust-source",
@@ -14631,8 +15023,24 @@
       "id": "file:crates/harness/src/trace.rs",
       "kind": "file",
       "label": "trace.rs",
-      "lines": 1017,
+      "lines": 1033,
       "path": "crates/harness/src/trace.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/harness/src/trace/receipts.rs",
+      "kind": "file",
+      "label": "receipts.rs",
+      "lines": 1104,
+      "path": "crates/harness/src/trace/receipts.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/harness/src/trace/tests.rs",
+      "kind": "file",
+      "label": "tests.rs",
+      "lines": 638,
+      "path": "crates/harness/src/trace/tests.rs"
     },
     {
       "file_kind": "rust-source",
@@ -14735,7 +15143,7 @@
       "id": "file:crates/harness/tests/native_host.rs",
       "kind": "file",
       "label": "native_host.rs",
-      "lines": 1125,
+      "lines": 1249,
       "path": "crates/harness/tests/native_host.rs"
     },
     {
@@ -14799,7 +15207,7 @@
       "id": "file:crates/harness/tests/subagents.rs",
       "kind": "file",
       "label": "subagents.rs",
-      "lines": 1255,
+      "lines": 1275,
       "path": "crates/harness/tests/subagents.rs"
     },
     {
@@ -14815,7 +15223,7 @@
       "id": "file:crates/harness/tests/trace_bundle.rs",
       "kind": "file",
       "label": "trace_bundle.rs",
-      "lines": 725,
+      "lines": 803,
       "path": "crates/harness/tests/trace_bundle.rs"
     },
     {
@@ -14863,7 +15271,7 @@
       "id": "file:crates/memory/Cargo.toml",
       "kind": "file",
       "label": "Cargo.toml",
-      "lines": 46,
+      "lines": 47,
       "path": "crates/memory/Cargo.toml"
     },
     {
@@ -14871,15 +15279,39 @@
       "id": "file:crates/memory/README.md",
       "kind": "file",
       "label": "README.md",
-      "lines": 20,
+      "lines": 22,
       "path": "crates/memory/README.md"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/memory/src/archive.rs",
+      "kind": "file",
+      "label": "archive.rs",
+      "lines": 117,
+      "path": "crates/memory/src/archive.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/memory/src/evidence.rs",
+      "kind": "file",
+      "label": "evidence.rs",
+      "lines": 313,
+      "path": "crates/memory/src/evidence.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/memory/src/lessons.rs",
+      "kind": "file",
+      "label": "lessons.rs",
+      "lines": 110,
+      "path": "crates/memory/src/lessons.rs"
     },
     {
       "file_kind": "rust-source",
       "id": "file:crates/memory/src/lib.rs",
       "kind": "file",
       "label": "lib.rs",
-      "lines": 36,
+      "lines": 51,
       "path": "crates/memory/src/lib.rs"
     },
     {
@@ -14887,7 +15319,7 @@
       "id": "file:crates/memory/src/model.rs",
       "kind": "file",
       "label": "model.rs",
-      "lines": 211,
+      "lines": 219,
       "path": "crates/memory/src/model.rs"
     },
     {
@@ -14895,7 +15327,7 @@
       "id": "file:crates/memory/src/retrieval.rs",
       "kind": "file",
       "label": "retrieval.rs",
-      "lines": 351,
+      "lines": 353,
       "path": "crates/memory/src/retrieval.rs"
     },
     {
@@ -14927,7 +15359,7 @@
       "id": "file:crates/memory/src/server/protocol.rs",
       "kind": "file",
       "label": "protocol.rs",
-      "lines": 231,
+      "lines": 256,
       "path": "crates/memory/src/server/protocol.rs"
     },
     {
@@ -14935,7 +15367,7 @@
       "id": "file:crates/memory/src/server/router.rs",
       "kind": "file",
       "label": "router.rs",
-      "lines": 720,
+      "lines": 780,
       "path": "crates/memory/src/server/router.rs"
     },
     {
@@ -14943,15 +15375,23 @@
       "id": "file:crates/memory/src/server/tests.rs",
       "kind": "file",
       "label": "tests.rs",
-      "lines": 1853,
+      "lines": 2338,
       "path": "crates/memory/src/server/tests.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/memory/src/sources.rs",
+      "kind": "file",
+      "label": "sources.rs",
+      "lines": 198,
+      "path": "crates/memory/src/sources.rs"
     },
     {
       "file_kind": "rust-source",
       "id": "file:crates/memory/src/store/local.rs",
       "kind": "file",
       "label": "local.rs",
-      "lines": 989,
+      "lines": 1197,
       "path": "crates/memory/src/store/local.rs"
     },
     {
@@ -14959,7 +15399,7 @@
       "id": "file:crates/memory/src/store/mod.rs",
       "kind": "file",
       "label": "mod.rs",
-      "lines": 423,
+      "lines": 528,
       "path": "crates/memory/src/store/mod.rs"
     },
     {
@@ -14967,7 +15407,7 @@
       "id": "file:crates/memory/src/store/remote/client.rs",
       "kind": "file",
       "label": "client.rs",
-      "lines": 924,
+      "lines": 1048,
       "path": "crates/memory/src/store/remote/client.rs"
     },
     {
@@ -14983,7 +15423,7 @@
       "id": "file:crates/memory/src/tests.rs",
       "kind": "file",
       "label": "tests.rs",
-      "lines": 585,
+      "lines": 595,
       "path": "crates/memory/src/tests.rs"
     },
     {
@@ -14991,8 +15431,24 @@
       "id": "file:crates/memory/src/tool.rs",
       "kind": "file",
       "label": "tool.rs",
-      "lines": 735,
+      "lines": 973,
       "path": "crates/memory/src/tool.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/memory/tests/evidence.rs",
+      "kind": "file",
+      "label": "evidence.rs",
+      "lines": 394,
+      "path": "crates/memory/tests/evidence.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/memory/tests/t05_review.rs",
+      "kind": "file",
+      "label": "t05_review.rs",
+      "lines": 497,
+      "path": "crates/memory/tests/t05_review.rs"
     },
     {
       "file_kind": "documentation",
@@ -15175,7 +15631,7 @@
       "id": "file:docs/design/autonomy-tracker.sources.json",
       "kind": "file",
       "label": "autonomy-tracker.sources.json",
-      "lines": 997,
+      "lines": 1001,
       "path": "docs/design/autonomy-tracker.sources.json"
     },
     {
@@ -15356,10 +15812,18 @@
     },
     {
       "file_kind": "documentation",
+      "id": "file:docs/event-intake.md",
+      "kind": "file",
+      "label": "event-intake.md",
+      "lines": 141,
+      "path": "docs/event-intake.md"
+    },
+    {
+      "file_kind": "documentation",
       "id": "file:docs/executable-examples.md",
       "kind": "file",
       "label": "executable-examples.md",
-      "lines": 425,
+      "lines": 431,
       "path": "docs/executable-examples.md"
     },
     {
@@ -15383,7 +15847,7 @@
       "id": "file:docs/memory.md",
       "kind": "file",
       "label": "memory.md",
-      "lines": 229,
+      "lines": 317,
       "path": "docs/memory.md"
     },
     {
@@ -15423,7 +15887,7 @@
       "id": "file:docs/trace-bundles.md",
       "kind": "file",
       "label": "trace-bundles.md",
-      "lines": 157,
+      "lines": 183,
       "path": "docs/trace-bundles.md"
     },
     {
@@ -15711,7 +16175,7 @@
       "id": "file:examples/host-docs/inventory.json",
       "kind": "file",
       "label": "inventory.json",
-      "lines": 247,
+      "lines": 289,
       "path": "examples/host-docs/inventory.json"
     },
     {
@@ -15807,7 +16271,7 @@
       "id": "file:examples/orvek-memory-cloudflare/README.md",
       "kind": "file",
       "label": "README.md",
-      "lines": 100,
+      "lines": 108,
       "path": "examples/orvek-memory-cloudflare/README.md"
     },
     {
@@ -15825,6 +16289,22 @@
       "label": "0001_initial.sql",
       "lines": 25,
       "path": "examples/orvek-memory-cloudflare/migrations/0001_initial.sql"
+    },
+    {
+      "file_kind": "supporting-file",
+      "id": "file:examples/orvek-memory-cloudflare/migrations/0002_evidence.sql",
+      "kind": "file",
+      "label": "0002_evidence.sql",
+      "lines": 2,
+      "path": "examples/orvek-memory-cloudflare/migrations/0002_evidence.sql"
+    },
+    {
+      "file_kind": "supporting-file",
+      "id": "file:examples/orvek-memory-cloudflare/migrations/0003_ownership.sql",
+      "kind": "file",
+      "label": "0003_ownership.sql",
+      "lines": 3,
+      "path": "examples/orvek-memory-cloudflare/migrations/0003_ownership.sql"
     },
     {
       "file_kind": "configuration",
@@ -15887,7 +16367,7 @@
       "id": "file:examples/orvek-memory-cloudflare/src/store.rs",
       "kind": "file",
       "label": "store.rs",
-      "lines": 675,
+      "lines": 1045,
       "path": "examples/orvek-memory-cloudflare/src/store.rs"
     },
     {
@@ -15895,7 +16375,7 @@
       "id": "file:examples/orvek-memory-cloudflare/src/store/row.rs",
       "kind": "file",
       "label": "row.rs",
-      "lines": 156,
+      "lines": 160,
       "path": "examples/orvek-memory-cloudflare/src/store/row.rs"
     },
     {
@@ -16017,6 +16497,22 @@
       "label": "test-host-context.py",
       "lines": 155,
       "path": "scripts/test-host-context.py"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:scripts/test-memory-evidence.py",
+      "kind": "file",
+      "label": "test-memory-evidence.py",
+      "lines": 181,
+      "path": "scripts/test-memory-evidence.py"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:scripts/test-memory-transfer.py",
+      "kind": "file",
+      "label": "test-memory-transfer.py",
+      "lines": 74,
+      "path": "scripts/test-memory-transfer.py"
     },
     {
       "file_kind": "python-script",
@@ -18861,6 +19357,13 @@
       "target": "target:orvek-harness:lib"
     },
     {
+      "id": "module:orvek-harness:lib::controller::event_intake",
+      "kind": "module",
+      "label": "orvek-harness:lib::controller::event_intake",
+      "path": "crates/harness/src/controller/event_intake.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
       "id": "module:orvek-harness:lib::controller::imports",
       "kind": "module",
       "label": "orvek-harness:lib::controller::imports",
@@ -18935,6 +19438,13 @@
       "kind": "module",
       "label": "orvek-harness:lib::digest",
       "path": "crates/harness/src/digest.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
+      "id": "module:orvek-harness:lib::event_intake",
+      "kind": "module",
+      "label": "orvek-harness:lib::event_intake",
+      "path": "crates/harness/src/event_intake.rs",
       "target": "target:orvek-harness:lib"
     },
     {
@@ -19113,6 +19623,13 @@
       "target": "target:orvek-harness:lib"
     },
     {
+      "id": "module:orvek-harness:lib::store::event_intake",
+      "kind": "module",
+      "label": "orvek-harness:lib::store::event_intake",
+      "path": "crates/harness/src/store/event_intake.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
       "id": "module:orvek-harness:lib::store::imports",
       "kind": "module",
       "label": "orvek-harness:lib::store::imports",
@@ -19145,6 +19662,20 @@
       "kind": "module",
       "label": "orvek-harness:lib::trace",
       "path": "crates/harness/src/trace.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
+      "id": "module:orvek-harness:lib::trace::receipts",
+      "kind": "module",
+      "label": "orvek-harness:lib::trace::receipts",
+      "path": "crates/harness/src/trace/receipts.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
+      "id": "module:orvek-harness:lib::trace::tests",
+      "kind": "module",
+      "label": "orvek-harness:lib::trace::tests",
+      "path": "crates/harness/src/trace/tests.rs",
       "target": "target:orvek-harness:lib"
     },
     {
@@ -19386,6 +19917,27 @@
       "target": "target:orvek-memory:lib"
     },
     {
+      "id": "module:orvek-memory:lib::archive",
+      "kind": "module",
+      "label": "orvek-memory:lib::archive",
+      "path": "crates/memory/src/archive.rs",
+      "target": "target:orvek-memory:lib"
+    },
+    {
+      "id": "module:orvek-memory:lib::evidence",
+      "kind": "module",
+      "label": "orvek-memory:lib::evidence",
+      "path": "crates/memory/src/evidence.rs",
+      "target": "target:orvek-memory:lib"
+    },
+    {
+      "id": "module:orvek-memory:lib::lessons",
+      "kind": "module",
+      "label": "orvek-memory:lib::lessons",
+      "path": "crates/memory/src/lessons.rs",
+      "target": "target:orvek-memory:lib"
+    },
+    {
       "id": "module:orvek-memory:lib::model",
       "kind": "module",
       "label": "orvek-memory:lib::model",
@@ -19442,6 +19994,13 @@
       "target": "target:orvek-memory:lib"
     },
     {
+      "id": "module:orvek-memory:lib::sources",
+      "kind": "module",
+      "label": "orvek-memory:lib::sources",
+      "path": "crates/memory/src/sources.rs",
+      "target": "target:orvek-memory:lib"
+    },
+    {
       "id": "module:orvek-memory:lib::store",
       "kind": "module",
       "label": "orvek-memory:lib::store",
@@ -19482,6 +20041,20 @@
       "label": "orvek-memory:lib::tool",
       "path": "crates/memory/src/tool.rs",
       "target": "target:orvek-memory:lib"
+    },
+    {
+      "id": "module:orvek-memory:test:evidence::tests::evidence",
+      "kind": "module",
+      "label": "orvek-memory:test:evidence::tests::evidence",
+      "path": "crates/memory/tests/evidence.rs",
+      "target": "target:orvek-memory:test:evidence"
+    },
+    {
+      "id": "module:orvek-memory:test:t05_review::tests::t05_review",
+      "kind": "module",
+      "label": "orvek-memory:test:t05_review::tests::t05_review",
+      "path": "crates/memory/tests/t05_review.rs",
+      "target": "target:orvek-memory:test:t05_review"
     },
     {
       "id": "module:orvek:bench:tui::app",
@@ -19579,6 +20152,13 @@
       "kind": "module",
       "label": "orvek:bin:orvek::app::error",
       "path": "bin/orvek/src/app/error.rs",
+      "target": "target:orvek:bin:orvek"
+    },
+    {
+      "id": "module:orvek:bin:orvek::app::event_intake",
+      "kind": "module",
+      "label": "orvek:bin:orvek::app::event_intake",
+      "path": "bin/orvek/src/app/event_intake.rs",
       "target": "target:orvek:bin:orvek"
     },
     {
@@ -20254,6 +20834,13 @@
       "target": "target:orvek:test:completion_hook"
     },
     {
+      "id": "module:orvek:test:event_intake::tests::event_intake",
+      "kind": "module",
+      "label": "orvek:test:event_intake::tests::event_intake",
+      "path": "bin/orvek/tests/event_intake.rs",
+      "target": "target:orvek:test:event_intake"
+    },
+    {
       "id": "module:orvek:test:release_pipeline::tests::release_pipeline",
       "kind": "module",
       "label": "orvek:test:release_pipeline::tests::release_pipeline",
@@ -20580,6 +21167,18 @@
       "package": "orvek-memory"
     },
     {
+      "id": "target:orvek-memory:test:evidence",
+      "kind": "target",
+      "label": "orvek-memory test:evidence",
+      "package": "orvek-memory"
+    },
+    {
+      "id": "target:orvek-memory:test:t05_review",
+      "kind": "target",
+      "label": "orvek-memory test:t05_review",
+      "package": "orvek-memory"
+    },
+    {
       "id": "target:orvek:bench:tui",
       "kind": "target",
       "label": "orvek bench:tui",
@@ -20607,6 +21206,12 @@
       "id": "target:orvek:test:completion_hook",
       "kind": "target",
       "label": "orvek test:completion_hook",
+      "package": "orvek"
+    },
+    {
+      "id": "target:orvek:test:event_intake",
+      "kind": "target",
+      "label": "orvek test:event_intake",
       "package": "orvek"
     },
     {
@@ -20669,36 +21274,36 @@
     ]
   },
   "statistics": {
-    "edges": 2370,
+    "edges": 2438,
     "files_by_kind": {
       "automation": 4,
       "binary-asset": 5,
       "cargo-manifest": 8,
       "ci-workflow": 4,
       "configuration": 25,
-      "documentation": 54,
-      "python-script": 45,
-      "rust-source": 363,
-      "supporting-file": 21,
+      "documentation": 55,
+      "python-script": 47,
+      "rust-source": 376,
+      "supporting-file": 23,
       "typescript-source": 36,
       "web-asset": 20
     },
-    "nodes": 1216,
+    "nodes": 1252,
     "nodes_by_kind": {
       "component": 14,
       "dependency": 72,
-      "directory": 119,
-      "file": 585,
-      "module": 367,
+      "directory": 121,
+      "file": 603,
+      "module": 380,
       "package": 7,
       "repository": 1,
-      "target": 50,
+      "target": 53,
       "workspace": 1
     },
     "static_reference_coverage": {
       "rust_compile_time_includes": {
-        "detected": 19,
-        "resolved": 19
+        "detected": 25,
+        "resolved": 25
       },
       "typescript_relative_imports": {
         "detected": 47,
