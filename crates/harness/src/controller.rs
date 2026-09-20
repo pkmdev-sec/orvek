@@ -384,6 +384,7 @@ impl Drop for TaskDeadline {
 /// Host-owned orchestration. Views receive projections and never own this future.
 pub struct Host {
     event_intake: Mutex<()>,
+    experimental_context_transitions: bool,
     completion_hook: Option<String>,
     root: PathBuf,
     store: Arc<Mutex<Store>>,
@@ -477,6 +478,7 @@ impl Host {
         }
         Ok(Self {
             event_intake: Mutex::new(()),
+            experimental_context_transitions: false,
             completion_hook: None,
             root: root.canonicalize()?,
             store: Arc::new(Mutex::new(store)),
@@ -497,6 +499,13 @@ impl Host {
             queue_stop: CancellationToken::new(),
             context_renders: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Opt in to experimental model-directed context transitions. Disabled by default
+    /// until paired live-model quality and full-cost acceptance is established.
+    pub fn with_experimental_context_transitions(mut self, enabled: bool) -> Self {
+        self.experimental_context_transitions = enabled;
+        self
     }
 
     /// Installs application-owned services before the host starts accepting IPC requests.
@@ -1666,6 +1675,10 @@ impl Host {
             } else {
                 tool_definitions(discovery)
             };
+            if self.experimental_context_transitions {
+                definitions.push(crate::context::transitions::tool_definition());
+                instructions.push_str(&format!("\n\nExperimental context transitions are enabled. Settled source history: [0, {}). Current request history is a protected native live tail. Use read_context for exact indexed source. Summaries are derived, may omit obligations, and never alter task truth or completion checks.", session.settled_history_items));
+            }
             let context_definitions = context_session
                 .as_ref()
                 .map(|context| context.definitions(ContextAccess::ReadWrite))
@@ -1726,7 +1739,13 @@ impl Host {
                 .manifest
                 .segments
                 .iter()
-                .filter(|segment| segment.role == crate::context::ContextSegmentRole::StableHistory)
+                .filter(|segment| {
+                    matches!(
+                        segment.role,
+                        crate::context::ContextSegmentRole::StableHistory
+                            | crate::context::ContextSegmentRole::DerivedSummary
+                    )
+                })
                 .map(|segment| {
                     let start = usize::try_from(segment.input_range.start)
                         .map_err(|_| HostError::Invalid("context segment range is invalid"))?;
@@ -2023,10 +2042,13 @@ impl Host {
                     Some(args) => {
                         if matches!(
                             proposal.name.as_str(),
-                            "propose_completion" | "report_blocker" | "propose_contract"
+                            "propose_completion"
+                                | "report_blocker"
+                                | "propose_contract"
+                                | "transition_context"
                         ) && !exclusive_control
                         {
-                            json!({"error":"completion and blocker proposals must be the only tool call in their response; settle other work first"})
+                            json!({"error":"completion, contract, blocker and context transition proposals must be the only tool call in their response; settle other work first"})
                         } else if proposal.name == "propose_contract" {
                             if native {
                                 json!({"error":"native host mode does not admit contracts; continue the work directly and finish with a summary or propose_completion"})
@@ -2054,6 +2076,9 @@ impl Host {
                             }
                         } else if proposal.name == "read_review_feedback" {
                             self.read_review_feedback(session_id, args).await?
+                        } else if proposal.name == "transition_context" {
+                            self.transition_context(session_id, request, &proposal.call_id, args)
+                                .await?
                         } else if proposal.name == "read_context" {
                             self.read_context(session_id, args).await?
                         } else if proposal.name == "read_legacy" {
@@ -2385,6 +2410,57 @@ impl Host {
             result: result.clone(),
         });
         Ok(())
+    }
+
+    async fn transition_context(
+        &self,
+        session: SessionId,
+        request: Uuid,
+        call_id: &str,
+        args: Value,
+    ) -> Result<Value, HostError> {
+        if !self.experimental_context_transitions {
+            return Ok(json!({"error":"experimental context transitions are disabled"}));
+        }
+        let proposal = match serde_json::from_value(args) {
+            Ok(proposal) => proposal,
+            Err(error) => {
+                return Ok(json!({"error":error.to_string(),"prior_view_preserved":true}));
+            }
+        };
+        let mut store = self.store.lock().await;
+        let state = store.load_session(session)?;
+        let transition = match crate::context::transitions::ContextTransition::prepare(
+            &state,
+            request,
+            call_id.to_owned(),
+            proposal,
+        ) {
+            Ok(transition) => transition,
+            Err(error) => {
+                return Ok(json!({"error":error.to_string(),"prior_view_preserved":true}));
+            }
+        };
+        let result = json!({"accepted":true,"derived_only":true,"transition":transition,"retrieval":transition.retrieval()});
+        let mut preview = state.clone();
+        preview.context_transitions.push(transition.clone());
+        // Include the result in the size preview without publishing it as a receipt.
+        preview.history.push(json!({"type":"function_call_output","call_id":call_id,"output":serde_json::to_string(&result)?}));
+        if let Err(error) = crate::context::project(
+            &preview,
+            crate::context::projection_byte_limit(state.context_window_tokens())?,
+        ) {
+            return Ok(json!({"error":error.to_string(),"prior_view_preserved":true}));
+        }
+        store.session_command(
+            session,
+            state.revision,
+            Uuid::new_v5(&request, format!("context-transition:{call_id}").as_bytes()),
+            SessionCommand::ContextTransition {
+                transition: Box::new(transition),
+            },
+        )?;
+        Ok(result)
     }
 
     async fn read_context(&self, session: SessionId, args: Value) -> Result<Value, HostError> {
@@ -3381,7 +3457,13 @@ fn representation_observation(
         .manifest
         .segments
         .iter()
-        .filter(|segment| segment.role == crate::context::ContextSegmentRole::StableHistory)
+        .filter(|segment| {
+            matches!(
+                segment.role,
+                crate::context::ContextSegmentRole::StableHistory
+                    | crate::context::ContextSegmentRole::DerivedSummary
+            )
+        })
         .map(|segment| {
             let representation = match segment.representation {
                 crate::context::ContextRepresentation::NativeText { .. } => {
@@ -3398,7 +3480,13 @@ fn representation_observation(
         .manifest
         .segments
         .iter()
-        .filter(|segment| segment.role == crate::context::ContextSegmentRole::StableHistory)
+        .filter(|segment| {
+            matches!(
+                segment.role,
+                crate::context::ContextSegmentRole::StableHistory
+                    | crate::context::ContextSegmentRole::DerivedSummary
+            )
+        })
         .try_fold(0_u64, |total, segment| {
             let start = usize::try_from(segment.input_range.start)
                 .map_err(|_| StoreError::Invalid("context observation range is invalid"))?;

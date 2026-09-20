@@ -125,6 +125,10 @@ pub(super) fn prepare_context(
                 .map(str::to_owned)
                 .collect::<BTreeSet<_>>();
             let mut source = parent.clone();
+            // Filtering changes source indices. Forks start from original history,
+            // not a parent's derived summaries or cached representations.
+            source.context_transitions.clear();
+            source.context_view = None;
             source.settled_history_items = parent
                 .history
                 .iter()
@@ -166,4 +170,99 @@ pub(super) fn prepare_context(
     };
     let digest = store.artifacts().put(&serde_json::to_vec(&manifest)?)?;
     Ok((manifest, digest, input))
+}
+
+#[cfg(test)]
+mod transition_tests {
+    use super::*;
+    use crate::{
+        context::{
+            HistoryRange,
+            transitions::{ContextTransition, TransitionProposal},
+        },
+        contract::Limits,
+        inference::ModelSettings,
+        session::SessionConfig,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn filtered_child_fork_drops_derived_views_and_keeps_pinned_original_source() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&root.path().join("state")).unwrap();
+        let session = store
+            .create_session(
+                SessionId::new(),
+                SessionConfig {
+                    workspace: root.path().into(),
+                    model: ModelSettings::default(),
+                    instructions: String::new(),
+                    context_window_tokens: crate::context::DEFAULT_WINDOW_TOKENS,
+                },
+                None,
+            )
+            .unwrap();
+        let intake = store
+            .artifacts()
+            .put(
+                &serde_json::to_vec(&crate::admission::RequestPolicy {
+                    version: 1,
+                    delivery: crate::contract::DeliveryKind::Source,
+                    profile: crate::admission::RepositoryProfile {
+                        version: 1,
+                        name: "fixture".into(),
+                        checks: Default::default(),
+                    },
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        let (_, task, _) = store
+            .start_request(
+                session.id,
+                Uuid::new_v4(),
+                "goal".into(),
+                Limits::default(),
+                intake,
+            )
+            .unwrap();
+        let mut parent = store.load_session(session.id).unwrap();
+        parent.history = vec![
+            json!({"role":"user","content":"original goal"}),
+            json!({"role":"assistant","content":"original exact source 雪"}),
+            json!({"type":"function_call","call_id":"pending","name":"spawn_agent","arguments":"{}"}),
+        ];
+        parent.settled_history_items = 2;
+        parent.context_transitions.push(ContextTransition {
+            source: parent.cursor(),
+            source_history_items: 3,
+            source_history: Digest::of_value(&parent.history).unwrap(),
+            source_digest: Digest::of_value(&parent.history[..2]).unwrap(),
+            request: parent.active_request.unwrap(),
+            call_id: "prior".into(),
+            proposal: TransitionProposal {
+                range: HistoryRange { start: 0, end: 2 },
+                purpose: "phase".into(),
+                summary: "incorrect conclusion".into(),
+                pending_obligations: vec![],
+            },
+        });
+        let (manifest, _, input) =
+            prepare_context(&store, &parent, task.id, ContextMode::ForkAtCursor).unwrap();
+        assert_eq!(input, parent.history[..2]);
+        assert_eq!(manifest.parent, parent.cursor());
+        assert_eq!(
+            manifest.source_history,
+            Digest::of_value(&parent.history).unwrap()
+        );
+        assert_eq!(manifest.excluded_calls, vec!["pending"]);
+        assert_ne!(
+            manifest.projection.unwrap().original_history,
+            manifest.source_history
+        );
+        let (manifest, _, input) =
+            prepare_context(&store, &parent, task.id, ContextMode::Isolated).unwrap();
+        assert!(input.is_empty());
+        assert!(manifest.projection.is_none());
+    }
 }

@@ -403,6 +403,8 @@ pub struct SessionState {
     pub settled_history_items: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_view: Option<crate::context::ContextView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_transitions: Vec<crate::context::transitions::ContextTransition>,
     pub operations: BTreeMap<Uuid, Digest>,
     pub current_task: Option<TaskId>,
     pub tasks_by_request: BTreeMap<Uuid, TaskId>,
@@ -566,6 +568,9 @@ pub enum SessionCommand {
         call: Uuid,
         manifest: Digest,
     },
+    ContextTransition {
+        transition: Box<crate::context::transitions::ContextTransition>,
+    },
     ContextProjected {
         source_revision: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -650,6 +655,7 @@ impl SessionState {
             history,
             settled_history_items,
             context_view: None,
+            context_transitions: Vec::new(),
             operations,
             current_task: None,
             tasks_by_request: BTreeMap::new(),
@@ -860,6 +866,15 @@ impl SessionState {
                     )));
                 }
                 self.config.model = *settings;
+            }
+            SessionCommand::ContextTransition { transition } => {
+                transition.validate_acceptance(self).map_err(|error| {
+                    serde_json::Error::io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        error,
+                    ))
+                })?;
+                self.context_transitions.push(transition.as_ref().clone());
             }
             SessionCommand::ContextProjected { view, .. } => {
                 self.context_view = view.clone();

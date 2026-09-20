@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
+pub mod transitions;
+
 const RENDERER: &[u8] =
     b"orvek-context-v2:stable-prefix:live-tail:explicit-archive:interrupted-output-is-unknown";
 
@@ -79,6 +81,7 @@ pub enum ContextRepresentation {
 pub enum ContextSegmentRole {
     StableHistory,
     OmissionNotice,
+    DerivedSummary,
     LiveTail,
 }
 
@@ -285,6 +288,8 @@ pub enum ContextError {
     WindowTokens { value: u64 },
     #[error("cannot project a tool call that still belongs to the active request")]
     PendingCall,
+    #[error("context transition: {0}")]
+    Transition(&'static str),
 }
 
 /// The current contract and instructions are supplied separately on every call.
@@ -296,6 +301,14 @@ struct ProjectedItem {
 }
 
 pub fn project(session: &SessionState, max_bytes: usize) -> Result<Projection, ContextError> {
+    if session.context_transitions.is_empty() {
+        project_native(session, max_bytes)
+    } else {
+        transitions::project(session, max_bytes)
+    }
+}
+
+fn project_native(session: &SessionState, max_bytes: usize) -> Result<Projection, ContextError> {
     if max_bytes < 4096 {
         return Err(ContextError::Limit);
     }

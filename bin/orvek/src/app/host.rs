@@ -381,6 +381,10 @@ pub(crate) fn state_directory(config_path: &Path) -> PathBuf {
         .join("host/v1")
 }
 
+fn experimental_context_transitions() -> bool {
+    std::env::var("ORVEK_EXPERIMENTAL_CONTEXT_TRANSITIONS").as_deref() == Ok("1")
+}
+
 fn configuration_identity(config: &Config) -> Result<Digest> {
     Digest::of_value(&configuration_identity_material(config)?)
         .map_err(|error| Error::HostRequest(error.to_string()))
@@ -406,7 +410,7 @@ fn configuration_identity_material(config: &Config) -> Result<serde_json::Value>
     // Client build metadata is deliberately excluded. A rebuild does not
     // change host configuration, and protocol compatibility is enforced by
     // the IPC boundary instead.
-    Ok(serde_json::json!({
+    let mut material = serde_json::json!({
         "version": 1,
         "config_path": config.path(),
         "file_revision": revision,
@@ -430,7 +434,11 @@ fn configuration_identity_material(config: &Config) -> Result<serde_json::Value>
         // pinning the executor image and helper explicitly.
         "executor_image": sandbox.then(|| std::env::var("ORVEK_EXECUTOR_IMAGE").ok()).flatten(),
         "executor_helper": sandbox.then(|| std::env::var_os("ORVEK_EXECUTOR_HELPER").map(PathBuf::from)),
-    }))
+    });
+    if experimental_context_transitions() {
+        material["experimental_context_transitions"] = json!(1);
+    }
+    Ok(material)
 }
 
 /// A configured `websocket_url` opts into the WebSocket transport; every other
@@ -566,6 +574,7 @@ pub(crate) async fn serve(config: &Config) -> Result<()> {
             configuration_identity(config)?,
         )?
     };
+    let host = host.with_experimental_context_transitions(experimental_context_transitions());
     let host = if config.memory().enabled() || config.skills().enabled() {
         host.with_context_service(Arc::new(crate::core::context::ConfiguredContext::new(
             config,

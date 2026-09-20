@@ -311,9 +311,9 @@ impl HostProjection {
             } => {
                 self.recorded_ms = at_ms;
                 match command {
-                    SessionCommand::TraceRecorded { .. } | SessionCommand::ChildLifecycle(_) => {
-                        Vec::new()
-                    }
+                    SessionCommand::TraceRecorded { .. }
+                    | SessionCommand::ChildLifecycle(_)
+                    | SessionCommand::ContextTransition { .. } => Vec::new(),
                     SessionCommand::AdmissionPinned { .. }
                     | SessionCommand::LegacyImportBound { .. }
                     | SessionCommand::CompletionHook(_) => Vec::new(),
