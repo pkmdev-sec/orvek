@@ -182,7 +182,7 @@ fn published_views_preserve_history_and_reject_corruption_or_stale_sources() {
         )
         .unwrap();
     assert_eq!(state.history, original_history);
-    assert_eq!(state.context_view, Some(view.clone()));
+    assert_eq!(state.context_view, Some(view.manifest.clone()));
 
     assert!(
         store
@@ -482,7 +482,7 @@ fn large_projections_stay_writable_at_the_largest_context_window() {
         .unwrap();
 
     assert_eq!(
-        state.context_view.as_ref().map(|cached| &cached.manifest),
+        state.context_view.as_ref(),
         Some(&view.manifest),
         "the cached manifest must survive so representation reuse keeps working"
     );

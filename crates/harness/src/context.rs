@@ -113,17 +113,24 @@ pub struct Manifest {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ContextView {
     pub manifest: Manifest,
+    /// Rebuilt from the session history by `project`, so the journal records
+    /// only the manifest. A projection may fill the whole context window,
+    /// which is larger than one journal event; persisting the items too would
+    /// make a legal projection unwritable and fail the turn.
+    #[serde(default, skip_serializing)]
     pub input: Vec<Value>,
 }
 
 pub type Projection = ContextView;
 
 impl ContextView {
+    /// Compares the manifest, including its input digest, because a view read
+    /// back from the journal carries no input items.
     pub fn valid_for(&self, source: &SessionState) -> bool {
         let Ok(mut regenerated) = project(source, self.manifest.byte_limit) else {
             return false;
         };
-        if regenerated.input != self.input
+        if regenerated.manifest.input != self.manifest.input
             || regenerated.manifest.segments.len() != self.manifest.segments.len()
         {
             return false;
@@ -145,7 +152,7 @@ impl ContextView {
                 return false;
             }
         }
-        regenerated == *self
+        regenerated.manifest == self.manifest
     }
 
     pub fn stable_input(&self) -> &[Value] {
@@ -156,12 +163,15 @@ impl ContextView {
         &self.input[self.manifest.stable_input_items..]
     }
 
+    /// Always rebuilds the items from the source, so neither an absent journaled
+    /// input nor an altered in-memory copy is trusted.
     pub fn input_or_native(&self, source: &SessionState) -> Vec<Value> {
-        if self.valid_for(source) {
-            self.input.clone()
-        } else {
-            source.history.clone()
+        if !self.valid_for(source) {
+            return source.history.clone();
         }
+        project(source, self.manifest.byte_limit)
+            .map(|regenerated| regenerated.input)
+            .unwrap_or_else(|_| source.history.clone())
     }
 }
 
@@ -484,11 +494,11 @@ fn project_native(session: &SessionState, max_bytes: usize) -> Result<Projection
 /// Reuse durable bitmap representations whose exact source item is unchanged.
 pub fn reuse_representations(
     projection: &mut ContextView,
-    cached: &ContextView,
+    cached: &Manifest,
     source: &SessionState,
 ) {
     for segment in &mut projection.manifest.segments {
-        let Some(candidate) = cached.manifest.segments.iter().find(|candidate| {
+        let Some(candidate) = cached.segments.iter().find(|candidate| {
             candidate.role == segment.role
                 && candidate.range == segment.range
                 && candidate.source_digest == segment.source_digest

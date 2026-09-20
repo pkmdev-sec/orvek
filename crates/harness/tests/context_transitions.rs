@@ -396,7 +396,7 @@ fn unchanged_native_segments_reuse_bitmaps_beside_derived_summary() {
     propose(&mut store, &mut state);
     accept(&mut store, &mut state);
     let mut view = context::project(&state, 65536).unwrap();
-    context::reuse_representations(&mut view, &cached, &state);
+    context::reuse_representations(&mut view, &cached.manifest, &state);
     assert_eq!(
         view.manifest
             .segments

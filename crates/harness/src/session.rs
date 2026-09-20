@@ -426,8 +426,11 @@ pub struct SessionState {
     pub history: Vec<Value>,
     #[serde(default)]
     pub settled_history_items: usize,
+    /// The manifest of the most recent projection, kept for representation
+    /// reuse. The projected items are not retained: they are rebuilt from
+    /// history, and one projection can exceed a single journal event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_view: Option<crate::context::ContextView>,
+    pub context_view: Option<crate::context::Manifest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context_transitions: Vec<crate::context::transitions::ContextTransition>,
     pub operations: BTreeMap<Uuid, Digest>,
@@ -915,7 +918,7 @@ impl SessionState {
                 self.context_transitions.push(transition.as_ref().clone());
             }
             SessionCommand::ContextProjected { view, .. } => {
-                self.context_view = view.clone();
+                self.context_view = view.as_ref().map(|view| view.manifest.clone());
             }
         }
         self.operations

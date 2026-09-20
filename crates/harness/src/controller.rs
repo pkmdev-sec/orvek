@@ -1626,7 +1626,10 @@ impl Host {
                 if projection.manifest.omitted_items > 0
                     || !projection.manifest.interrupted_calls.is_empty()
                 {
-                    store.session_command(
+                    // The projection is already in hand for this turn, so the
+                    // journaled copy is only a cache for later representation
+                    // reuse. A rejected cache write must not fail the turn.
+                    if let Err(error) = store.session_command(
                         session_id,
                         session.revision,
                         Uuid::new_v5(&call, b"context-projection"),
@@ -1635,7 +1638,11 @@ impl Host {
                             view: Some(projection.clone()),
                             projection: Vec::new(),
                         },
-                    )?;
+                    ) {
+                        let _ = error;
+                    } else {
+                        session = store.load_session(session_id)?;
+                    }
                 }
                 (projection, prompt_cache_lineage, representation_measurement)
             };
@@ -2388,7 +2395,7 @@ impl Host {
             &state,
             crate::context::projection_byte_limit(state.context_window_tokens())?,
         )?;
-        crate::context::reuse_representations(&mut projection, &rendered, &state);
+        crate::context::reuse_representations(&mut projection, &rendered.manifest, &state);
         if !projection.manifest.segments.iter().any(|segment| {
             matches!(
                 segment.representation,
