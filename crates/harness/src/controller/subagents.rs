@@ -2411,6 +2411,7 @@ mod execution_tests {
             controller::{Host, TaskWorkspace},
             inference::ToolProposal,
             session::SessionCommand,
+            trace::{TraceBundle, TraceLimits},
             workspace::{Snapshot, SnapshotPolicy},
         };
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -2627,6 +2628,18 @@ mod execution_tests {
                 .filter(|s| **s == JobStatus::Succeeded)
                 .count(),
             2
+        );
+        let bundle = TraceBundle::export(
+            &root,
+            None,
+            TraceLimits::default(),
+            &Default::default(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            bundle.replay().unwrap().exact,
+            "durable fork receipts must retain exact artifact closure"
         );
         let snapshot = host.subagent_snapshot(fixture.child.session).await;
         drop(store);
