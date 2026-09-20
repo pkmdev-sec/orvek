@@ -2404,7 +2404,9 @@ impl Host {
         }) {
             return Ok(());
         }
-        store.session_command(
+        // Bitmap renders are a cache, so a rejected write must not fail the
+        // turn that this runs at the head of.
+        let _ = store.session_command(
             session_id,
             state.revision,
             Uuid::new_v4(),
@@ -2413,7 +2415,7 @@ impl Host {
                 view: Some(projection),
                 projection: Vec::new(),
             },
-        )?;
+        );
         Ok(())
     }
 
