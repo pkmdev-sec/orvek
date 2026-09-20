@@ -2,7 +2,8 @@
 mod supervisor;
 #[cfg(target_os = "linux")]
 fn main() {
-    if supervisor::run().is_err() {
+    if let Err(error) = supervisor::run() {
+        eprintln!("executor failed: {error}");
         std::process::exit(70);
     }
 }

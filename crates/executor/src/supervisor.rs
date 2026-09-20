@@ -439,39 +439,16 @@ fn verify_quota(path: &Path, bytes: u64, inodes: u64) -> io::Result<Quota> {
     Ok(q)
 }
 fn verify_readonly(path: &Path) -> io::Result<()> {
-    let name = CString::new(path.as_os_str().as_bytes())?;
-    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    if unsafe { libc::statvfs(name.as_ptr(), stat.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if unsafe { stat.assume_init() }.f_flag & libc::ST_RDONLY == 0 {
-        let mountinfo = fs::read_to_string("/proc/self/mountinfo")?;
-        if !mountinfo_readonly(&mountinfo, path) {
-            return Err(io::Error::other("source mount is writable"));
-        }
-    }
-    Ok(())
+    let permissions = fs::metadata(path)?.permissions();
+    readonly_probe(fs::set_permissions(path, permissions))
 }
 
-fn mountinfo_readonly(contents: &str, path: &Path) -> bool {
-    let Some(path) = path.to_str() else {
-        return false;
-    };
-    let mut found = false;
-    for line in contents.lines() {
-        let mut fields = line.split_ascii_whitespace();
-        let Some((mount_point, options)) = fields.nth(4).zip(fields.next()) else {
-            continue;
-        };
-        if mount_point != path {
-            continue;
-        }
-        found = true;
-        if !options.split(',').any(|option| option == "ro") {
-            return false;
-        }
+fn readonly_probe(result: io::Result<()>) -> io::Result<()> {
+    match result {
+        Err(error) if error.raw_os_error() == Some(libc::EROFS) => Ok(()),
+        Err(error) => Err(error),
+        Ok(()) => Err(io::Error::other("source mount is writable")),
     }
-    found
 }
 fn safe(path: &str) -> bool {
     !path.is_empty()
@@ -652,17 +629,14 @@ fn copy_source(request: &Request, started: Instant, uid: u32) -> io::Result<()> 
 
 #[cfg(test)]
 mod tests {
-    use super::mountinfo_readonly;
-    use std::path::Path;
+    use super::readonly_probe;
+    use std::io;
 
     #[test]
-    fn recognizes_readonly_bind_mount_options() {
-        let readonly = "42 31 0:52 /source /workspace ro,relatime - ext4 /dev/root rw
-";
-        let writable = "42 31 0:52 /source /workspace rw,relatime - ext4 /dev/root rw
-";
-
-        assert!(mountinfo_readonly(readonly, Path::new("/workspace")));
-        assert!(!mountinfo_readonly(writable, Path::new("/workspace")));
+    fn readonly_probe_accepts_only_erofs() {
+        assert!(readonly_probe(Err(io::Error::from_raw_os_error(libc::EROFS))).is_ok());
+        assert!(readonly_probe(Ok(())).is_err());
+        assert!(readonly_probe(Err(io::Error::from_raw_os_error(libc::EPERM))).is_err());
+        assert!(readonly_probe(Err(io::Error::from_raw_os_error(libc::EACCES))).is_err());
     }
 }

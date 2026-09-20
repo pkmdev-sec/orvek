@@ -15091,7 +15091,7 @@
       "id": "file:crates/executor/src/main.rs",
       "kind": "file",
       "label": "main.rs",
-      "lines": 13,
+      "lines": 14,
       "path": "crates/executor/src/main.rs"
     },
     {
@@ -15099,7 +15099,7 @@
       "id": "file:crates/executor/src/supervisor.rs",
       "kind": "file",
       "label": "supervisor.rs",
-      "lines": 668,
+      "lines": 642,
       "path": "crates/executor/src/supervisor.rs"
     },
     {
@@ -15586,7 +15586,7 @@
       "id": "file:crates/harness/src/runtime.rs",
       "kind": "file",
       "label": "runtime.rs",
-      "lines": 1143,
+      "lines": 1156,
       "path": "crates/harness/src/runtime.rs"
     },
     {
@@ -15842,7 +15842,7 @@
       "id": "file:crates/harness/tests/interpreter_host.rs",
       "kind": "file",
       "label": "interpreter_host.rs",
-      "lines": 1104,
+      "lines": 1131,
       "path": "crates/harness/tests/interpreter_host.rs"
     },
     {

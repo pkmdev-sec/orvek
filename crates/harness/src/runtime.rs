@@ -573,6 +573,19 @@ impl DockerExecutor {
         };
         diagnostic.abort();
         write.abort();
+        if matches!(
+            forced.as_ref(),
+            Some(ExecutionStatus::Failed(detail)) if detail == "invalid executor transfer"
+        ) && let Some(failure) = report.as_ref().and_then(|report| report.failure.as_ref())
+        {
+            let diagnostics = bounded_text(&diagnostics);
+            let detail = if diagnostics.is_empty() {
+                failure.clone()
+            } else {
+                format!("{failure}: {diagnostics}")
+            };
+            forced = Some(ExecutionStatus::Failed(detail));
+        }
         let stopped = match &state {
             Ok(Some(state)) => !state.state.running && state.state.status == "exited",
             Ok(None) => forced.is_some(),

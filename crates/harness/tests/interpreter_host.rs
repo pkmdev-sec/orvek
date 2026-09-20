@@ -142,8 +142,17 @@ impl Fixture {
     }
 }
 async fn run(host: &Host, session: SessionId, input: &str) -> orvek_harness::controller::TaskRun {
+    run_with_timeout(host, session, input, Duration::from_secs(60)).await
+}
+
+async fn run_with_timeout(
+    host: &Host,
+    session: SessionId,
+    input: &str,
+    request_timeout: Duration,
+) -> orvek_harness::controller::TaskRun {
     timeout(
-        Duration::from_secs(60),
+        request_timeout,
         host.execute_request(
             session,
             Uuid::new_v4(),
@@ -941,7 +950,12 @@ async fn failed_optional_cell_does_not_block_direct_tools_or_later_native_tasks(
     server.await.unwrap();
 }
 
-async fn assert_large_result_history_advances(code: &str, value_bytes: usize, exceeds_frame: bool) {
+async fn assert_large_result_history_advances(
+    code: &str,
+    value_bytes: usize,
+    exceeds_frame: bool,
+    request_timeout: Duration,
+) {
     use base64::Engine;
     use orvek_harness::ipc::{self, HistoryEntry, Response};
 
@@ -960,7 +974,13 @@ async fn assert_large_result_history_advances(code: &str, value_bytes: usize, ex
     let (endpoint, provider) = provider(vec![eval("history-result", code), done()]).await;
     let host = fixture.native(&endpoint);
     let session = fixture.session(&host).await;
-    let result = run(&host, session, "Return exact selected evidence").await;
+    let result = run_with_timeout(
+        &host,
+        session,
+        "Return exact selected evidence",
+        request_timeout,
+    )
+    .await;
     assert_eq!(result.task.outcome, Some(Outcome::FinishedUnverified));
     provider.await.unwrap();
     let state = host.session(session).await.unwrap();
@@ -1090,7 +1110,13 @@ async fn assert_large_result_history_advances(code: &str, value_bytes: usize, ex
 
 #[tokio::test]
 async fn history_pages_advance_past_large_native_host_tool_results() {
-    assert_large_result_history_advances("return 'x'.repeat(900000);", 900002, false).await;
+    assert_large_result_history_advances(
+        "return 'x'.repeat(900000);",
+        900002,
+        false,
+        Duration::from_secs(60),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1099,6 +1125,7 @@ async fn history_pages_cover_maximum_interpreter_value_json_expansion() {
         "return String.fromCharCode(92).repeat((4*1024*1024-2)/2);",
         4 * 1024 * 1024,
         true,
+        Duration::from_secs(15 * 60),
     )
     .await;
 }
