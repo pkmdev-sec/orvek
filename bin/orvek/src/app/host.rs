@@ -427,6 +427,7 @@ fn configuration_identity_material(config: &Config) -> Result<serde_json::Value>
         "image_generation": config.agent().image_generation(),
         "completion_hook": config.agent().completion_hook().map(|command| json!({"version":1,"command":command})),
         "trace_recording_version": 1,
+        "provider_transport_version": 2,
         "websocket_url": config.agent().websocket_url(),
         "api_base_url": config.agent().api_base_url(),
         "execution": execution,
@@ -528,6 +529,21 @@ fn model_routed_provider(provider: ResponsesClient, config: &Config) -> Result<R
     Ok(provider)
 }
 
+fn provider_limits(max_request_bytes: usize) -> ProviderLimits {
+    ProviderLimits {
+        max_attempts: 1,
+        max_request_bytes,
+        // An OpenAI-compatible bridge stays silent while the model thinks,
+        // so the idle window must cover a full reasoning phase. The total
+        // window keeps headroom above the bridge's own upstream cap.
+        idle_timeout: Duration::from_secs(600),
+        total_timeout: Duration::from_secs(900),
+        max_response_bytes: 64 * 1024 * 1024,
+        max_event_bytes: 32 * 1024 * 1024,
+        ..ProviderLimits::default()
+    }
+}
+
 pub(crate) async fn serve(config: &Config) -> Result<()> {
     let auth = config.auth().load()?;
     let route = Route::from_overrides(
@@ -538,20 +554,7 @@ pub(crate) async fn serve(config: &Config) -> Result<()> {
     )?;
     let max_request_bytes = context::request_byte_limit(config.agent().context_window_tokens())
         .map_err(|error| Error::HostRequest(error.to_string()))?;
-    let provider = ResponsesClient::new(
-        auth,
-        route,
-        ProviderLimits {
-            max_attempts: 1,
-            max_request_bytes,
-            // An OpenAI-compatible bridge stays silent while the model thinks,
-            // so the idle window must cover a full reasoning phase. The total
-            // window keeps headroom above the bridge's own upstream cap.
-            idle_timeout: Duration::from_secs(600),
-            total_timeout: Duration::from_secs(900),
-            ..ProviderLimits::default()
-        },
-    )?;
+    let provider = ResponsesClient::new(auth, route, provider_limits(max_request_bytes))?;
     let provider = model_routed_provider(provider, config)?;
     // Native mode never touches Docker; sandbox mode keeps the verified
     // isolated workflow and its executor requirements.
@@ -611,6 +614,13 @@ mod tests {
         let listener = UnixListener::bind(&socket).unwrap();
         fs::set_permissions(socket, fs::Permissions::from_mode(0o600)).unwrap();
         listener
+    }
+
+    #[test]
+    fn detached_host_accepts_bounded_high_reasoning_provider_streams() {
+        let limits = provider_limits(2 * 1024 * 1024);
+        assert_eq!(limits.max_response_bytes, 64 * 1024 * 1024);
+        assert_eq!(limits.max_event_bytes, 32 * 1024 * 1024);
     }
 
     #[test]
@@ -688,6 +698,10 @@ api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
         assert_eq!(
             material["trace_recording_version"], 1,
             "an idle pre-trace host must not match the new runtime identity"
+        );
+        assert_eq!(
+            material["provider_transport_version"], 2,
+            "an idle host with the smaller stream bounds must be restarted"
         );
     }
 
