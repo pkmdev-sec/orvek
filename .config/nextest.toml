@@ -1,5 +1,5 @@
 [profile.default]
 
 [[profile.default.overrides]]
-filter = "binary(completion_hook)"
+filter = "binary(completion_hook) | binary(trace_cli)"
 threads-required = "num-cpus"

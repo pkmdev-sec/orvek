@@ -16,7 +16,7 @@ def main(binary, *, export=None):
     with HostFixture(binary, outputs, sandbox=True) as host:
         (host.workspace / "add").write_text(BEFORE)
         (host.workspace / "add").chmod(0o755)
-        program = {"version": 1, "probes": [{"kind": "command", "id": "sum", "command": "./add 2 2",
+        program = {"version": 1, "probes": [{"kind": "command", "id": "sum", "command": "sh ./add 2 2",
                    "exit_code": 0, "stdout": {"kind": "equals", "text": "4\n"}, "stderr": None}],
                    "control_failure": {"probe": "sum", "stdout": {"kind": "equals", "text": "3\n"}, "stderr": None}}
         verifier = host.query("register_program", program=program)["digest"]

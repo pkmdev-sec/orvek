@@ -616,6 +616,24 @@ mod tests {
         listener
     }
 
+    fn fixture_config(root: &Path, agent: &str) -> Config {
+        let command = root.join("fixture-auth");
+        fs::write(&command, "#!/bin/sh\nprintf fixture-provider-token\n").unwrap();
+        fs::set_permissions(&command, fs::Permissions::from_mode(0o700)).unwrap();
+        let path = root.join("config.toml");
+        fs::write(
+            &path,
+            format!("[auth]\nmode = \"api-key\"\ncommand = {command:?}\n[agent]\n{agent}"),
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        Config::load_isolated(crate::app::config::ConfigOverrides {
+            path: Some(path),
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
     #[test]
     fn detached_host_accepts_bounded_high_reasoning_provider_streams() {
         let limits = provider_limits(2 * 1024 * 1024);
@@ -679,21 +697,7 @@ api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
     #[test]
     fn trace_recording_has_a_versioned_host_identity() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("config.toml");
-        let command = directory.path().join("fixture-auth");
-        fs::write(&command, "#!/bin/sh\nprintf fixture-provider-token\n").unwrap();
-        fs::set_permissions(&command, fs::Permissions::from_mode(0o700)).unwrap();
-        fs::write(
-            &path,
-            format!("[auth]\nmode = \"api-key\"\ncommand = {command:?}\n[agent]\n"),
-        )
-        .unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-        let config = Config::load_isolated(crate::app::config::ConfigOverrides {
-            path: Some(path),
-            ..Default::default()
-        })
-        .unwrap();
+        let config = fixture_config(directory.path(), "");
         let material = configuration_identity_material(&config).unwrap();
         assert_eq!(
             material["trace_recording_version"], 1,
@@ -708,14 +712,7 @@ api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
     #[test]
     fn configured_completion_hook_has_a_versioned_delivery_identity() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("config.toml");
-        fs::write(&path, "[agent]\ncompletion_hook = \"notify-local\"\n").unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-        let config = crate::app::config::Config::load(crate::app::config::ConfigOverrides {
-            path: Some(path),
-            ..crate::app::config::ConfigOverrides::default()
-        })
-        .unwrap();
+        let config = fixture_config(directory.path(), "completion_hook = \"notify-local\"\n");
         assert_eq!(
             configuration_identity_material(&config).unwrap()["completion_hook"],
             json!({"version":1,"command":"notify-local"})
@@ -725,14 +722,7 @@ api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
     #[test]
     fn client_build_metadata_is_not_host_configuration() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("config.toml");
-        fs::write(&path, "[agent]\nmodel = \"glm-5.3\"\n").unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-        let config = crate::app::config::Config::load(crate::app::config::ConfigOverrides {
-            path: Some(path),
-            ..crate::app::config::ConfigOverrides::default()
-        })
-        .unwrap();
+        let config = fixture_config(directory.path(), "model = \"glm-5.3\"\n");
 
         let material = configuration_identity_material(&config).unwrap();
 
