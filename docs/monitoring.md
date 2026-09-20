@@ -13,7 +13,7 @@ a future implementation must publish tested patches, not install a running host.
 
 ## Operator commands
 
-These commands use the existing same-user Unix operator socket and protocol 5.
+These commands use the existing same-user Unix operator socket and protocol 6.
 They are not model tools, event payload fields, or a public HTTP interface.
 Use the same configuration and workspace options as the running host.
 
@@ -34,7 +34,43 @@ inside its validated harness revision. Existing sessions, including forks and
 handoffs, keep their pinned configuration after activation or rollback. Legacy
 sessions keep the compiled 32768-byte default and an unknown build measurement.
 When optional monitoring state is unavailable, new sessions use that compiled
-default and report the problem in host stderr.
+default and journal a sanitized session feedback notice.
+
+## Nonfatal diagnostics
+
+Admission fallback, missing monitor origin, failed post-run memory proposals and
+completion-hook record failures use the existing session feedback journal. The TUI
+shows live notices and restores saved feedback from session history. Headless
+clients emit saved feedback as `session_feedback` at startup, then emit matching
+session journal records while watching. These notices do not change task outcomes,
+completion claims or hook receipts. Post-run
+proposals stay asynchronous; a notice can arrive after a headless run exits. Read
+the session journal or reconnect to observe that later notice. A proposal diagnostic
+can be recorded only while the host remains open; stalled post-run work does not
+keep a closed host's store open.
+
+Host-wide problems use typed warning codes in IPC `Info.warnings` and `Warnings`
+watch frames. Every watch starts with a current snapshot, even when empty, and
+receives changes. These warnings apply to all sessions. The TUI suppresses repeated
+snapshots; headless clients emit them as events. Protocol 6 rejects older clients
+before streaming these new frames.
+
+Warning state is bounded to one slot per category and lives only in the current
+host process. It is not a durable incident log:
+
+- `monitor_unavailable` clears after a successful monitor tick.
+- `monitor_status_unavailable` reports that the monitor failure could not be saved.
+  It clears when status can be saved again or a monitor tick succeeds.
+- `event_intake_stopped` and `completion_hook_recovery_failed` remain until host
+  restart. Neither warning authorizes replay of an uncertain effect.
+- `session_notice_unavailable` means a session feedback notice could not be saved.
+  It remains until restart, because later successful writes cannot recover the
+  missing notice.
+
+All these messages are static. Underlying error text, paths and credentials are
+not copied into these notices. The monitor still saves a sanitized `last_error`
+when its store is available. Durable task, event and hook records remain the
+only authority for their outcomes.
 
 ## Measurements and uncertainty
 

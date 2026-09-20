@@ -1187,7 +1187,9 @@ async fn post_run_context_work_never_holds_task_settlement_or_changes_its_outcom
                 started.notify_one();
                 release.notified().await;
                 failed.notify_one();
-                Err(io::Error::other("injected proposal storage failure"))
+                Err(io::Error::other(
+                    "credential-bearing proposal failure must stay private",
+                ))
             })
         }
     }
@@ -1239,6 +1241,36 @@ async fn post_run_context_work_never_holds_task_settlement_or_changes_its_outcom
     timeout(Duration::from_secs(5), failed.notified())
         .await
         .unwrap();
+    let notices = timeout(Duration::from_secs(2), async {
+        loop {
+            let notices = host
+                .journal_page(0, 256)
+                .await
+                .unwrap()
+                .into_iter()
+                .filter_map(|record| serde_json::from_value::<SessionEvent>(record.event).ok())
+                .filter_map(|event| match event {
+                    SessionEvent::Command {
+                        command: SessionCommand::Feedback { message },
+                        ..
+                    } => Some(message),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            if notices.len() == 2 {
+                break notices;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("post-run failures must reach the session journal");
+    assert!(
+        notices
+            .iter()
+            .all(|message| message.contains("memory proposal"))
+    );
+    assert!(!notices.join("\n").contains("credential-bearing"));
     for id in tasks {
         assert_eq!(
             host.task(id).await.unwrap().outcome,
@@ -1479,4 +1511,67 @@ async fn transition_trace_is_replayable() {
         .expect("an accepted transition must not break trace replay");
     assert!(replay.exact, "{:?}", replay.unresolved);
     assert_eq!(replay.sessions[&session], state);
+}
+
+#[tokio::test]
+async fn diagnostic_hook_record_failure_preserves_outcome_and_uncertain_claim() {
+    use orvek_harness::controller::notification::{DeliveryResult, DeliveryState, UnknownReason};
+    let fixture = Fixture::new();
+    let (endpoint, server) = provider(vec![vec![final_message("done")]]).await;
+    let host = Host::open_native(
+        &fixture.state_root(),
+        client(&endpoint),
+        Digest::of(b"config"),
+    )
+    .unwrap()
+    .with_completion_hook(Some("printf x >> hook-runs".into()));
+    let session = fixture.admit_session(&host).await;
+    let db = rusqlite::Connection::open(fixture.state_root().join("v1.sqlite3")).unwrap();
+    db.execute_batch("CREATE TRIGGER reject_hook_receipt BEFORE INSERT ON events WHEN json_extract(NEW.event,'$.data.command.type')='completion_hook' AND json_extract(NEW.event,'$.data.command.data.type')='finished' BEGIN SELECT RAISE(FAIL, 'credential-bearing hook failure must stay private'); END;").unwrap();
+    let request = Uuid::new_v4();
+    let run = host
+        .execute_request(
+            session,
+            request,
+            "Finish".into(),
+            Limits::default(),
+            policy(),
+            tokio_util::sync::CancellationToken::new(),
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(run.task.outcome, Some(Outcome::FinishedUnverified));
+    let state = host.session(session).await.unwrap();
+    assert!(matches!(
+        &state.completion_deliveries[&request].state,
+        DeliveryState::Attempted {
+            result: DeliveryResult::Unknown {
+                reason: UnknownReason::Interrupted
+            },
+            ..
+        }
+    ));
+    let notices = host
+        .journal_page(0, 256)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter_map(|record| serde_json::from_value::<SessionEvent>(record.event).ok())
+        .filter_map(|event| match event {
+            SessionEvent::Command {
+                command: SessionCommand::Feedback { message },
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].contains("completion-hook delivery record"));
+    assert!(!notices[0].contains("credential-bearing"));
+    assert_eq!(
+        fs::read_to_string(fixture.source.join("hook-runs")).unwrap(),
+        "x"
+    );
+    server.await.unwrap();
 }

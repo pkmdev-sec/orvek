@@ -1,4 +1,4 @@
-use super::{Host, HostError};
+use super::{Host, HostError, HostWarning};
 use crate::{
     Digest, Store, StoreError,
     monitor::{
@@ -75,6 +75,25 @@ impl Host {
     /// Bounded pure trace intake; expensive checks run after releasing the user-task store lock.
     pub async fn monitor_tick(&self) -> Result<(), HostError> {
         let _monitor = self.monitor.lock().await;
+        let result = self.monitor_tick_inner().await;
+        self.diagnostics
+            .set(HostWarning::MonitorUnavailable, result.is_err());
+        if result.is_err() {
+            let store = self.store.lock().await;
+            let saved = store.monitor_status().and_then(|mut status| {
+                status.last_error = Some(HostWarning::MonitorUnavailable.message().into());
+                store.monitor_save_status(&status)
+            });
+            self.diagnostics
+                .set(HostWarning::MonitorStatusUnavailable, saved.is_err());
+        } else {
+            self.diagnostics
+                .set(HostWarning::MonitorStatusUnavailable, false);
+        }
+        result
+    }
+
+    async fn monitor_tick_inner(&self) -> Result<(), HostError> {
         {
             let mut store = self.store.lock().await;
             let mut status = store.monitor_status()?;
@@ -217,14 +236,8 @@ impl Host {
             if !self.accepting.load(Ordering::Acquire) {
                 return;
             }
-            if let Err(error) = self.monitor_tick().await {
-                eprintln!("trace monitor: {error}");
-                let store = self.store.lock().await;
-                if let Ok(mut status) = store.monitor_status() {
-                    status.last_error = Some(error.to_string());
-                    let _ = store.monitor_save_status(&status);
-                }
-            }
+            // monitor_tick publishes sanitized status even when persistence is unavailable.
+            let _ = self.monitor_tick().await;
         }
     }
 }

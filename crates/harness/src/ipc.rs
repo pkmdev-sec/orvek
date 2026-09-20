@@ -3,7 +3,7 @@
 use crate::{
     Digest,
     contract::Contract,
-    controller::{Host, TaskRun},
+    controller::{Host, HostWarning, TaskRun},
     inference::ModelSettings,
     session::{
         JournalRecord, SessionAdmissionProfile, SessionAdmissionRequest, SessionCursor, SessionId,
@@ -273,6 +273,9 @@ pub enum Command {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum WatchFrame {
+    Warnings {
+        warnings: Vec<HostWarning>,
+    },
     Journal(JournalRecord),
     Preview {
         session: SessionId,
@@ -461,7 +464,7 @@ pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<(
         tokio::select! {
             () = intake_shutdown.cancelled() => {},
             result = intake_host.run_event_intake() => {
-                if let Err(error) = result { eprintln!("event intake stopped: {error}"); }
+                if result.is_err() { intake_host.warn(HostWarning::EventIntakeStopped); }
             }
         }
     });
@@ -471,8 +474,8 @@ pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<(
         tokio::select! {
             () = recovery_shutdown.cancelled() => {},
             result = recovery_host.recover_completion_hooks() => {
-                if let Err(error) = result {
-                    eprintln!("completion hook recovery failed: {error}");
+                if result.is_err() {
+                    recovery_host.warn(HostWarning::CompletionHookRecoveryFailed);
                 }
             }
         }
@@ -894,6 +897,8 @@ async fn watch(
 ) -> io::Result<()> {
     let mut previews = host.subscribe_previews();
     let mut subagents = host.subscribe_subagents();
+    let mut warnings = host.subscribe_warnings();
+    let mut sent_warnings = None;
     let mut unexpected = [0u8; 1];
     send_watch(stream, &WatchFrame::Ready { after }).await?;
     if let Some(session) = session {
@@ -902,6 +907,21 @@ async fn watch(
     loop {
         if shutdown.is_cancelled() {
             return Ok(());
+        }
+        let current_warnings = warnings
+            .borrow_and_update()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        if sent_warnings.as_ref() != Some(&current_warnings) {
+            send_watch(
+                stream,
+                &WatchFrame::Warnings {
+                    warnings: current_warnings.clone(),
+                },
+            )
+            .await?;
+            sent_warnings = Some(current_warnings);
         }
         let events = host
             .journal_page(after, 16)
@@ -924,6 +944,7 @@ async fn watch(
                 };
             }
             () = tokio::time::sleep(Duration::from_millis(50)) => {},
+            changed = warnings.changed() => { if changed.is_err() { return Ok(()); } },
             preview = previews.recv() => match preview {
                 Ok(crate::controller::HostUpdate::Provisional { session, request, delta }) => send_watch(stream, &WatchFrame::Preview { session, request, delta }).await?,
                 Ok(crate::controller::HostUpdate::PreviewGap { .. }) => send_watch(stream, &WatchFrame::PreviewGap { dropped: 1 }).await?,
@@ -1055,7 +1076,7 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn protocol_four_clients_cannot_subscribe_to_new_child_outcomes() {
+    async fn previous_protocol_clients_cannot_subscribe_to_warning_frames() {
         let root = tempfile::tempdir().unwrap();
         let provider = ResponsesClient::new(
             Auth::api_key(SecretString::new("fixture".into())).unwrap(),
@@ -1082,15 +1103,97 @@ mod tests {
             after: 0,
             session: None,
         });
-        request.version = 4;
+        request.version = PROTOCOL_VERSION - 1;
         write_frame(&mut client, &request).await.unwrap();
         let response: serde_json::Value = read_frame(&mut client).await.unwrap();
         stop.cancel();
         serving.await.unwrap().unwrap();
         assert_eq!(
             response["type"], "error",
-            "protocol 4 cannot decode the new unsubmitted child event; reject before watch readiness"
+            "older clients cannot decode warning frames; reject before watch readiness"
         );
         assert_eq!(response["data"]["message"], UNSUPPORTED_PROTOCOL_VERSION);
+    }
+
+    fn diagnostic_host(root: &Path) -> Arc<Host> {
+        let provider = ResponsesClient::new(
+            Auth::api_key(SecretString::new("fixture".into())).unwrap(),
+            Route::new(Transport::Http, "http://127.0.0.1:1/v1/responses").unwrap(),
+            Limits {
+                max_attempts: 1,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        Arc::new(Host::open_native(root, provider, Digest::of(b"fixture")).unwrap())
+    }
+
+    async fn warning_frame(stream: &mut UnixStream, expected: &[HostWarning]) {
+        timeout(Duration::from_secs(3), async {
+            loop {
+                let frame: WatchFrame = read_frame(stream).await.unwrap();
+                if let WatchFrame::Warnings { warnings } = frame {
+                    if warnings == expected {
+                        return;
+                    }
+                }
+            }
+        })
+        .await
+        .expect("host warnings must reach watch clients");
+    }
+
+    #[tokio::test]
+    async fn diagnostic_global_warnings_reach_session_watches_live_and_on_reconnect() {
+        let root = tempfile::tempdir().unwrap();
+        let host = diagnostic_host(root.path());
+        let db = rusqlite::Connection::open(root.path().join("v1.sqlite3")).unwrap();
+        let status: Vec<u8> = db
+            .query_row("SELECT record FROM monitor_state", [], |row| row.get(0))
+            .unwrap();
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let stop = CancellationToken::new();
+        let task_host = host.clone();
+        let task_stop = stop.clone();
+        let serving = tokio::spawn(async move {
+            watch(&mut server, task_host, 0, Some(SessionId::new()), task_stop).await
+        });
+        warning_frame(&mut client, &[]).await;
+        db.execute("DELETE FROM monitor_state", []).unwrap();
+        assert!(host.monitor_tick().await.is_err());
+        let expected = [
+            HostWarning::MonitorUnavailable,
+            HostWarning::MonitorStatusUnavailable,
+        ];
+        warning_frame(&mut client, &expected).await;
+        assert!(host.monitor_tick().await.is_err());
+        assert_eq!(host.info().await.unwrap().warnings, expected);
+        stop.cancel();
+        serving.await.unwrap().unwrap();
+
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let stop = CancellationToken::new();
+        let task_host = host.clone();
+        let task_stop = stop.clone();
+        let serving = tokio::spawn(async move {
+            watch(&mut server, task_host, 0, Some(SessionId::new()), task_stop).await
+        });
+        warning_frame(&mut client, &expected).await;
+        db.execute("INSERT INTO monitor_state VALUES(1,?1)", [status])
+            .unwrap();
+        host.monitor_tick().await.unwrap();
+        warning_frame(&mut client, &[]).await;
+        assert!(host.info().await.unwrap().warnings.is_empty());
+        stop.cancel();
+        serving.await.unwrap().unwrap();
+        drop(host);
+        assert!(
+            diagnostic_host(root.path())
+                .info()
+                .await
+                .unwrap()
+                .warnings
+                .is_empty()
+        );
     }
 }

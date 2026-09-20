@@ -44,6 +44,7 @@ use tokio::sync::{Mutex, Semaphore, broadcast};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 mod auxiliary;
+mod diagnostics;
 mod event_intake;
 mod imports;
 mod interpreter;
@@ -55,6 +56,8 @@ pub mod subagents;
 mod submissions;
 mod workspace;
 
+pub use diagnostics::HostWarning;
+use diagnostics::{Diagnostics, SessionWarning};
 pub use subagents::SubagentEvent;
 
 const MAX_RECOVERABLE_PROVIDER_RETRIES: u32 = 2;
@@ -270,6 +273,8 @@ pub struct HostInfo {
     /// container runtime to describe.
     pub executor: Option<crate::runtime::ExecutionEnvironment>,
     pub journal_sequence: u64,
+    /// Current process-local host warnings, independent of durable task outcomes.
+    pub warnings: Vec<HostWarning>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -385,6 +390,7 @@ impl Drop for TaskDeadline {
 
 /// Host-owned orchestration. Views receive projections and never own this future.
 pub struct Host {
+    diagnostics: Arc<Diagnostics>,
     monitor: Mutex<()>,
     monitor_build: Option<crate::Digest>,
     event_intake: Mutex<()>,
@@ -481,7 +487,9 @@ impl Host {
             let profile = resolve_admission(runtime, config_identity, request, reason)?;
             store.pin_session_admission(id, profile)?;
         }
+        let store = Arc::new(Mutex::new(store));
         Ok(Self {
+            diagnostics: Arc::new(Diagnostics::new(store.clone())),
             monitor: Mutex::new(()),
             monitor_build: std::env::current_exe()
                 .ok()
@@ -492,7 +500,7 @@ impl Host {
             interpreters: Mutex::new(HashMap::new()),
             completion_hook: None,
             root: root.canonicalize()?,
-            store: Arc::new(Mutex::new(store)),
+            store,
             provider: Arc::new(provider),
             context_service: None,
             tools: executor.clone().map(WorkspaceTools::new),
@@ -611,6 +619,7 @@ impl Host {
             active_sessions,
             executor: self.executor.as_ref().map(|e| e.environment()),
             journal_sequence: self.store.lock().await.journal_head()?,
+            warnings: self.diagnostics.snapshot(),
         })
     }
 
@@ -1032,11 +1041,12 @@ impl Host {
             request,
             BaselineReason::UnregisteredTarget,
         )?;
+        let mut warnings = Vec::new();
         let profile = if self.native_tools.is_some() {
             match self.pin_read_behavior(&store) {
                 Ok(behavior) => profile.with_native_read(behavior),
-                Err(error) => {
-                    eprintln!("monitor behavior unavailable; using compiled baseline: {error}");
+                Err(_) => {
+                    warnings.push(SessionWarning::MonitorBehavior);
                     profile
                 }
             }
@@ -1044,10 +1054,17 @@ impl Host {
             profile
         };
         let session = store.create_bound_session(id, profile, None)?;
-        if let Err(error) = store.monitor_set_origin(session.id, crate::monitor::Origin::User) {
-            eprintln!("monitor origin unavailable: {error}");
+        if store
+            .monitor_set_origin(session.id, crate::monitor::Origin::User)
+            .is_err()
+        {
+            warnings.push(SessionWarning::MonitorOrigin);
         }
-        Ok(session)
+        drop(store);
+        for warning in warnings {
+            self.diagnostics.session_warning(session.id, warning).await;
+        }
+        self.session(session.id).await
     }
 
     pub async fn register_program(
@@ -1451,15 +1468,26 @@ impl Host {
                         task: run.task.id,
                     },
                 );
+                let diagnostics = Arc::downgrade(&self.diagnostics);
                 tokio::spawn(async move {
-                    if let Err(error) = post_run.await {
-                        eprintln!("post-run memory proposal failed: {error}");
+                    if post_run.await.is_err()
+                        && let Some(diagnostics) = diagnostics.upgrade()
+                    {
+                        diagnostics
+                            .session_warning(session, SessionWarning::MemoryProposal)
+                            .await;
                     }
                 });
+            } else {
+                self.diagnostics
+                    .session_warning(session, SessionWarning::MemoryProposal)
+                    .await;
             }
         }
-        if let Err(error) = self.deliver_completion_hooks(session).await {
-            eprintln!("completion hook delivery record failed: {error}");
+        if self.deliver_completion_hooks(session).await.is_err() {
+            self.diagnostics
+                .session_warning(session, SessionWarning::CompletionHookRecord)
+                .await;
         }
         self.active.lock().await.remove(&session);
         drop(_permit);
@@ -2692,17 +2720,7 @@ impl Host {
     }
 
     async fn feedback(&self, session: SessionId, message: &str) -> Result<(), HostError> {
-        let mut store = self.store.lock().await;
-        let state = store.load_session(session)?;
-        store.session_command(
-            session,
-            state.revision,
-            Uuid::new_v4(),
-            SessionCommand::Feedback {
-                message: message.into(),
-            },
-        )?;
-        Ok(())
+        self.diagnostics.feedback(session, message).await
     }
 
     #[allow(clippy::too_many_arguments)]

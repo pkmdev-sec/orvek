@@ -649,3 +649,165 @@ async fn monitor_failure_leaves_running_user_task_and_other_tasks_independent() 
         .unwrap()
         .unwrap();
 }
+
+#[tokio::test]
+async fn diagnostic_admission_failures_are_durable_and_sanitized() {
+    use orvek_harness::session::{SessionCommand, SessionEvent};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("state");
+    let host = Host::open_native(
+        &root,
+        client("http://127.0.0.1:1/v1/responses"),
+        Digest::of(b"config"),
+    )
+    .unwrap();
+    let db = rusqlite::Connection::open(root.join("v1.sqlite3")).unwrap();
+    db.execute("DELETE FROM monitor_state", []).unwrap();
+    db.execute_batch("CREATE TRIGGER reject_origin BEFORE INSERT ON monitor_origins BEGIN SELECT RAISE(FAIL, 'credential-bearing fixture must stay private'); END;").unwrap();
+    let session = host
+        .create_session(SessionAdmissionRequest::new(
+            dir.path().to_owned(),
+            ModelSettings::default(),
+            10000,
+            Channel::Stable,
+        ))
+        .await
+        .unwrap();
+    assert!(session.admission().unwrap().native_read().is_none());
+    let notices = host
+        .journal_page(0, 256)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|record| record.aggregate == session.id.to_string())
+        .filter_map(|record| serde_json::from_value::<SessionEvent>(record.event).ok())
+        .filter_map(|event| match event {
+            SessionEvent::Command {
+                command: SessionCommand::Feedback { message },
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        notices.len(),
+        2,
+        "both nonfatal admission failures need visible session notices"
+    );
+    assert!(
+        notices
+            .iter()
+            .any(|message| message.contains("compiled baseline"))
+    );
+    assert!(
+        notices
+            .iter()
+            .any(|message| message.contains("monitor origin"))
+    );
+    assert!(!notices.join("\n").contains("credential-bearing"));
+    assert_eq!(
+        host.session(session.id).await.unwrap().revision,
+        session.revision
+    );
+}
+
+#[tokio::test]
+async fn diagnostic_monitor_failure_is_visible_without_saved_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("state");
+    let host = Host::open_native(
+        &root,
+        client("http://127.0.0.1:1/v1/responses"),
+        Digest::of(b"config"),
+    )
+    .unwrap();
+    let db = rusqlite::Connection::open(root.join("v1.sqlite3")).unwrap();
+    db.execute("DELETE FROM monitor_state", []).unwrap();
+    assert!(host.monitor_tick().await.is_err());
+    let info = serde_json::to_value(host.info().await.unwrap()).unwrap();
+    assert_eq!(
+        info["warnings"],
+        json!(["monitor_unavailable", "monitor_status_unavailable"])
+    );
+}
+
+#[tokio::test]
+async fn diagnostic_journal_failure_is_nonfatal_and_visible_in_host_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("state");
+    let host = Host::open_native(
+        &root,
+        client("http://127.0.0.1:1/v1/responses"),
+        Digest::of(b"config"),
+    )
+    .unwrap();
+    let db = rusqlite::Connection::open(root.join("v1.sqlite3")).unwrap();
+    db.execute("DELETE FROM monitor_state", []).unwrap();
+    db.execute_batch("CREATE TRIGGER reject_notice BEFORE INSERT ON events WHEN json_extract(NEW.event,'$.data.command.type')='feedback' BEGIN SELECT RAISE(FAIL, 'credential-bearing journal failure must stay private'); END;").unwrap();
+    let session = host
+        .create_session(SessionAdmissionRequest::new(
+            dir.path().to_owned(),
+            ModelSettings::default(),
+            10000,
+            Channel::Stable,
+        ))
+        .await
+        .unwrap();
+    assert!(session.admission().unwrap().native_read().is_none());
+    let info = serde_json::to_value(host.info().await.unwrap()).unwrap();
+    assert_eq!(info["warnings"], json!(["session_notice_unavailable"]));
+    assert!(!info.to_string().contains("credential-bearing"));
+    assert_eq!(
+        host.session(session.id).await.unwrap().revision,
+        session.revision
+    );
+}
+
+#[tokio::test]
+async fn diagnostic_monitor_status_save_failure_is_reported_and_recovery_clears_slots() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("state");
+    let host = Host::open_native(
+        &root,
+        client("http://127.0.0.1:1/v1/responses"),
+        Digest::of(b"config"),
+    )
+    .unwrap();
+    let db = rusqlite::Connection::open(root.join("v1.sqlite3")).unwrap();
+    db.execute_batch("CREATE TRIGGER reject_monitor_status BEFORE UPDATE ON monitor_state BEGIN SELECT RAISE(FAIL, 'credential-bearing monitor error must stay private'); END;").unwrap();
+    assert!(host.monitor_tick().await.is_err());
+    let info = serde_json::to_value(host.info().await.unwrap()).unwrap();
+    assert_eq!(
+        info["warnings"],
+        json!(["monitor_unavailable", "monitor_status_unavailable"])
+    );
+    assert!(!info.to_string().contains("credential-bearing"));
+    db.execute("DROP TRIGGER reject_monitor_status", [])
+        .unwrap();
+    // A failed tick whose status save succeeds has only the monitor warning.
+    db.execute("ALTER TABLE monitor_episodes RENAME TO saved_episodes", [])
+        .unwrap();
+    assert!(host.monitor_tick().await.is_err());
+    let info = serde_json::to_value(host.info().await.unwrap()).unwrap();
+    assert_eq!(info["warnings"], json!(["monitor_unavailable"]));
+    let status: Vec<u8> = db
+        .query_row("SELECT record FROM monitor_state", [], |row| row.get(0))
+        .unwrap();
+    let status: Value = serde_json::from_slice(&status).unwrap();
+    assert_eq!(
+        status["last_error"],
+        "Trace monitoring failed. User tasks can continue; monitoring will retry."
+    );
+    db.execute("ALTER TABLE saved_episodes RENAME TO monitor_episodes", [])
+        .unwrap();
+    host.monitor_tick().await.unwrap();
+    assert!(host.info().await.unwrap().warnings.is_empty());
+    assert!(
+        host.monitor_report(0, 10)
+            .await
+            .unwrap()
+            .status
+            .last_error
+            .is_none()
+    );
+}

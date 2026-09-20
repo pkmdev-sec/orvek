@@ -2,6 +2,7 @@
 //! This module cannot execute tools, persist domain state, or certify a task.
 
 use orvek_harness::{
+    controller::HostWarning,
     inference::{Delta, ModelSettings},
     ipc::WatchFrame,
     session::{
@@ -131,6 +132,7 @@ pub(crate) struct HostProjection {
     auxiliary: BTreeMap<Uuid, bool>,
     tasks: BTreeSet<TaskId>,
     task_order: VecDeque<TaskId>,
+    warnings: Vec<HostWarning>,
 }
 
 impl HostProjection {
@@ -146,6 +148,7 @@ impl HostProjection {
             auxiliary: BTreeMap::new(),
             tasks: BTreeSet::new(),
             task_order: VecDeque::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -189,6 +192,15 @@ impl HostProjection {
 
     pub(crate) fn apply(&mut self, frame: WatchFrame) -> Vec<ViewChange> {
         match frame {
+            WatchFrame::Warnings { warnings } => {
+                let changes = warnings
+                    .iter()
+                    .filter(|warning| !self.warnings.contains(warning))
+                    .map(|warning| ViewChange::Warning(warning.message().into()))
+                    .collect();
+                self.warnings = warnings;
+                changes
+            }
             WatchFrame::Journal(record) => self.journal(record),
             // Subagent lifecycle is presentation state, not journal projection;
             // the client intercepts these frames before applying the rest.
@@ -551,6 +563,10 @@ fn project_items(request: Option<Uuid>, items: &[Value], inferred_final: bool) -
                     request,
                     text: content_text(&item["content"], true),
                 }),
+                Some("developer") => changes.push(ViewChange::Status(format!(
+                    "Feedback: {}",
+                    content_text(&item["content"], false)
+                ))),
                 Some("assistant") => changes.push(ViewChange::Assistant {
                     request,
                     item: item["id"].as_str().unwrap_or("message").to_owned(),
@@ -1303,5 +1319,66 @@ mod tests {
             },
         ));
         assert!(matches!(changes.as_slice(), [ViewChange::Warning(_)]));
+    }
+
+    #[test]
+    fn diagnostic_warnings_are_global_but_feedback_stays_session_scoped() {
+        use orvek_harness::controller::HostWarning;
+        let session = SessionId::new();
+        let mut projection = HostProjection::new(session, 0);
+        let warning = || WatchFrame::Warnings {
+            warnings: vec![HostWarning::EventIntakeStopped],
+        };
+        assert!(
+            matches!(projection.apply(warning()).as_slice(), [ViewChange::Warning(message)] if message.contains("event intake stopped"))
+        );
+        assert!(
+            projection.apply(warning()).is_empty(),
+            "reconnect snapshots must not duplicate existing warnings"
+        );
+        assert!(
+            projection
+                .apply(event(
+                    SessionId::new(),
+                    1,
+                    SessionCommand::Feedback {
+                        message: "another session".into()
+                    }
+                ))
+                .is_empty()
+        );
+        assert!(
+            matches!(projection.apply(event(session, 2, SessionCommand::Feedback { message: "this session".into() })).as_slice(), [ViewChange::Status(message)] if message.contains("this session"))
+        );
+        assert!(
+            projection
+                .apply(WatchFrame::Warnings { warnings: vec![] })
+                .is_empty()
+        );
+        assert!(
+            matches!(
+                projection.apply(warning()).as_slice(),
+                [ViewChange::Warning(_)]
+            ),
+            "a new failure after recovery is visible"
+        );
+        assert_eq!(
+            projection.sequence(),
+            2,
+            "host status must not advance the durable cursor"
+        );
+    }
+
+    #[test]
+    fn diagnostic_feedback_survives_history_snapshot_projection() {
+        let changes = history_items(
+            None,
+            &[
+                json!({"role":"developer","content":"Warning: monitor behavior is unavailable; this session uses the compiled baseline."}),
+            ],
+        );
+        assert!(
+            matches!(changes.as_slice(), [ViewChange::Status(message)] if message.contains("compiled baseline"))
+        );
     }
 }

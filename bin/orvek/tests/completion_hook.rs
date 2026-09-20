@@ -685,3 +685,89 @@ async fn recovering_a_blocked_hook_keeps_ipc_responsive() {
     assert_eq!(events[1]["type"], "claimed");
     fixture.stop().await;
 }
+
+#[tokio::test]
+async fn diagnostic_headless_resume_emits_feedback_before_its_watch_cursor() {
+    use orvek_harness::{Store, session::SessionCommand};
+    let endpoint = provider(done()).await;
+    let mut fixture = Fixture::new(&endpoint, "true", false);
+    fixture.start().await;
+    let Response::Session(view) = fixture
+        .query(Command::CreateSession {
+            id: SessionId::new(),
+            request: SessionAdmissionRequest::new(
+                fixture.workspace.clone(),
+                ModelSettings::default(),
+                orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+                Channel::Stable,
+            ),
+        })
+        .await
+    else {
+        panic!("expected admitted session")
+    };
+    let session = view.id;
+    fixture.stop().await;
+    {
+        let mut store = Store::open(fixture.socket.parent().unwrap()).unwrap();
+        let mut state = store.load_session(session).unwrap();
+        for index in 0..65 {
+            state = store
+                .session_command(
+                    session,
+                    state.revision,
+                    Uuid::new_v4(),
+                    SessionCommand::Feedback {
+                        message: format!("Warning: saved diagnostic {index}"),
+                    },
+                )
+                .unwrap();
+        }
+    }
+    fixture.start().await;
+    let output = timeout(
+        Duration::from_secs(40),
+        fixture
+            .command()
+            .args(["--resume", &session.to_string(), "run", "Finish the task"])
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    fixture.stop().await;
+    assert!(
+        output.status.success(),
+        "status={} stderr={} stdout={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let events = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let feedback = events
+        .iter()
+        .filter(|event| event["type"] == "session_feedback")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        feedback.len(),
+        65,
+        "headless must not skip feedback already included in its starting session snapshot"
+    );
+    assert!(
+        feedback
+            .iter()
+            .all(|event| event["data"]["session"] == json!(session))
+    );
+    assert_eq!(
+        feedback.first().unwrap()["data"]["message"],
+        "Warning: saved diagnostic 0"
+    );
+    assert_eq!(
+        feedback.last().unwrap()["data"]["message"],
+        "Warning: saved diagnostic 64"
+    );
+}
