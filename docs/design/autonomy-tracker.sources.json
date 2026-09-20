@@ -198,8 +198,8 @@
       "id": "O03",
       "path": "crates/harness/src/controller.rs",
       "anchor": "fn tool_definitions(discovery: bool)",
-      "line": 3553,
-      "sha256": "f7fd390eae02c5a7a01b8d4ef7c81bc372d67ac10f129147231e503dce2fc1e4",
+      "line": 3754,
+      "sha256": "dd9e16c904b1dcea566a4cf3efaf582a7c29fd97f1dfbb0bb9219a45e5859886",
       "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
       "research_line": 3421,
       "research_anchor": "fn tool_definitions(discovery: bool)",
@@ -224,15 +224,15 @@
       "id": "O06",
       "path": "crates/harness/src/context.rs",
       "anchor": "pub fn project(",
-      "line": 298,
-      "sha256": "b0b207550860ecc22aeb62576540eade4faa97083d4dd0cb3fe05f6dc5d29875"
+      "line": 313,
+      "sha256": "955ea9a42d3671ccd6467df98bfba8392037282c03e4d002f84983f49f4abb64"
     },
     {
       "id": "O07",
       "path": "crates/harness/src/context.rs",
       "anchor": "pub fn read_text_page(",
-      "line": 199,
-      "sha256": "b0b207550860ecc22aeb62576540eade4faa97083d4dd0cb3fe05f6dc5d29875"
+      "line": 212,
+      "sha256": "955ea9a42d3671ccd6467df98bfba8392037282c03e4d002f84983f49f4abb64"
     },
     {
       "id": "O08",
@@ -339,8 +339,8 @@
       "id": "O20",
       "path": "crates/harness/src/controller.rs",
       "anchor": "fn native_tool_definitions(",
-      "line": 3502,
-      "sha256": "f7fd390eae02c5a7a01b8d4ef7c81bc372d67ac10f129147231e503dce2fc1e4",
+      "line": 3702,
+      "sha256": "dd9e16c904b1dcea566a4cf3efaf582a7c29fd97f1dfbb0bb9219a45e5859886",
       "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
       "research_line": 3370,
       "research_anchor": "fn native_tool_definitions(",
@@ -362,8 +362,8 @@
       "id": "O22",
       "path": "crates/harness/src/controller.rs",
       "anchor": "async fn reconcile_unresolved(",
-      "line": 3155,
-      "sha256": "f7fd390eae02c5a7a01b8d4ef7c81bc372d67ac10f129147231e503dce2fc1e4",
+      "line": 3343,
+      "sha256": "dd9e16c904b1dcea566a4cf3efaf582a7c29fd97f1dfbb0bb9219a45e5859886",
       "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
       "research_line": 3023,
       "research_anchor": "async fn reconcile_unresolved(",

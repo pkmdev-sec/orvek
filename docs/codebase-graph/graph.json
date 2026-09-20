@@ -14141,7 +14141,7 @@
       "id": "file:bin/orvek/src/app/submission.rs",
       "kind": "file",
       "label": "submission.rs",
-      "lines": 307,
+      "lines": 302,
       "path": "bin/orvek/src/app/submission.rs"
     },
     {
@@ -14277,7 +14277,7 @@
       "id": "file:bin/orvek/src/tui/client.rs",
       "kind": "file",
       "label": "client.rs",
-      "lines": 2184,
+      "lines": 2194,
       "path": "bin/orvek/src/tui/client.rs"
     },
     {
@@ -14285,7 +14285,7 @@
       "id": "file:bin/orvek/src/tui/client_task_input_tests.rs",
       "kind": "file",
       "label": "client_task_input_tests.rs",
-      "lines": 238,
+      "lines": 268,
       "path": "bin/orvek/src/tui/client_task_input_tests.rs"
     },
     {
@@ -15045,7 +15045,7 @@
       "id": "file:crates/harness/src/context.rs",
       "kind": "file",
       "label": "context.rs",
-      "lines": 769,
+      "lines": 779,
       "path": "crates/harness/src/context.rs"
     },
     {
@@ -15116,7 +15116,7 @@
       "id": "file:crates/harness/src/controller.rs",
       "kind": "file",
       "label": "controller.rs",
-      "lines": 3883,
+      "lines": 3890,
       "path": "crates/harness/src/controller.rs"
     },
     {
@@ -15468,7 +15468,7 @@
       "id": "file:crates/harness/src/session.rs",
       "kind": "file",
       "label": "session.rs",
-      "lines": 1010,
+      "lines": 1013,
       "path": "crates/harness/src/session.rs"
     },
     {
@@ -15620,7 +15620,7 @@
       "id": "file:crates/harness/tests/context_projection.rs",
       "kind": "file",
       "label": "context_projection.rs",
-      "lines": 413,
+      "lines": 489,
       "path": "crates/harness/tests/context_projection.rs"
     },
     {
