@@ -29,7 +29,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 pub const UNSUPPORTED_PROTOCOL_VERSION: &str = "unsupported operator protocol version";
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
@@ -954,4 +954,53 @@ pub async fn write_frame(
     }
     stream.write_u32(bytes.len() as u32).await?;
     stream.write_all(&bytes).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inference::{
+        Limits, ResponsesClient, Route, Transport,
+        auth::{Auth, SecretString},
+    };
+
+    #[tokio::test]
+    async fn protocol_four_clients_cannot_subscribe_to_new_child_outcomes() {
+        let root = tempfile::tempdir().unwrap();
+        let provider = ResponsesClient::new(
+            Auth::api_key(SecretString::new("fixture".into())).unwrap(),
+            Route::new(Transport::Http, "http://127.0.0.1:1/v1/responses").unwrap(),
+            Limits {
+                max_attempts: 1,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let host =
+            Arc::new(Host::open_native(root.path(), provider, Digest::of(b"fixture")).unwrap());
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let stop = CancellationToken::new();
+        let serving = tokio::spawn(handle(
+            server,
+            host,
+            Arc::new(Semaphore::new(1)),
+            Arc::new(Semaphore::new(1)),
+            stop.clone(),
+            stop.clone(),
+        ));
+        let mut request = Request::new(Command::Watch {
+            after: 0,
+            session: None,
+        });
+        request.version = 4;
+        write_frame(&mut client, &request).await.unwrap();
+        let response: serde_json::Value = read_frame(&mut client).await.unwrap();
+        stop.cancel();
+        serving.await.unwrap().unwrap();
+        assert_eq!(
+            response["type"], "error",
+            "protocol 4 cannot decode the new unsubmitted child event; reject before watch readiness"
+        );
+        assert_eq!(response["data"]["message"], UNSUPPORTED_PROTOCOL_VERSION);
+    }
 }
