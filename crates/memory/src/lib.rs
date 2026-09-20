@@ -17,8 +17,8 @@ mod sources;
 #[cfg(feature = "local")]
 pub use archive::{ArchiveEntry, MemoryArchive};
 pub use evidence::{
-    EvidenceState, LineRange, MemoryKind, MemoryMetadata, MemoryOrigin, MemoryScope, ProposalState,
-    SourceEvidence, TraceReference,
+    EvidenceState, LessonQuery, LineRange, MemoryKind, MemoryMetadata, MemoryOrigin, MemoryScope,
+    OwnershipReference, ProposalState, SourceEvidence, TraceReference,
 };
 #[cfg(feature = "local")]
 pub use sources::WorkspaceSources;

@@ -21,6 +21,8 @@ pub const SCAN_PATH: &str = concatcp!("v", crate::VERSION, "/memories/scan");
 pub const READ_PATH: &str = concatcp!("v", crate::VERSION, "/memories/read");
 /// Visible-record listing route.
 pub const LIST_PATH: &str = concatcp!("v", crate::VERSION, "/memories/list");
+/// Owned lesson query route (namespace comes only from authentication).
+pub const LESSONS_PATH: &str = concatcp!("v", crate::VERSION, "/memories/lessons");
 /// Direct mutation route.
 pub const PUT_PATH: &str = concatcp!("v", crate::VERSION, "/memories/put");
 /// Compare-and-swap deletion route.
@@ -98,6 +100,8 @@ pub struct ScanResponse {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadRequest {
+    #[serde(default)]
+    pub scope: Option<ScanScope>,
     /// IDs in the authenticated namespace.
     #[serde(default)]
     pub ids: Vec<i64>,
@@ -118,6 +122,14 @@ pub struct ReadResponse {
 pub struct ListResponse {
     /// At most [`crate::MemoryLimits::records`] records in deterministic store order.
     pub memories: Vec<MemoryRecord>,
+}
+
+/// Bounded owned-lesson page. A full page is followed by a request after its last ID.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LessonRequest {
+    pub query: crate::LessonQuery,
+    pub after: i64,
 }
 
 /// Request to insert or compare-and-swap replace a memory.

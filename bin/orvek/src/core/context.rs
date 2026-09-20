@@ -121,6 +121,7 @@ impl ContextSession for ConfiguredContextSession {
                     window_limit: MemoryLimits::PRODUCTION.records,
                     keys: records
                         .iter()
+                        .filter(|record| memory.operations.visible(&record.metadata))
                         .map(|record| serde_json::to_value(&record.key))
                         .collect::<Result<_, _>>()?,
                 })

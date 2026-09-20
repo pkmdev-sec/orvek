@@ -890,3 +890,51 @@ async fn scoped_evidence_and_post_run_proposals_reach_production_context_service
         "recall never relearns or rewrites records"
     );
 }
+
+#[tokio::test]
+async fn foreign_scope_keys_are_absent_from_context_manifest_and_hidden_reads_do_not_count() {
+    use orvek_harness::services::ContextService;
+    use orvek_memory::{MemoryMetadata, MemoryScope};
+    let (endpoint, provider) = provider(vec![
+        vec![call(
+            "hidden",
+            "memory",
+            json!({"operation":"read","keys":[{"id":1,"version":1}]}),
+        )],
+        vec![answer()],
+    ])
+    .await;
+    let fixture = Fixture::new(&endpoint, true, false);
+    let root = fixture.config.agent().workspace();
+    let store = crate::core::configured_memory_store(&fixture.config, root)
+        .unwrap()
+        .unwrap();
+    let hidden = store
+        .put_with_metadata(
+            "foreign repository detail",
+            &MemoryMetadata {
+                scope: MemoryScope::Repository {
+                    identity: "different-repository".into(),
+                },
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let global = store.put("global preference", None).await.unwrap();
+    let service = crate::core::context::ConfiguredContext::new(&fixture.config);
+    let mut context = service.open(root).unwrap();
+    let manifest = context.snapshot().await.unwrap();
+    assert_eq!(
+        manifest.memory.unwrap().keys,
+        vec![serde_json::to_value(global.key).unwrap()]
+    );
+    let (client, host) = fixture.start().await;
+    submit(&client, fixture.session(&client).await, false).await;
+    stop(&client, host).await;
+    let requests = provider.await.unwrap();
+    let outputs = requests[1]["input"].to_string();
+    assert!(!outputs.contains("foreign repository detail"));
+    assert_eq!(store.list().await.unwrap()[0], hidden);
+}

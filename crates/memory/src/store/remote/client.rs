@@ -269,6 +269,7 @@ impl RemoteMemoryClient {
         &self,
         ids: &[i64],
         keys: &[MemoryKey],
+        scope: Option<protocol::ScanScope>,
     ) -> Result<Vec<MemoryRecord>, RemoteClientError> {
         let keys = keys
             .iter()
@@ -284,7 +285,11 @@ impl RemoteMemoryClient {
         let response: ReadResponse = self
             .post(
                 protocol::READ_PATH,
-                &ReadRequest { ids, keys },
+                &ReadRequest {
+                    ids,
+                    keys,
+                    scope: scope.clone(),
+                },
                 Replay::ConnectOnly,
             )
             .await?;
@@ -304,6 +309,12 @@ impl RemoteMemoryClient {
         let mut seen = HashSet::new();
         let mut memories = Vec::new();
         for memory in response.memories {
+            if scope
+                .as_ref()
+                .is_some_and(|scope| !memory.metadata.visible_in(scope.repository.as_deref()))
+            {
+                return Err(RemoteClientError::InvalidResponse);
+            }
             if !(requested.contains(&memory.key)
                 || (memory.key.namespace.as_deref() == Some(self.namespace())
                     && requested_ids.contains(&memory.key.id)))
@@ -372,7 +383,11 @@ impl RemoteMemoryClient {
         if !Self::valid_record(&response.memory)
             || response.memory.key.namespace.as_deref() != Some(self.namespace())
             || response.memory.content != content
-            || &response.memory.metadata != metadata
+            || {
+                let mut returned = response.memory.metadata.clone();
+                returned.ownership_id = metadata.ownership_id.clone();
+                &returned != metadata
+            }
             || match replacement {
                 Some(replacement) => {
                     response.memory.key.id != replacement.id
@@ -589,6 +604,54 @@ impl RemoteMemoryClient {
 }
 
 impl MemoryStore for RemoteMemoryClient {
+    async fn read_scoped(
+        &self,
+        ids: &[i64],
+        keys: &[MemoryKey],
+        repository: Option<&str>,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        Ok(RemoteMemoryClient::read(
+            self,
+            ids,
+            keys,
+            Some(protocol::ScanScope {
+                repository: repository.map(str::to_owned),
+            }),
+        )
+        .await?)
+    }
+    async fn lesson_page(
+        &self,
+        query: &crate::LessonQuery,
+        after: i64,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        let response: ListResponse = self
+            .post(
+                protocol::LESSONS_PATH,
+                &protocol::LessonRequest {
+                    query: query.clone(),
+                    after,
+                },
+                Replay::Safe,
+            )
+            .await?;
+        let mut previous = after;
+        if response.memories.len() > protocol::MAX_EXPORT_PAGE_RECORDS {
+            return Err(MemoryError::InvalidPagination);
+        }
+        for record in &response.memories {
+            if !Self::valid_record(record)
+                || record.key.namespace.as_deref() != Some(self.namespace())
+                || record.key.id <= previous
+                || !query.matches(record)
+            {
+                return Err(MemoryError::InvalidPagination);
+            }
+            previous = record.key.id;
+        }
+        Ok(response.memories)
+    }
+
     fn scan(
         &self,
         query: &str,
@@ -627,7 +690,7 @@ impl MemoryStore for RemoteMemoryClient {
         ids: &[i64],
         keys: &[MemoryKey],
     ) -> impl std::future::Future<Output = Result<Vec<MemoryRecord>, MemoryError>> + Send {
-        async move { Ok(RemoteMemoryClient::read(self, ids, keys).await?) }
+        async move { Ok(RemoteMemoryClient::read(self, ids, keys, None).await?) }
     }
     fn list(
         &self,

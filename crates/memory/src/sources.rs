@@ -6,13 +6,14 @@ use std::{
     io::{self, Read},
     path::{Component, Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
 const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct WorkspaceSources {
-    root: PathBuf,
+    root: Arc<fs::File>,
     repository: String,
 }
 
@@ -22,17 +23,19 @@ impl WorkspaceSources {
             PathBuf::from(git(workspace, &["rev-parse", "--show-toplevel"])?).canonicalize()?;
         // Root commits survive clones and unrelated branch/revision changes. Unrelated histories
         // with the same root are one repository for memory purposes, not an authorization domain.
-        let roots = git(&root, &["rev-list", "--max-parents=0", "HEAD"])?;
-        let mut roots = roots.lines().collect::<Vec<_>>();
-        roots.sort_unstable();
-        let repository = digest(roots.join("\n").as_bytes());
+        let root = Arc::new(open_root(&root)?);
+        let revision = git_pinned(&root, &["rev-parse", "HEAD"])?;
+        let repository = repository_at(&root, &revision)?;
         Ok(Self { root, repository })
     }
     pub fn repository(&self) -> &str {
         &self.repository
     }
     pub fn capture(&self, path: &str, range: Option<LineRange>) -> io::Result<SourceEvidence> {
-        let checked_revision = git(&self.root, &["rev-parse", "HEAD"])?;
+        let checked_revision = git_pinned(&self.root, &["rev-parse", "HEAD"])?;
+        if repository_at(&self.root, &checked_revision)? != self.repository {
+            return Err(io::Error::other("admitted repository history changed"));
+        }
         let bytes = self.read(path)?;
         if range.as_ref().is_some_and(|r| {
             r.start == 0 || r.end < r.start || r.end as usize > bytes.split(|b| *b == b'\n').count()
@@ -110,6 +113,51 @@ impl WorkspaceSources {
         Ok(bytes)
     }
 }
+fn repository_at(root: &fs::File, revision: &str) -> io::Result<String> {
+    let roots = git_pinned(root, &["rev-list", "--max-parents=0", revision])?;
+    let mut roots = roots.lines().collect::<Vec<_>>();
+    roots.sort_unstable();
+    Ok(digest(roots.join("\n").as_bytes()))
+}
+
+#[cfg(unix)]
+fn open_root(path: &Path) -> io::Result<fs::File> {
+    use rustix::fs::{Mode, OFlags, open};
+    Ok(open(
+        path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?
+    .into())
+}
+#[cfg(not(unix))]
+fn open_root(_path: &Path) -> io::Result<fs::File> {
+    Err(io::Error::other("pinned source observation unavailable"))
+}
+#[cfg(unix)]
+fn git_pinned(root: &fs::File, arguments: &[&str]) -> io::Result<String> {
+    use std::os::unix::process::CommandExt;
+    let root = root.try_clone()?;
+    let mut command = Command::new("git");
+    command.args(arguments);
+    // SAFETY: the child only invokes the async-signal-safe fchdir syscall before exec.
+    // The owned descriptor is captured by the closure and remains open until exec.
+    unsafe {
+        command.pre_exec(move || rustix::process::fchdir(&root).map_err(Into::into));
+    }
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(io::Error::other("repository identity unavailable"));
+    }
+    Ok(String::from_utf8(output.stdout)
+        .map_err(io::Error::other)?
+        .trim()
+        .to_owned())
+}
+#[cfg(not(unix))]
+fn git_pinned(_root: &fs::File, _arguments: &[&str]) -> io::Result<String> {
+    Err(io::Error::other("pinned source observation unavailable"))
+}
 fn git(root: &Path, arguments: &[&str]) -> io::Result<String> {
     let output = Command::new("git")
         .arg("-C")
@@ -129,25 +177,21 @@ pub(crate) fn digest(bytes: &[u8]) -> String {
 }
 
 #[cfg(unix)]
-fn open_source(root: &Path, path: &Path) -> io::Result<fs::File> {
-    use rustix::fs::{Mode, OFlags, open, openat};
-    let mut directory = open(
-        root,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )?;
+fn open_source(root: &fs::File, path: &Path) -> io::Result<fs::File> {
+    use rustix::fs::{Mode, OFlags, openat};
+    let mut directory = root.try_clone()?;
     let components = path.components().collect::<Vec<_>>();
     for (index, component) in components.iter().enumerate() {
         let mut flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
         if index + 1 < components.len() {
             flags |= OFlags::DIRECTORY;
         }
-        directory = openat(&directory, component.as_os_str(), flags, Mode::empty())?;
+        directory = openat(&directory, component.as_os_str(), flags, Mode::empty())?.into();
     }
-    Ok(directory.into())
+    Ok(directory)
 }
 #[cfg(not(unix))]
-fn open_source(_root: &Path, _path: &Path) -> io::Result<fs::File> {
+fn open_source(_root: &fs::File, _path: &Path) -> io::Result<fs::File> {
     Err(io::Error::other(
         "race-safe source observation is unavailable on this platform",
     ))

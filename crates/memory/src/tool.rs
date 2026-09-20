@@ -176,6 +176,11 @@ pub struct MemorySession {
 }
 
 impl MemorySession {
+    /// Applies the session's retrieval scope, not an authorization decision.
+    pub fn visible(&self, metadata: &MemoryMetadata) -> bool {
+        metadata.visible_in(self.sources.as_ref().map(WorkspaceSources::repository))
+    }
+
     /// Creates run-local scan-before-put state over the selected backend.
     pub const fn new(store: SelectedMemoryStore) -> Self {
         Self {
@@ -359,7 +364,7 @@ impl MemorySession {
         let repository = self.sources.as_ref().map(WorkspaceSources::repository);
         let memories = self
             .store
-            .read(&[], &keys)
+            .read_scoped(&[], &keys, repository)
             .await?
             .into_iter()
             .filter(|record| record.metadata.visible_in(repository))
@@ -395,11 +400,17 @@ impl MemorySession {
         if let Some(key) = &replace
             && let Some(previous) = self
                 .store
-                .read(&[], std::slice::from_ref(key))
+                .read_scoped(
+                    &[],
+                    std::slice::from_ref(key),
+                    self.sources.as_ref().map(WorkspaceSources::repository),
+                )
                 .await?
                 .first()
         {
             metadata.imported_from = previous.metadata.imported_from.clone();
+            metadata.transferred_from = previous.metadata.transferred_from.clone();
+            metadata.ownership_id = previous.metadata.ownership_id.clone();
         }
         let memory = self
             .store

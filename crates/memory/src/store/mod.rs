@@ -60,6 +60,26 @@ pub trait MemoryStore: Clone + Send + Sync + 'static {
     /// does not grow with the complete shared corpus. Full transfer uses paginated export instead.
     fn list(&self) -> impl Future<Output = Result<Vec<MemoryRecord>, MemoryError>> + Send;
 
+    /// Reads scoped records, filtering before recording use telemetry.
+    fn read_scoped(
+        &self,
+        _ids: &[i64],
+        _keys: &[MemoryKey],
+        _repository: Option<&str>,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, MemoryError>> + Send {
+        async { Err(MemoryError::MetadataUnsupported) }
+    }
+
+    /// Returns at most 128 owned lessons after an exclusive numeric cursor.
+    /// Ownership comes from the backend binding, not query data. No use telemetry is recorded.
+    fn lesson_page(
+        &self,
+        _query: &crate::LessonQuery,
+        _after: i64,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, MemoryError>> + Send {
+        async { Err(MemoryError::MetadataUnsupported) }
+    }
+
     /// Inserts content or compare-and-swap replaces `replacement`.
     fn put(
         &self,
@@ -207,6 +227,28 @@ impl SelectedMemoryStore {
 
 #[cfg(all(feature = "client", feature = "local"))]
 impl MemoryStore for SelectedMemoryStore {
+    async fn read_scoped(
+        &self,
+        ids: &[i64],
+        keys: &[MemoryKey],
+        repository: Option<&str>,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        match self {
+            Self::Local(store) => store.read_scoped(ids, keys, repository).await,
+            Self::Remote(store) => store.read_scoped(ids, keys, repository).await,
+        }
+    }
+    async fn lesson_page(
+        &self,
+        query: &crate::LessonQuery,
+        after: i64,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        match self {
+            Self::Local(store) => store.lesson_page(query, after).await,
+            Self::Remote(store) => store.lesson_page(query, after).await,
+        }
+    }
+
     fn scan(
         &self,
         query: &str,

@@ -79,8 +79,10 @@ endpoint.
 ## Protocol upgrade
 
 This build uses remote protocol v2. Upgrade clients with the Worker and apply all migrations,
-including `0002_evidence.sql`. Existing records remain legacy-unscoped and unverified. Metadata
-and citations persist through put, sync, and export; scoped scans filter before ranking.
+including `0002_evidence.sql` and `0003_ownership.sql`. Existing records remain legacy-unscoped and unverified. Metadata
+and citations persist through put, sync, and export; scoped scans filter before ranking and scoped
+reads filter before use telemetry. Owned lesson pages use the authenticated namespace and do not
+share the interactive list window. Ownership IDs preserve independent transfer provenance.
 
 ## Limits and operations
 

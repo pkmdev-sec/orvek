@@ -24,7 +24,7 @@ is a hash of sorted Git root commits, so clones and linked worktrees can reuse r
 retrieval boundary, not a credential or authorization boundary. Branches sharing those roots share
 repository scope. Local memory needs no network service or Cloudflare account.
 
-Schema v2 migrates the existing `v1.sqlite3` file in place. Old records stay legacy-unscoped with
+Schema v3 migrates the existing `v1.sqlite3` file in place. Old records stay legacy-unscoped with
 unknown origin and unverified evidence. An older build rejects the new schema rather than dropping
 provenance. Back up the database before downgrading.
 
@@ -116,7 +116,9 @@ Scan/read return `freshness`:
 Only returned records' citations are inspected. Unrelated files and changed Git revisions do not
 trigger a corpus-wide review. Reverting a cited file to its recorded bytes restores `current`.
 Line ranges identify the citation; the digest covers the complete file. Source reads accept only
-regular, non-symlink files up to 8 MiB. Unix descriptor-relative opens reject path escape races.
+regular, non-symlink files up to 8 MiB. Unix descriptor-relative opens start from a pinned root
+directory. Git runs from that same directory, so moving or replacing its admission pathname does
+not redirect observations into another root. Files and Git state remain live, not an atomic snapshot.
 Other platforms report source observation unavailable. The source boundary is the admitted host
 repository, not an uncommitted sandbox candidate. The output identifies exactly which bytes were
 observed. Artifact citations survive transfer but are unavailable until their source is mounted.
@@ -127,13 +129,18 @@ observed. Artifact citations survive transfer but are unavailable until their so
 
 A proposal must cite evidence and a behavior-test file. The host stores a pending candidate during
 the task and starts consolidation after terminal settlement. Repeated normalized lessons in the
-same scope merge citations and producing traces with CAS. No provider call, test execution, or
+same scope and writer ownership merge producing traces with CAS. New citations become active;
+previous citations remain in `historical_evidence` and do not make refreshed evidence stale.
+The pending run is separate from trace history. Only its callback can finalize its exact version.
+Consolidation queries owned lessons in bounded pages, not the shared 512-record discovery window. No provider call, test execution, or
 instruction-file rewrite occurs. A cited test is labelled `cited_not_executed`; it is not a passing
 result. The resulting record remains a proposal and reference data, never promoted host policy.
 Failure or host exit can leave a pending proposal; the error is logged and task verification is
 unchanged. This phase does not promise crash-resumable consolidation or autonomous lesson quality.
 
-Metadata is bounded to 16 KiB, 16 source citations, 32 trace references, and 32 import keys. The
+Metadata is bounded to 16 KiB, 16 active and 64 historical citations, 32 trace references, and 32
+import keys and ownership references. Exceeding a bound rejects the operation without dropping
+history. The
 same store is independent of model selection. Mechanical reuse is tested with two scripted model
 identities. Live-model learning quality and stale-claim avoidance have not been measured.
 
@@ -178,9 +185,10 @@ compatibility checks. No bearer token is sent over session IPC or copied into a 
 Before each primary or auxiliary provider turn, the host refreshes the skill catalog and the
 memory discovery window. A `ContextPrepared` journal event records the request ID, model-call ID,
 and content-addressed manifest. Old manifests remain available as host artifacts. The manifest
-contains backend identity and exact keys from the bounded `list` window, not memory bodies or
+contains backend identity and scope-visible keys from the bounded `list` window, not memory bodies or
 credentials. A remote window is **not** a revision of the entire shared corpus. Operations read
-current backend state, and mutations still require exact CAS keys. Cancellation stops waiting for
+current backend state, and mutations still require exact CAS keys. Hidden scoped reads do not
+increment use counts or clear probation. Scope is retrieval selection, not authorization. Cancellation stops waiting for
 context I/O. An already-dispatched atomic mutation may still commit; the host reports that
 uncertainty and does not replay it automatically.
 
@@ -222,6 +230,7 @@ Verify the no-TUI restart path with a local fake provider:
 cargo build -p orvek
 python3 scripts/test-host-context.py target/debug/orvek
 python3 scripts/test-memory-evidence.py target/debug/orvek
+python3 scripts/test-memory-transfer.py target/debug/orvek
 ```
 
 The test starts two fresh headless clients with a host restart between them. It checks real memory
@@ -258,6 +267,11 @@ Failure leaves local memory unchanged.
 The manifest records the format version and exact source keys. It is written last, so an interrupted
 export is not importable. `import` validates all record digests before one local transaction. It
 allocates local owning IDs and retains source keys and versions in `metadata.imported_from`.
+Persistent random ownership IDs distinguish independently allocated records. `transferred_from`
+retains exact owning identities and keys across hops. Identical snapshots merge transfer history;
+conflicting payloads stay separate. Self-import and repeated imports do not duplicate content.
+Older archives without ownership IDs use their recorded key, payload, and creation time as a fallback identity;
+independent legacy stores with byte-identical records cannot be distinguished retroactively.
 Archives contain plaintext reference data; they must not be treated as trusted host instructions.
 
 ## Remote server integration
@@ -265,14 +279,14 @@ Archives contain plaintext reference data; they must not be treated as trusted h
 The unpublished [`orvek-memory` crate](../crates/memory/README.md) defines `MemoryStore` and the
 Axum `server::MemoryServer<S>` wrapper. The wrapper authenticates requests and creates a store
 bound to the authenticated namespace. Stores own transactions, persistence, capacity checks,
-pagination, and server-assigned timestamps. Implement `scan_scoped` and `put_with_metadata` to
+pagination, and server-assigned timestamps. Implement `scan_scoped`, `read_scoped`, `lesson_page`, and `put_with_metadata` to
 support v2 host tools; the default methods reject unsupported metadata operations rather than
 silently dropping scope or provenance. Client-side secret filtering is separate from the
 server store's storage rules.
 
 Protocol generation `orvek_memory::VERSION` is currently `2`. Routes and session negotiation use
 that value. Upgrade remote servers and clients together; v1 is intentionally incompatible.
-Apply the Cloudflare `0002_evidence.sql` migration before using the new Worker.
+Apply the Cloudflare `0002_evidence.sql` and `0003_ownership.sql` migrations before using the new Worker.
 
 
 | Route | Required role | Operation |
@@ -281,6 +295,7 @@ Apply the Cloudflare `0002_evidence.sql` migration before using the new Worker.
 | `POST /v2/memories/scan` | reader | Search and return at most five candidates. |
 | `POST /v2/memories/read` | reader | Read exact visible keys. |
 | `POST /v2/memories/list` | reader | Return at most 512 visible records without telemetry changes. |
+| `POST /v2/memories/lessons` | writer | Query at most 128 owned lessons after an exclusive ID. |
 | `POST /v2/memories/put` | writer | Insert or replace within the writer's namespace. |
 | `POST /v2/memories/delete` | writer | Delete within the writer's namespace. |
 | `POST /v2/memories/sync` | writer | Atomically replace the writer's namespace from a snapshot. |

@@ -166,12 +166,14 @@ async fn legacy_schema_migrates_to_unscoped_unverified_even_after_read() {
     db.execute_batch("CREATE TABLE memories (id INTEGER PRIMARY KEY, content TEXT NOT NULL, normalized_identity TEXT NOT NULL UNIQUE, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, last_scanned_at_ms INTEGER, scan_count INTEGER NOT NULL DEFAULT 0, last_used_at_ms INTEGER, use_count INTEGER NOT NULL DEFAULT 0, probation_until_ms INTEGER, version INTEGER NOT NULL DEFAULT 1); INSERT INTO memories(id,content,normalized_identity,created_at_ms,updated_at_ms) VALUES (1,'legacy code fact','legacy code fact',1,1); PRAGMA user_version=1;").unwrap();
     let store = LocalMemoryStore::new(path);
     let record = store.read(&[1], &[]).await.unwrap().remove(0);
-    assert_eq!(record.metadata, MemoryMetadata::default());
+    let mut legacy = record.metadata.clone();
+    assert!(legacy.ownership_id.take().is_some());
+    assert_eq!(legacy, MemoryMetadata::default());
     assert_eq!(record.use_count, 1);
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        2
+        3
     );
 }
 

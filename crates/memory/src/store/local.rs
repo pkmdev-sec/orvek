@@ -22,7 +22,7 @@ use thiserror::Error;
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const DATABASE_PAGE_SIZE_BYTES: usize = 4 * 1024;
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const ALLOCATOR_ROW_ID: i64 = 1;
 const INSTALL_ALLOCATOR_TRIGGER: &str = "CREATE TRIGGER IF NOT EXISTS memory_id_allocator
      AFTER INSERT ON memories
@@ -139,6 +139,15 @@ impl LocalMemoryStore {
         references: &[(i64, Option<u64>)],
         now_ms: i64,
     ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        self.read_filtered(references, now_ms, None)
+    }
+
+    fn read_filtered(
+        &self,
+        references: &[(i64, Option<u64>)],
+        now_ms: i64,
+        scope: Option<&protocol::ScanScope>,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
         let mut connection = self.open()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -152,7 +161,8 @@ impl LocalMemoryStore {
             let Some(mut memory) = memory else {
                 continue;
             };
-            if version.is_some_and(|version| version != memory.version)
+            if scope.is_some_and(|scope| !memory.metadata.visible_in(scope.repository.as_deref()))
+                || version.is_some_and(|version| version != memory.version)
                 || contains_likely_secret(&memory.content)
                 || !seen.insert(id)
             {
@@ -241,22 +251,29 @@ impl LocalMemoryStore {
     ) -> Result<MemoryRecord, MemoryError> {
         metadata.validate()?;
         validate_content(content, &self.limits)?;
-        let normalized_identity = metadata.identity(content);
-        if normalized_identity.is_empty() {
-            return Err(MemoryError::EmptyContent);
-        }
-
+        let mut metadata = metadata.clone();
         let mut connection = self.open()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_error)?;
         prune_expired(&transaction, now_ms)?;
 
+        metadata.ownership_id = match &replacement {
+            Some(key) => match load_one(&transaction, key.id)?
+                .and_then(|record| record.metadata.ownership_id)
+            {
+                Some(identity) => Some(identity),
+                None => Some(new_ownership(&transaction)?),
+            },
+            None => Some(new_ownership(&transaction)?),
+        };
+        metadata.validate()?;
+        let normalized_identity = metadata.identity(content);
         let result = match replacement {
             Some(key) => self.replace(&transaction, content, &normalized_identity, key, now_ms),
             None => self.insert(&transaction, content, &normalized_identity, now_ms),
         }?;
-        save_metadata(&transaction, result.id, metadata)?;
+        save_metadata(&transaction, result.id, &metadata)?;
         let result = load_one(&transaction, result.id)?.ok_or(MemoryError::NotFound)?;
         transaction.commit().map_err(sqlite_error)?;
         Ok(result.into())
@@ -367,18 +384,66 @@ impl LocalMemoryStore {
         let mut existing = load_all(&transaction)?;
         for memory in memories {
             let mut metadata = memory.metadata;
+            // Old archives had no owning-store identity. Do not invent shared ownership from ID 1.
+            // Only the recorded key, payload, and creation time are available for identity.
+            let source_ownership = metadata.ownership_id.clone().unwrap_or_else(|| {
+                crate::sources::digest(
+                    serde_json::to_string(&(
+                        memory.key.clone(),
+                        &memory.content,
+                        &metadata,
+                        memory.created_at_ms,
+                    ))
+                    .expect("serializable record")
+                    .as_bytes(),
+                )[..32]
+                    .to_owned()
+            });
+            metadata.ownership_id = Some(source_ownership.clone());
+            let transfer_identity =
+                metadata.transfer_identity(&memory.content, memory.key.namespace.as_deref());
             if !metadata.imported_from.contains(&memory.key) {
                 metadata.imported_from.push(memory.key.clone());
             }
-            metadata.validate()?;
-            let identity = metadata.identity(&memory.content);
-            if existing
-                .iter()
-                .any(|m| m.metadata == metadata && m.content == memory.content)
-            {
+            let source = crate::OwnershipReference {
+                ownership_id: source_ownership,
+                key: memory.key.clone(),
+            };
+            if !metadata.transferred_from.contains(&source) {
+                metadata.transferred_from.push(source);
+            }
+            if let Some(current) = existing.iter_mut().find(|record| {
+                record.metadata.transfer_identity(&record.content, None) == transfer_identity
+            }) {
+                let mut merged = current.metadata.clone();
+                for key in metadata.imported_from {
+                    if !merged.imported_from.contains(&key) {
+                        merged.imported_from.push(key);
+                    }
+                }
+                for source in metadata.transferred_from {
+                    if !merged.transferred_from.contains(&source) {
+                        merged.transferred_from.push(source);
+                    }
+                }
+                merged.validate()?;
+                if merged != current.metadata {
+                    // Provenance changes are CAS-visible; content and original evidence stay intact.
+                    let version = current
+                        .version
+                        .checked_add(1)
+                        .ok_or(MemoryError::Conflict)?;
+                    transaction.execute("UPDATE memories SET version = ?1, normalized_identity = ?2 WHERE id = ?3", params![version as i64, merged.identity(&current.content), current.id]).map_err(sqlite_write_error)?;
+                    save_metadata(&transaction, current.id, &merged)?;
+                    current.version = version;
+                    current.metadata = merged;
+                }
                 report.skipped += 1;
                 continue;
             }
+            metadata.ownership_id = Some(new_ownership(&transaction)?);
+            metadata.validate()?;
+            let identity = metadata.identity(&memory.content);
             let inserted = self.insert(&transaction, &memory.content, &identity, now_ms)?;
             // New local ownership is distinct, but the original version and timestamps survive.
             transaction.execute("UPDATE memories SET version = ?1, created_at_ms = ?2, updated_at_ms = ?3, last_scanned_at_ms = ?4, scan_count = ?5, last_used_at_ms = ?6, use_count = ?7, probation_until_ms = ?8 WHERE id = ?9",
@@ -598,6 +663,9 @@ impl LocalMemoryStore {
         transaction
             .execute_batch(INSTALL_ALLOCATOR_TRIGGER)
             .map_err(sqlite_write_error)?;
+        if schema_version < 3 {
+            transaction.execute("UPDATE memories SET metadata = json_set(metadata, '$.ownership_id', lower(hex(randomblob(16)))) WHERE json_extract(metadata, '$.ownership_id') IS NULL", []).map_err(sqlite_write_error)?;
+        }
         if schema_version < SCHEMA_VERSION {
             transaction
                 .pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -692,7 +760,11 @@ impl LocalMemoryStore {
                 "INSERT INTO memories (id, content, normalized_identity, created_at_ms, updated_at_ms, last_scanned_at_ms, scan_count, last_used_at_ms, use_count, probation_until_ms, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![memory.key.id, memory.content, memory.metadata.identity(&memory.content), memory.created_at_ms, memory.updated_at_ms, memory.last_scanned_at_ms, memory.scan_count as i64, memory.last_used_at_ms, memory.use_count as i64, memory.probation_until_ms, memory.key.version as i64],
             ).map_err(sqlite_write_error)?;
-            save_metadata(&transaction, memory.key.id, &memory.metadata)?;
+            let mut metadata = memory.metadata.clone();
+            if metadata.ownership_id.is_none() {
+                metadata.ownership_id = Some(new_ownership(&transaction)?);
+            }
+            save_metadata(&transaction, memory.key.id, &metadata)?;
         }
         transaction
             .execute_batch(INSTALL_ALLOCATOR_TRIGGER)
@@ -722,6 +794,43 @@ impl LocalMemoryStore {
 }
 
 impl MemoryStore for LocalMemoryStore {
+    async fn read_scoped(
+        &self,
+        ids: &[i64],
+        keys: &[MemoryKey],
+        repository: Option<&str>,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        let references = keys
+            .iter()
+            .filter(|key| key.is_local())
+            .map(|key| (key.id, Some(key.version)))
+            .chain(ids.iter().map(|id| (*id, None)))
+            .collect::<Vec<_>>();
+        let scope = protocol::ScanScope {
+            repository: repository.map(str::to_owned),
+        };
+        let store = self.clone();
+        run_local(move || store.read_filtered(&references, current_time_ms(), Some(&scope))).await
+    }
+    async fn lesson_page(
+        &self,
+        query: &crate::LessonQuery,
+        after: i64,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        let query = query.clone();
+        let store = self.clone();
+        run_local(move || {
+            // The local corpus is itself bounded; this query does not use the shared UI contract.
+            Ok(store
+                .list_local(current_time_ms())?
+                .into_iter()
+                .filter(|record| record.key.id > after && query.matches(record))
+                .take(protocol::MAX_EXPORT_PAGE_RECORDS)
+                .collect())
+        })
+        .await
+    }
+
     fn scan(
         &self,
         query: &str,
@@ -900,6 +1009,12 @@ fn observe_id(transaction: &Transaction<'_>, id: i64) -> Result<(), MemoryError>
         )
         .map_err(sqlite_write_error)?;
     Ok(())
+}
+
+fn new_ownership(transaction: &Transaction<'_>) -> Result<String, MemoryError> {
+    transaction
+        .query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))
+        .map_err(sqlite_error)
 }
 
 fn save_metadata(

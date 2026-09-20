@@ -21,9 +21,12 @@ use worker::{
     send::SendFuture,
 };
 
-const SYNC_MEMORY_SQL: &str = "INSERT INTO memories (namespace, metadata, id, version, content, identity, created_at_ms, updated_at_ms, last_scanned_at_ms, scan_count, last_used_at_ms, use_count, probation_until_ms) SELECT ?, value ->> '$.metadata', CAST(value ->> '$.id' AS INTEGER), CAST(value ->> '$.version' AS INTEGER), value ->> '$.content', value ->> '$.identity', CAST(value ->> '$.created_at_ms' AS INTEGER), CAST(value ->> '$.updated_at_ms' AS INTEGER), CAST(value ->> '$.last_scanned_at_ms' AS INTEGER), CAST(value ->> '$.scan_count' AS INTEGER), CAST(value ->> '$.last_used_at_ms' AS INTEGER), CAST(value ->> '$.use_count' AS INTEGER), CAST(value ->> '$.probation_until_ms' AS INTEGER) FROM json_each(?)";
-const INSERT_MEMORY_SQL: &str = "INSERT INTO memories (namespace, id, version, metadata, content, identity, created_at_ms, updated_at_ms, probation_until_ms) SELECT namespace, next_id, 1, ?, ?, ?, CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER) FROM memory_namespaces WHERE namespace = ? AND (SELECT COUNT(*) FROM memories WHERE namespace = ?) < ? AND (SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) FROM memories WHERE namespace = ?) + ? <= ? AND NOT EXISTS (SELECT 1 FROM memories WHERE namespace = ? AND identity = ?)";
-const REPLACE_MEMORY_SQL: &str = "UPDATE memories SET version = CAST(? AS INTEGER), metadata = ?, content = ?, identity = ?, updated_at_ms = CAST(? AS INTEGER), last_scanned_at_ms = NULL, scan_count = 0, last_used_at_ms = NULL, use_count = 0, probation_until_ms = CAST(? AS INTEGER) WHERE namespace = ? AND id = CAST(? AS INTEGER) AND version = CAST(? AS INTEGER) AND NOT EXISTS (SELECT 1 FROM memories other WHERE other.namespace = ? AND other.identity = ? AND other.id != CAST(? AS INTEGER)) AND (SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) FROM memories WHERE namespace = ?) - length(CAST(memories.content AS BLOB)) + ? <= ?";
+const SYNC_MEMORY_SQL: &str = "INSERT INTO memories (namespace, metadata, id, version, content, identity, created_at_ms, updated_at_ms, last_scanned_at_ms, scan_count, last_used_at_ms, use_count, probation_until_ms) SELECT ?, json_set(value ->> '$.metadata', '$.ownership_id', COALESCE(json_extract(value ->> '$.metadata', '$.ownership_id'), lower(hex(randomblob(16))))), CAST(value ->> '$.id' AS INTEGER), CAST(value ->> '$.version' AS INTEGER), value ->> '$.content', value ->> '$.identity', CAST(value ->> '$.created_at_ms' AS INTEGER), CAST(value ->> '$.updated_at_ms' AS INTEGER), CAST(value ->> '$.last_scanned_at_ms' AS INTEGER), CAST(value ->> '$.scan_count' AS INTEGER), CAST(value ->> '$.last_used_at_ms' AS INTEGER), CAST(value ->> '$.use_count' AS INTEGER), CAST(value ->> '$.probation_until_ms' AS INTEGER) FROM json_each(?)";
+const INSERT_MEMORY_SQL: &str = "INSERT INTO memories (namespace, id, version, metadata, content, identity, created_at_ms, updated_at_ms, probation_until_ms) SELECT namespace, next_id, 1, json_set(?, '$.ownership_id', lower(hex(randomblob(16)))), ?, ?, CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER) FROM memory_namespaces WHERE namespace = ? AND (SELECT COUNT(*) FROM memories WHERE namespace = ?) < ? AND (SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) FROM memories WHERE namespace = ?) + ? <= ? AND NOT EXISTS (SELECT 1 FROM memories WHERE namespace = ? AND identity = ?)";
+const REPLACE_MEMORY_SQL: &str = "UPDATE memories SET version = CAST(? AS INTEGER), metadata = json_set(?, '$.ownership_id', json_extract(metadata, '$.ownership_id')), content = ?, identity = ?, updated_at_ms = CAST(? AS INTEGER), last_scanned_at_ms = NULL, scan_count = 0, last_used_at_ms = NULL, use_count = 0, probation_until_ms = CAST(? AS INTEGER) WHERE namespace = ? AND id = CAST(? AS INTEGER) AND version = CAST(? AS INTEGER) AND NOT EXISTS (SELECT 1 FROM memories other WHERE other.namespace = ? AND other.identity = ? AND other.id != CAST(? AS INTEGER)) AND (SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) FROM memories WHERE namespace = ?) - length(CAST(memories.content AS BLOB)) + ? <= ?";
+
+const OWNED_LESSON_FILTER: &str = "namespace = ? AND id > CAST(? AS INTEGER) AND json_extract(metadata, '$.kind.type') = 'lesson_proposal' AND (? = 'matching' OR (json_extract(metadata, '$.kind.state') = 'pending' AND json_extract(metadata, '$.pending_run.session') = ? AND json_extract(metadata, '$.pending_run.request') = ? AND json_extract(metadata, '$.pending_run.task') = ?))";
+const READ_SCOPE_FILTER: &str = "(? = 'null' OR COALESCE(json_extract(metadata, '$.scope.type'), 'legacy_unscoped') != 'repository' OR json_extract(metadata, '$.scope.identity') = json_extract(?, '$.repository'))";
 
 const RECORD_COLUMNS: &str = "memories.metadata AS metadata, memories.namespace AS namespace, CAST(memories.id AS TEXT) AS id, CAST(memories.version AS TEXT) AS version, memories.content AS content, CAST(memories.created_at_ms AS TEXT) AS created_at_ms, CAST(memories.updated_at_ms AS TEXT) AS updated_at_ms, CAST(memories.last_scanned_at_ms AS TEXT) AS last_scanned_at_ms, CAST(memories.scan_count AS TEXT) AS scan_count, CAST(memories.last_used_at_ms AS TEXT) AS last_used_at_ms, CAST(memories.use_count AS TEXT) AS use_count, CAST(memories.probation_until_ms AS TEXT) AS probation_until_ms";
 const PRUNE_SQL: &str =
@@ -181,28 +184,75 @@ impl MemoryStore for CloudflareMemoryStore {
         ids: &[i64],
         keys: &[MemoryKey],
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, MemoryError>> + Send {
+        self.read_filtered(ids, keys, None)
+    }
+    fn read_scoped(
+        &self,
+        ids: &[i64],
+        keys: &[MemoryKey],
+        repository: Option<&str>,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, MemoryError>> + Send {
+        self.read_filtered(
+            ids,
+            keys,
+            Some(protocol::ScanScope {
+                repository: repository.map(str::to_owned),
+            }),
+        )
+    }
+    fn lesson_page(
+        &self,
+        query: &orvek_memory::LessonQuery,
+        after: i64,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, MemoryError>> + Send {
         let store = self.clone();
-        let ids = ids.to_vec();
-        let keys = keys.to_vec();
+        let query = query.clone();
         SendFuture::new(async move {
             let now = current_time_ms().to_string();
-            let requests = ReadRequest::collect(&store.namespace, ids, keys);
-            let request_json = serde_json::to_string(&requests).map_err(MessageError::backend)?;
-            let update_sql = "WITH requested AS (SELECT value ->> '$.namespace' AS namespace, CAST(value ->> '$.id' AS INTEGER) AS id, value ->> '$.version' AS version FROM json_each(?)) UPDATE memories SET last_used_at_ms = CAST(? AS INTEGER), use_count = CASE WHEN use_count < 9223372036854775807 THEN use_count + 1 ELSE use_count END, probation_until_ms = NULL WHERE EXISTS (SELECT 1 FROM requested WHERE requested.namespace = memories.namespace AND requested.id = memories.id AND (requested.version IS NULL OR CAST(requested.version AS INTEGER) = memories.version))";
-            let select_sql = format!(
-                "WITH requested AS (SELECT CAST(key AS INTEGER) AS ordinal, value ->> '$.namespace' AS namespace, CAST(value ->> '$.id' AS INTEGER) AS id, value ->> '$.version' AS version FROM json_each(?)) SELECT {RECORD_COLUMNS} FROM requested JOIN memories USING (namespace, id) WHERE requested.version IS NULL OR CAST(requested.version AS INTEGER) = memories.version ORDER BY requested.ordinal"
+            let (kind, session, request, task) = match &query {
+                orvek_memory::LessonQuery::Matching { .. } => ("matching", "", "", ""),
+                orvek_memory::LessonQuery::Pending { trace } => (
+                    "pending",
+                    trace.session.as_str(),
+                    trace.request.as_str(),
+                    trace.task.as_str(),
+                ),
+            };
+            let sql = format!(
+                "SELECT {RECORD_COLUMNS} FROM memories WHERE {VISIBLE_RECORD_SQL} AND {OWNED_LESSON_FILTER} ORDER BY id LIMIT {}",
+                protocol::MAX_EXPORT_PAGE_RECORDS
             );
-            let results = store
-                .batch(vec![
-                    store.statement(PRUNE_SQL, &[D1Type::Text(&now)])?,
-                    store.statement(
-                        update_sql,
-                        &[D1Type::Text(&request_json), D1Type::Text(&now)],
-                    )?,
-                    store.statement(select_sql, &[D1Type::Text(&request_json)])?,
-                ])
-                .await?;
-            results[2].records()
+            let mut after = after;
+            let mut matches = Vec::new();
+            loop {
+                let results = store
+                    .batch(vec![store.statement(
+                        sql.clone(),
+                        &[
+                            D1Type::Text(&now),
+                            D1Type::Text(&store.namespace),
+                            D1Type::Text(&after.to_string()),
+                            D1Type::Text(kind),
+                            D1Type::Text(session),
+                            D1Type::Text(request),
+                            D1Type::Text(task),
+                        ],
+                    )?])
+                    .await?;
+                let records = results[0].records()?;
+                if records.is_empty() {
+                    return Ok(matches);
+                }
+                for record in records {
+                    after = record.key.id;
+                    if query.matches(&record) {
+                        matches.push(record);
+                        if matches.len() == protocol::MAX_EXPORT_PAGE_RECORDS {
+                            return Ok(matches);
+                        }
+                    }
+                }
+            }
         })
     }
 
@@ -368,6 +418,52 @@ impl MemoryStore for CloudflareMemoryStore {
 }
 
 impl CloudflareMemoryStore {
+    fn read_filtered(
+        &self,
+        ids: &[i64],
+        keys: &[MemoryKey],
+        scope: Option<protocol::ScanScope>,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, MemoryError>> + Send {
+        let store = self.clone();
+        let ids = ids.to_vec();
+        let keys = keys.to_vec();
+        SendFuture::new(async move {
+            let now = current_time_ms().to_string();
+            let requests = ReadRequest::collect(&store.namespace, ids, keys);
+            let request_json = serde_json::to_string(&requests).map_err(MessageError::backend)?;
+            let scope_json = serde_json::to_string(&scope).map_err(MessageError::backend)?;
+            let update_sql = format!(
+                "WITH requested AS (SELECT value ->> '$.namespace' AS namespace, CAST(value ->> '$.id' AS INTEGER) AS id, value ->> '$.version' AS version FROM json_each(?)) UPDATE memories SET last_used_at_ms = CAST(? AS INTEGER), use_count = CASE WHEN use_count < 9223372036854775807 THEN use_count + 1 ELSE use_count END, probation_until_ms = NULL WHERE EXISTS (SELECT 1 FROM requested WHERE requested.namespace = memories.namespace AND requested.id = memories.id AND (requested.version IS NULL OR CAST(requested.version AS INTEGER) = memories.version)) AND {READ_SCOPE_FILTER}"
+            );
+            let select_sql = format!(
+                "WITH requested AS (SELECT CAST(key AS INTEGER) AS ordinal, value ->> '$.namespace' AS namespace, CAST(value ->> '$.id' AS INTEGER) AS id, value ->> '$.version' AS version FROM json_each(?)) SELECT {RECORD_COLUMNS} FROM requested JOIN memories USING (namespace, id) WHERE (requested.version IS NULL OR CAST(requested.version AS INTEGER) = memories.version) AND {READ_SCOPE_FILTER} ORDER BY requested.ordinal"
+            );
+            let results = store
+                .batch(vec![
+                    store.statement(PRUNE_SQL, &[D1Type::Text(&now)])?,
+                    store.statement(
+                        update_sql,
+                        &[
+                            D1Type::Text(&request_json),
+                            D1Type::Text(&now),
+                            D1Type::Text(&scope_json),
+                            D1Type::Text(&scope_json),
+                        ],
+                    )?,
+                    store.statement(
+                        select_sql,
+                        &[
+                            D1Type::Text(&request_json),
+                            D1Type::Text(&scope_json),
+                            D1Type::Text(&scope_json),
+                        ],
+                    )?,
+                ])
+                .await?;
+            results[2].records()
+        })
+    }
+
     /// Inserts one record while atomically enforcing namespace capacity and deduplication.
     async fn insert(
         &self,
@@ -731,6 +827,82 @@ mod tests {
         assert_eq!(content, "fixture");
     }
     #[test]
+    fn owned_queue_and_scoped_read_sql_filter_before_limits_and_telemetry() {
+        use super::{OWNED_LESSON_FILTER, READ_SCOPE_FILTER, VISIBLE_RECORD_SQL};
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(include_str!("../migrations/0001_initial.sql"))
+            .unwrap();
+        db.execute_batch(include_str!("../migrations/0002_evidence.sql"))
+            .unwrap();
+        for namespace in ["alice", "bob"] {
+            db.execute(
+                "INSERT INTO memory_namespaces(namespace) VALUES (?1)",
+                [namespace],
+            )
+            .unwrap();
+            for id in 1..=600 {
+                let metadata = serde_json::json!({"kind":{"type":"lesson_proposal","state":"pending"}, "pending_run":{"session":"s","request":"r","task":"t"}, "scope":{"type":"repository","identity":"foreign"}});
+                db.execute("INSERT INTO memories(namespace,id,version,content,identity,created_at_ms,updated_at_ms,probation_until_ms,metadata) VALUES (?1,?2,1,'lesson',?3,1,1,1000,?4)", params![namespace,id,id.to_string(),metadata.to_string()]).unwrap();
+            }
+        }
+        db.execute_batch(include_str!("../migrations/0003_ownership.sql"))
+            .unwrap();
+        let owner: String = db.query_row("SELECT json_extract(metadata, '$.ownership_id') FROM memories WHERE namespace='alice' AND id=1", [], |row| row.get(0)).unwrap();
+        assert_eq!(owner.len(), 32);
+        db.execute_batch(include_str!("../migrations/0003_ownership.sql"))
+            .unwrap();
+        assert_eq!(db.query_row("SELECT json_extract(metadata, '$.ownership_id') FROM memories WHERE namespace='alice' AND id=1", [], |row| row.get::<_,String>(0)).unwrap(), owner);
+        let sql = format!(
+            "SELECT id FROM memories WHERE {VISIBLE_RECORD_SQL} AND {OWNED_LESSON_FILTER} ORDER BY id LIMIT 128"
+        );
+        let mut after = 0;
+        let mut count = 0;
+        loop {
+            let ids = db
+                .prepare(&sql)
+                .unwrap()
+                .query_map(
+                    params!["2", "bob", after, "pending", "s", "r", "t"],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            if ids.is_empty() {
+                break;
+            }
+            assert!(ids.len() <= 128);
+            for id in ids {
+                after = id;
+                count += 1;
+                db.execute("UPDATE memories SET metadata=json_set(metadata,'$.kind.state','proposed') WHERE namespace='bob' AND id=?1", [id]).unwrap();
+            }
+        }
+        assert_eq!(count, 600);
+        assert_eq!(db.query_row("SELECT count(*) FROM memories WHERE namespace='alice' AND json_extract(metadata,'$.kind.state')='pending'", [], |row| row.get::<_,i64>(0)).unwrap(), 600);
+        let update = format!(
+            "UPDATE memories SET use_count=use_count+1, probation_until_ms=NULL WHERE namespace='alice' AND id=1 AND {READ_SCOPE_FILTER}"
+        );
+        assert_eq!(
+            db.execute(
+                &update,
+                params![r#"{"repository":"active"}"#, r#"{"repository":"active"}"#]
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(db.query_row("SELECT use_count,probation_until_ms FROM memories WHERE namespace='alice' AND id=1", [], |row| Ok((row.get::<_,i64>(0)?,row.get::<_,i64>(1)?))).unwrap(), (0,1000));
+        assert_eq!(
+            db.execute(
+                &update,
+                params![r#"{"repository":"foreign"}"#, r#"{"repository":"foreign"}"#]
+            )
+            .unwrap(),
+            1
+        );
+    }
+
+    #[test]
     fn metadata_migration_insert_replace_and_snapshot_use_the_same_sql_contract() {
         use super::{INSERT_MEMORY_SQL, REPLACE_MEMORY_SQL, SYNC_MEMORY_SQL};
         let database = Connection::open_in_memory().unwrap();
@@ -771,7 +943,24 @@ mod tests {
         let read = || {
             database.query_row("SELECT metadata, content, version FROM memories WHERE namespace='alice' AND id=1",[],|row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,i64>(2)?))).unwrap()
         };
-        assert_eq!(read(), (metadata.into(), "claim".into(), 1));
+        let ownership: String = database
+            .query_row(
+                "SELECT json_extract(metadata, '$.ownership_id') FROM memories",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(ownership.len(), 32);
+        let with_owner = |value: &str| {
+            let mut value: serde_json::Value = serde_json::from_str(value).unwrap();
+            value["ownership_id"] = ownership.clone().into();
+            value
+        };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&read().0).unwrap(),
+            with_owner(metadata)
+        );
+        assert_eq!((read().1, read().2), ("claim".into(), 1));
         let corrected = r#"{"scope":{"type":"global"},"origin":{"type":"user"}}"#;
         database
             .execute(
@@ -795,7 +984,11 @@ mod tests {
                 ],
             )
             .unwrap();
-        assert_eq!(read(), (corrected.into(), "corrected claim".into(), 2));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&read().0).unwrap(),
+            with_owner(corrected)
+        );
+        assert_eq!((read().1, read().2), ("corrected claim".into(), 2));
         assert_eq!(
             database
                 .execute(
@@ -821,12 +1014,32 @@ mod tests {
                 .unwrap(),
             0
         );
-        assert_eq!(read(), (corrected.into(), "corrected claim".into(), 2));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&read().0).unwrap(),
+            with_owner(corrected)
+        );
+        assert_eq!((read().1, read().2), ("corrected claim".into(), 2));
         let snapshot = serde_json::json!([{"id":"1","version":"7","content":"transferred claim","identity":"global:transferred claim","metadata":metadata,"created_at_ms":"1","updated_at_ms":"3","last_scanned_at_ms":null,"scan_count":"0","last_used_at_ms":null,"use_count":"0","probation_until_ms":null}]);
         database.execute("DELETE FROM memories", []).unwrap();
         database
             .execute(SYNC_MEMORY_SQL, params!["alice", snapshot.to_string()])
             .unwrap();
-        assert_eq!(read(), (metadata.into(), "transferred claim".into(), 7));
+        let mut transferred: serde_json::Value = serde_json::from_str(&read().0).unwrap();
+        assert_eq!(
+            transferred
+                .as_object_mut()
+                .unwrap()
+                .remove("ownership_id")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .len(),
+            32
+        );
+        assert_eq!(
+            transferred,
+            serde_json::from_str::<serde_json::Value>(metadata).unwrap()
+        );
+        assert_eq!((read().1, read().2), ("transferred claim".into(), 7));
     }
 }

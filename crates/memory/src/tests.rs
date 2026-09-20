@@ -440,15 +440,15 @@ fn newer_database_schema_versions_are_rejected_without_relabeling_them() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("memory.sqlite3");
     let connection = Connection::open(&path).unwrap();
-    connection.pragma_update(None, "user_version", 3).unwrap();
+    connection.pragma_update(None, "user_version", 4).unwrap();
     drop(connection);
     let store = MemoryStore::new(path.clone());
 
     assert!(matches!(
         store.list(0),
         Err(MemoryError::UnsupportedSchemaVersion {
-            found: 3,
-            supported: 2
+            found: 4,
+            supported: 3
         })
     ));
 
@@ -456,7 +456,7 @@ fn newer_database_schema_versions_are_rejected_without_relabeling_them() {
     let schema_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(schema_version, 3);
+    assert_eq!(schema_version, 4);
 }
 
 #[test]
@@ -573,7 +573,7 @@ async fn pulling_remote_memories_preserves_each_namespace_in_schema_v2() {
     let schema_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(schema_version, 2);
+    assert_eq!(schema_version, 3);
 }
 
 #[tokio::test]

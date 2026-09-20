@@ -93,6 +93,48 @@ fn visible_records(state: &TestMemoryState) -> Vec<MemoryRecord> {
 }
 
 impl MemoryStore for TestMemoryStore {
+    async fn lesson_page(
+        &self,
+        query: &crate::LessonQuery,
+        after: i64,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        let mut state = self.database.state.lock().unwrap();
+        prune_expired(&mut state, now_ms());
+        Ok(state
+            .records
+            .values()
+            .filter(|record| {
+                record.key.namespace.as_deref() == Some(&self.namespace)
+                    && record.key.id > after
+                    && query.matches(record)
+            })
+            .take(protocol::MAX_EXPORT_PAGE_RECORDS)
+            .cloned()
+            .collect())
+    }
+    async fn read_scoped(
+        &self,
+        ids: &[i64],
+        keys: &[MemoryKey],
+        repository: Option<&str>,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        let keys = {
+            let state = self.database.state.lock().unwrap();
+            state
+                .records
+                .values()
+                .filter(|record| {
+                    record.metadata.visible_in(repository)
+                        && (keys.contains(&record.key)
+                            || record.key.namespace.as_deref() == Some(&self.namespace)
+                                && ids.contains(&record.key.id))
+                })
+                .map(|record| record.key.clone())
+                .collect::<Vec<_>>()
+        };
+        self.read(&[], &keys).await
+    }
+
     async fn scan(&self, query: &str, limit: usize) -> Result<MemoryScan, MemoryError> {
         let now = now_ms();
         let query = normalize_identity(query);
@@ -270,8 +312,17 @@ impl MemoryStore for TestMemoryStore {
             *next = next.saturating_add(1);
             (id, 1, now)
         };
+        let mut metadata = metadata.clone();
+        metadata.ownership_id = state
+            .records
+            .get(&(self.namespace.clone(), id))
+            .and_then(|record| record.metadata.ownership_id.clone())
+            .or_else(|| {
+                static NEXT: AtomicUsize = AtomicUsize::new(1);
+                Some(format!("{:032x}", NEXT.fetch_add(1, Ordering::Relaxed)))
+            });
         let memory = MemoryRecord {
-            metadata: metadata.clone(),
+            metadata,
             key: MemoryKey::remote(self.namespace.clone(), id, version),
             content: content.to_owned(),
             created_at_ms,
@@ -649,6 +700,7 @@ async fn scan_read_and_list_return_only_caller_visible_records() {
         ALICE_TOKEN,
         "alice",
         &ReadRequest {
+            scope: None,
             ids: vec![alice.key.id],
             keys: vec![bob.key.clone()],
         },
@@ -700,6 +752,7 @@ async fn put_replace_and_delete_are_server_authored() {
         ALICE_TOKEN,
         "alice",
         &ReadRequest {
+            scope: None,
             ids: vec![replaced.key.id],
             keys: Vec::new(),
         },
@@ -1026,6 +1079,7 @@ async fn body_and_request_bounds_are_content_free_client_errors() {
         ALICE_TOKEN,
         "alice",
         &ReadRequest {
+            scope: None,
             ids: (1..=i64::try_from(MemoryLimits::PRODUCTION.records + 1).unwrap()).collect(),
             keys: Vec::new(),
         },
@@ -1934,6 +1988,9 @@ async fn remote_metadata_scoped_scan_and_import_keep_original_provenance() {
         .put_with_metadata("portable remote claim", &metadata, None)
         .await
         .unwrap();
+    let mut metadata = metadata;
+    assert!(original.metadata.ownership_id.is_some());
+    metadata.ownership_id = original.metadata.ownership_id.clone();
     assert_eq!(original.metadata, metadata);
     assert_eq!(
         client
@@ -1978,4 +2035,304 @@ async fn remote_metadata_scoped_scan_and_import_keep_original_provenance() {
     );
     assert_eq!(imported.metadata.imported_from, vec![replacement.key]);
     task.abort();
+}
+#[tokio::test]
+async fn t05_review_remote_lessons_merges_only_its_owned_namespace() {
+    use crate::{
+        MemoryKind, MemoryMetadata, MemoryScope, ProposalState, SourceEvidence, TraceReference,
+    };
+    let (endpoint, task) = live_server(memory_app(vec![
+        credential("alice", RemoteRole::Writer, ALICE_TOKEN),
+        credential("bob", RemoteRole::Writer, BOB_TOKEN),
+    ]))
+    .await;
+    let alice = RemoteMemoryClient::new(
+        &endpoint,
+        "alice".into(),
+        RemoteToken::new(ALICE_TOKEN.into()).unwrap(),
+    )
+    .unwrap();
+    let bob = RemoteMemoryClient::new(
+        &endpoint,
+        "bob".into(),
+        RemoteToken::new(BOB_TOKEN.into()).unwrap(),
+    )
+    .unwrap();
+    let ev = SourceEvidence::Artifact {
+        digest: "a".repeat(64),
+        source: "behavior-test".into(),
+    };
+    let meta = MemoryMetadata {
+        scope: MemoryScope::Global,
+        kind: MemoryKind::LessonProposal {
+            behavior_test: ev.clone(),
+            state: ProposalState::Pending,
+        },
+        evidence: vec![ev],
+        producing_traces: vec![TraceReference {
+            session: "s".into(),
+            request: "r".into(),
+            task: "t".into(),
+        }],
+        ..Default::default()
+    };
+    crate::propose_lesson(&alice, "test before delivery", meta.clone())
+        .await
+        .unwrap();
+    let result = crate::propose_lesson(&bob, "test before delivery", meta).await;
+    println!("Bob repeats Alice's global lesson: {result:?}");
+    assert_eq!(result.unwrap().key.namespace.as_deref(), Some("bob"));
+    task.abort();
+}
+#[tokio::test]
+async fn t05_review_remote_window_does_not_skip_pending_lessons() {
+    use crate::{
+        MemoryKind, MemoryMetadata, MemoryScope, ProposalState, SourceEvidence, TraceReference,
+    };
+    let database = TestMemoryDatabase::default();
+    let alice = database.bind("alice".into());
+    for i in 0..512 {
+        alice
+            .put(&format!("fixture filler {i}"), None)
+            .await
+            .unwrap();
+    }
+    let app = MemoryServer::new(
+        move |namespace| database.bind(namespace),
+        [credential("bob", RemoteRole::Writer, BOB_TOKEN)],
+    )
+    .unwrap()
+    .router();
+    let (endpoint, task) = live_server(app).await;
+    let bob = RemoteMemoryClient::new(
+        &endpoint,
+        "bob".into(),
+        RemoteToken::new(BOB_TOKEN.into()).unwrap(),
+    )
+    .unwrap();
+    let ev = SourceEvidence::Artifact {
+        digest: "a".repeat(64),
+        source: "behavior-test".into(),
+    };
+    let trace = TraceReference {
+        session: "s".into(),
+        request: "r".into(),
+        task: "t".into(),
+    };
+    let meta = MemoryMetadata {
+        scope: MemoryScope::Global,
+        kind: MemoryKind::LessonProposal {
+            behavior_test: ev.clone(),
+            state: ProposalState::Pending,
+        },
+        evidence: vec![ev],
+        producing_traces: vec![trace.clone()],
+        ..Default::default()
+    };
+    let pending = crate::propose_lesson(&bob, "test before delivery", meta)
+        .await
+        .unwrap();
+    let finalized = crate::finalize_lessons(&bob, &trace).await.unwrap();
+    let records = bob.read(&[pending.key.id], &[]).await.unwrap();
+    println!(
+        "Bob finalization after 512 Alice entries: finalized={finalized}, state={:?}",
+        records[0].metadata.kind
+    );
+    assert_eq!(finalized, 1);
+    assert!(matches!(
+        records[0].metadata.kind,
+        MemoryKind::LessonProposal {
+            state: ProposalState::Proposed,
+            ..
+        }
+    ));
+    task.abort();
+}
+
+#[tokio::test]
+async fn t05_owned_backlog_over_512_is_processed_in_bounded_http_pages() {
+    use crate::{
+        MemoryKind, MemoryMetadata, MemoryScope, ProposalState, SourceEvidence, TraceReference,
+    };
+    let database = TestMemoryDatabase::default();
+    let trace = TraceReference {
+        session: "session".into(),
+        request: "run".into(),
+        task: "task".into(),
+    };
+    let evidence = SourceEvidence::Artifact {
+        source: "test".into(),
+        digest: "a".repeat(64),
+    };
+    let metadata = MemoryMetadata {
+        scope: MemoryScope::Global,
+        kind: MemoryKind::LessonProposal {
+            behavior_test: evidence.clone(),
+            state: ProposalState::Pending,
+        },
+        evidence: vec![evidence],
+        producing_traces: vec![trace.clone()],
+        pending_run: Some(trace.clone()),
+        ..Default::default()
+    };
+    // Seed a deployment with a larger historical namespace capacity. The query contract must not
+    // silently inherit the current UI/transfer collector's 512-row cap.
+    {
+        let mut state = database.state.lock().unwrap();
+        for namespace in ["alice", "bob"] {
+            for id in 1..=600 {
+                let mut record = record(id, 1, &format!("lesson {id}"));
+                record.key.namespace = Some(namespace.into());
+                record.metadata = metadata.clone();
+                record.metadata.ownership_id = Some(format!(
+                    "{:032x}",
+                    id + if namespace == "bob" { 600 } else { 0 }
+                ));
+                state.records.insert((namespace.into(), id), record);
+            }
+            state.next_ids.insert(namespace.into(), 601);
+        }
+    }
+    let backend = database.clone();
+    let (endpoint, task) = live_server(
+        MemoryServer::new(
+            move |namespace| backend.bind(namespace),
+            [
+                credential("bob", RemoteRole::Writer, BOB_TOKEN),
+                credential("reader", RemoteRole::Reader, READER_TOKEN),
+            ],
+        )
+        .unwrap()
+        .router(),
+    )
+    .await;
+    let bob = RemoteMemoryClient::new(
+        &endpoint,
+        "bob".into(),
+        RemoteToken::new(BOB_TOKEN.into()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(bob.list().await.unwrap().len(), 512);
+    let mut nomination = metadata.clone();
+    nomination.pending_run = None;
+    let repeated = crate::propose_lesson(&bob, "lesson 600", nomination)
+        .await
+        .unwrap();
+    assert_eq!(repeated.key.id, 600);
+    assert_eq!(repeated.key.version, 2);
+    let page = bob
+        .lesson_page(
+            &crate::LessonQuery::Pending {
+                trace: trace.clone(),
+            },
+            0,
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.len(), protocol::MAX_EXPORT_PAGE_RECORDS);
+    assert!(
+        page.iter()
+            .all(|record| record.key.namespace.as_deref() == Some("bob"))
+    );
+    assert_eq!(crate::finalize_lessons(&bob, &trace).await.unwrap(), 600);
+    assert_eq!(crate::finalize_lessons(&bob, &trace).await.unwrap(), 0);
+    {
+        let state = database.state.lock().unwrap();
+        assert!(
+            state
+                .records
+                .values()
+                .filter(|record| record.key.namespace.as_deref() == Some("alice"))
+                .all(|record| matches!(
+                    record.metadata.kind,
+                    MemoryKind::LessonProposal {
+                        state: ProposalState::Pending,
+                        ..
+                    }
+                ))
+        );
+    }
+    let reader = RemoteMemoryClient::new(
+        &endpoint,
+        "reader".into(),
+        RemoteToken::new(READER_TOKEN.into()).unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        reader
+            .lesson_page(&crate::LessonQuery::Pending { trace }, 0)
+            .await,
+        Err(MemoryError::RemoteReadOnly)
+    ));
+    task.abort();
+}
+
+#[tokio::test]
+async fn t05_http_scoped_read_does_not_clear_hidden_probation() {
+    let database = TestMemoryDatabase::default();
+    let alice = database.bind("alice".into());
+    let record = alice
+        .put_with_metadata(
+            "foreign scope",
+            &crate::MemoryMetadata {
+                scope: crate::MemoryScope::Repository {
+                    identity: "foreign".into(),
+                },
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let backend = database.clone();
+    let (endpoint, task) = live_server(
+        MemoryServer::new(
+            move |namespace| backend.bind(namespace),
+            [credential("bob", RemoteRole::Writer, BOB_TOKEN)],
+        )
+        .unwrap()
+        .router(),
+    )
+    .await;
+    let bob = RemoteMemoryClient::new(
+        &endpoint,
+        "bob".into(),
+        RemoteToken::new(BOB_TOKEN.into()).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        bob.read_scoped(&[], std::slice::from_ref(&record.key), Some("active"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        database.state.lock().unwrap().records[&("alice".into(), record.key.id)],
+        record
+    );
+    // Scope is not authorization: an ordinary shared read is still permitted.
+    assert_eq!(bob.read(&[], &[record.key]).await.unwrap()[0].use_count, 1);
+    task.abort();
+}
+
+#[tokio::test]
+async fn t05_owned_query_rejects_namespace_spoofing() {
+    let app = memory_app(vec![credential("bob", RemoteRole::Writer, BOB_TOKEN)]);
+    let query = serde_json::json!({"query":{"type":"pending","trace":{"session":"s","request":"r","task":"t"}},"after":0});
+    let mismatch = send(&app, protocol::LESSONS_PATH, BOB_TOKEN, "alice", &query).await;
+    assert_error(
+        mismatch,
+        StatusCode::FORBIDDEN,
+        RemoteErrorCode::NamespaceMismatch,
+    )
+    .await;
+    let mut forged = query;
+    forged["namespace"] = "alice".into();
+    let invalid = send(&app, protocol::LESSONS_PATH, BOB_TOKEN, "bob", &forged).await;
+    assert_error(
+        invalid,
+        StatusCode::BAD_REQUEST,
+        RemoteErrorCode::BadRequest,
+    )
+    .await;
 }
