@@ -41,6 +41,7 @@ fn invalid(message: impl Into<String>) -> TraceError {
 pub struct TraceLimits {
     pub records: usize,
     pub artifacts: usize,
+    /// Bounds decoded storage and, separately, receipt decoding plus serialized spans.
     pub bytes: u64,
     pub depth: usize,
 }
@@ -109,10 +110,12 @@ pub struct ReplayReport {
 }
 #[derive(Debug, Serialize)]
 pub struct CostConfidence {
+    /// Sum of attributable cost receipts, not an exact total unless complete.
     pub recorded_usd: UsdCost,
     pub complete: bool,
     pub calls: usize,
     pub unknown_calls: usize,
+    /// Unknown when any usage cannot be attributed and deduplicated by call.
     pub total_tokens: Option<u64>,
 }
 #[derive(Debug, Serialize)]
@@ -314,44 +317,50 @@ impl TraceBundle {
     }
     pub fn replay(&self) -> Result<ReplayReport, TraceError> {
         validate_limits(self.limits)?;
-        let mut report = self.reduce()?;
-        if report.identity != self.expected {
-            return Err(invalid(
-                "reconstructed state/context/outcome differs from manifest",
-            ));
+        if self.records.len() > self.limits.records {
+            return Err(invalid("record count exceeds bound"));
         }
+        if self.artifacts.len() > self.limits.artifacts {
+            return Err(invalid("artifact count exceeds bound"));
+        }
+        let mut unresolved = Vec::new();
         let mut references_queue = VecDeque::new();
         let mut used = 0u64;
         for record in &self.records {
+            used = used.saturating_add(decoded_len(&record.event_base64)?);
+            if used > self.limits.bytes {
+                return Err(invalid("decoded bundle exceeds byte bound"));
+            }
             let bytes = decode(&record.event_base64)?;
-            used = used.saturating_add(bytes.len() as u64);
             references(
                 &serde_json::from_slice::<Value>(&bytes)?,
                 0,
                 &mut references_queue,
             );
         }
-        if self.artifacts.len() > self.limits.artifacts {
-            return Err(invalid("artifact count exceeds bound"));
-        }
         for (digest, payload) in &self.artifacts {
             match payload {
                 Payload::Present(encoded) => {
+                    used = used.saturating_add(decoded_len(encoded)?);
+                    if used > self.limits.bytes {
+                        return Err(invalid("decoded bundle exceeds byte bound"));
+                    }
                     let bytes = decode(encoded)?;
-                    used = used.saturating_add(bytes.len() as u64);
                     if Digest::of(&bytes) != *digest {
                         return Err(invalid(format!("artifact hash mismatch: {digest}")));
                     }
                 }
                 Payload::Identity => {}
-                other => report
-                    .unresolved
-                    .push(format!("artifact {digest}: {other:?}")),
+                other => unresolved.push(format!("artifact {digest}: {other:?}")),
             }
         }
-        if used > self.limits.bytes {
-            return Err(invalid("decoded bundle exceeds byte bound"));
+        let mut report = self.reduce()?;
+        if report.identity != self.expected {
+            return Err(invalid(
+                "reconstructed state/context/outcome differs from manifest",
+            ));
         }
+        report.unresolved = unresolved;
         let mut traversed = BTreeSet::new();
         while let Some((digest, depth, identity)) = references_queue.pop_front() {
             if matches!(self.artifacts.get(&digest), Some(Payload::Identity)) && !identity {
@@ -402,6 +411,9 @@ impl TraceBundle {
         let mut tasks = BTreeMap::<TaskId, TaskState>::new();
         let mut heads = BTreeMap::<(String, Uuid), (u64, Digest)>::new();
         let mut spans = Vec::new();
+        let mut materialization = MaterializationBudget(self.limits.bytes);
+        materialization.consume(2)?; // The spans array delimiters.
+        let mut unlinked_usage = false;
         let mut costs = BTreeMap::new();
         let mut tokens = BTreeMap::new();
         let mut calls = BTreeSet::new();
@@ -464,10 +476,13 @@ impl TraceBundle {
                     if let TaskEvent::ModelCallRecorded { operation, receipt } = &event {
                         tokens.insert(*operation, receipt.tokens);
                         let report = match self.artifacts.get(&receipt.report) {
-                            Some(Payload::Present(encoded)) => decode_json(encoded).ok(),
+                            Some(Payload::Present(encoded)) => {
+                                materialization.consume(decoded_len(encoded)?)?;
+                                decode_json(encoded).ok()
+                            }
                             _ => None,
                         };
-                        spans.push(json!({"sequence":record.sequence,"task":id,"span":{"kind":"model_response","call":operation,"receipt":receipt,"report":report}}));
+                        materialization.push(&mut spans, json!({"sequence":record.sequence,"task":id,"span":{"kind":"model_response","call":operation,"receipt":receipt,"report":report}}))?;
                     }
                     let value = serde_json::to_value(&event)?;
                     if matches!(
@@ -480,10 +495,17 @@ impl TraceBundle {
                             | TaskEvent::Completed(_)
                             | TaskEvent::Stopped { .. }
                     ) {
-                        spans.push(json!({"sequence":record.sequence,"task":id,"event":value}));
+                        materialization.push(
+                            &mut spans,
+                            json!({"sequence":record.sequence,"task":id,"event":value}),
+                        )?;
                     }
-                    if let TaskEvent::ModelCallReserved { operation } = event {
-                        calls.insert(operation);
+                    match event {
+                        TaskEvent::ModelCallReserved { operation } => {
+                            calls.insert(operation);
+                        }
+                        TaskEvent::UsageCharged { .. } => unlinked_usage = true,
+                        _ => {}
                     }
                 }
                 "session" => {
@@ -543,9 +565,9 @@ impl TraceBundle {
                                         cost_uncertain = true;
                                     }
                                 }
-                                SessionCommand::Feedback { message } => spans.push(json!({"sequence":record.sequence,"session":id,"span":{"kind":"host_feedback","message":message}})),
+                                SessionCommand::Feedback { message } => materialization.push(&mut spans, json!({"sequence":record.sequence,"session":id,"span":{"kind":"host_feedback","message":message}}))?,
                                 SessionCommand::ProviderUsage { call: None, .. } => {
-                                    cost_uncertain = true
+                                    unlinked_usage = true
                                 }
                                 SessionCommand::ProviderUsage {
                                     call: Some(call), ..
@@ -558,6 +580,7 @@ impl TraceBundle {
                                     if let Some(Payload::Present(encoded)) =
                                         self.artifacts.get(receipt)
                                     {
+                                        materialization.consume(decoded_len(encoded)?)?;
                                         let span = decode_json(encoded)?;
                                         if let Some(call) = span
                                             .get("call")
@@ -569,7 +592,7 @@ impl TraceBundle {
                                                 tokens.insert(call, outcome.accounted_tokens());
                                             }
                                         }
-                                        spans.push(json!({"sequence":record.sequence,"session":id,"receipt":receipt,"span":span}));
+                                        materialization.push(&mut spans, json!({"sequence":record.sequence,"session":id,"receipt":receipt,"span":span}))?;
                                     }
                                 }
                                 _ => {}
@@ -634,12 +657,16 @@ impl TraceBundle {
             spans,
             cost: CostConfidence {
                 recorded_usd,
-                complete: unknown_calls == 0 && !cost_uncertain,
+                complete: unknown_calls == 0 && !cost_uncertain && !unlinked_usage,
                 calls: calls.len(),
                 unknown_calls,
-                total_tokens: calls.iter().try_fold(0u64, |total, call| {
-                    total.checked_add(tokens.get(call).copied().flatten()?)
-                }),
+                total_tokens: if unlinked_usage {
+                    None
+                } else {
+                    calls.iter().try_fold(0u64, |total, call| {
+                        total.checked_add(tokens.get(call).copied().flatten()?)
+                    })
+                },
             },
             unresolved: vec![],
         })
@@ -754,6 +781,58 @@ impl TraceBundle {
             json!({"version":VERSION,"range":{"after":self.after,"through":self.through},"exporter_revision":self.exporter_revision,"exact":report.exact,"tasks":tasks,"cost":report.cost,"provenance":report.sessions.values().map(|s|json!({"session":s.id,"settings":s.model(),"admission":s.admission(),"context":s.context_view})).collect::<Vec<_>>(),"spans":report.spans,"unresolved":report.unresolved,"limitations":["Receipt replay is not fresh verification.","Native finished_unverified is not a completion certificate.","Provider-hidden reasoning and unrecorded external state are unavailable.","Historical missing call/child links are not inferred.","Hashes detect corruption, not a malicious wholesale rewrite."]}),
         )
     }
+}
+
+// Charge each receipt before decoding, even when its digest was already seen. Count
+// serialized spans without allocating another output buffer. This is a byte budget,
+// not an allocator/RSS limit; one span and JSON container overhead are also live.
+struct MaterializationBudget(u64);
+
+impl MaterializationBudget {
+    fn consume(&mut self, bytes: u64) -> Result<(), TraceError> {
+        self.0 = self
+            .0
+            .checked_sub(bytes)
+            .ok_or_else(|| invalid("replay materialization exceeds byte bound"))?;
+        Ok(())
+    }
+
+    fn push(&mut self, spans: &mut Vec<Value>, span: Value) -> Result<(), TraceError> {
+        if !spans.is_empty() {
+            self.consume(1)?;
+        }
+        serde_json::to_writer(&mut *self, &span)?;
+        spans.push(span);
+        Ok(())
+    }
+}
+
+impl Write for MaterializationBudget {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.consume(bytes.len() as u64)
+            .map_err(std::io::Error::other)?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+// STANDARD requires padded, four-byte groups. Check size before allocating the
+// decoded buffer; decode() still validates the alphabet and padding bits.
+fn decoded_len(encoded: &str) -> Result<u64, TraceError> {
+    if !encoded.len().is_multiple_of(4) {
+        return Err(invalid("invalid base64 payload"));
+    }
+    let padding = if encoded.ends_with("==") {
+        2
+    } else if encoded.ends_with('=') {
+        1
+    } else {
+        0
+    };
+    Ok((encoded.len() / 4 * 3 - padding) as u64)
 }
 
 fn validate_limits(limits: TraceLimits) -> Result<(), TraceError> {

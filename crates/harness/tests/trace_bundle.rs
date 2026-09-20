@@ -396,3 +396,330 @@ fn inline_skill_content_is_self_contained_only_when_its_digest_matches() {
         }
     }
 }
+
+fn start_task(store: &mut Store, session: SessionId) -> orvek_harness::state::TaskId {
+    let policy = store
+        .public_artifacts()
+        .write(br#"{"version":1,"delivery":"source","profile":{"version":1,"name":"fixture","checks":{}}}"#)
+        .unwrap()
+        .digest();
+    store
+        .start_request(
+            session,
+            Uuid::new_v4(),
+            "inspect".into(),
+            Default::default(),
+            policy,
+        )
+        .unwrap()
+        .1
+        .id
+}
+
+fn assert_shared_receipt_is_bounded(
+    root: &std::path::Path,
+    receipt: orvek_harness::Digest,
+    body_pointer: &str,
+) {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    let mut bundle = export(root);
+    let report = bundle.replay().unwrap();
+    let bodies = report
+        .spans
+        .iter()
+        .filter_map(|span| span.pointer(body_pointer))
+        .collect::<Vec<_>>();
+    assert_eq!(bodies.len(), 24);
+    assert!(
+        bodies
+            .iter()
+            .all(|body| body.as_str().unwrap().len() == 128 * 1024)
+    );
+    let Payload::Present(encoded) = &bundle.artifacts[&receipt] else {
+        panic!("missing fixture receipt")
+    };
+    let materialized_bytes = serde_json::to_vec(&report.spans).unwrap().len()
+        + bodies.len() * STANDARD.decode(encoded).unwrap().len();
+    bundle.limits.bytes = materialized_bytes as u64;
+    assert!(
+        bundle.replay().is_ok(),
+        "the exact materialization budget must fit"
+    );
+    bundle.limits.bytes -= 1;
+    let error = bundle
+        .replay()
+        .map(|_| ())
+        .expect_err("one byte below the materialization budget must fail");
+    assert!(error.to_string().contains("materialization"), "{error}");
+
+    let stored_bytes: usize = bundle
+        .records
+        .iter()
+        .map(|record| STANDARD.decode(&record.event_base64).unwrap().len())
+        .chain(
+            bundle
+                .artifacts
+                .values()
+                .filter_map(|payload| match payload {
+                    Payload::Present(encoded) => Some(STANDARD.decode(encoded).unwrap().len()),
+                    _ => None,
+                }),
+        )
+        .sum();
+    bundle.limits.bytes = 512 * 1024;
+    assert!(stored_bytes < bundle.limits.bytes as usize);
+    let error = bundle
+        .replay()
+        .map(|_| ())
+        .expect_err("shared bodies exceed the replay budget");
+    assert!(error.to_string().contains("materialization"), "{error}");
+    let error = TraceBundle::export(root, None, bundle.limits, &BTreeSet::new(), None)
+        .map(|_| ())
+        .expect_err("export must also bound its final replay");
+    assert!(error.to_string().contains("materialization"), "{error}");
+    let error = bundle
+        .review()
+        .map(|_| ())
+        .expect_err("review must not amplify receipts");
+    assert!(error.to_string().contains("materialization"), "{error}");
+    let file = root.join("bounded-trace.json");
+    let envelope =
+        json!({"digest":orvek_harness::Digest::of_value(&bundle).unwrap(),"bundle":bundle});
+    std::fs::write(&file, serde_json::to_vec(&envelope).unwrap()).unwrap();
+    let error = TraceBundle::read(&file)
+        .map(|_| ())
+        .expect_err("import must bound shared receipts");
+    assert!(error.to_string().contains("materialization"), "{error}");
+}
+
+#[test]
+fn shared_trace_receipts_cannot_amplify_replay_memory() {
+    let (root, mut store, session) = fixture();
+    let body = json!({"kind":"diagnostic","text":"x".repeat(128 * 1024)});
+    let receipt = store
+        .public_artifacts()
+        .write(&serde_json::to_vec(&body).unwrap())
+        .unwrap()
+        .digest();
+    let mut state = store.load_session(session).unwrap();
+    for _ in 0..24 {
+        state = store
+            .session_command(
+                session,
+                state.revision,
+                Uuid::new_v4(),
+                SessionCommand::TraceRecorded {
+                    request: Uuid::new_v4(),
+                    record: receipt,
+                },
+            )
+            .unwrap();
+    }
+    assert_shared_receipt_is_bounded(root.path(), receipt, "/span/text");
+}
+
+#[test]
+fn shared_model_reports_cannot_amplify_replay_memory() {
+    use orvek_harness::state::{ModelCallReceipt, ModelCallStatus};
+
+    let (root, mut store, session) = fixture();
+    let task = start_task(&mut store, session);
+    let body = json!({"partial_text":"x".repeat(128 * 1024)});
+    let report = store
+        .public_artifacts()
+        .write(&serde_json::to_vec(&body).unwrap())
+        .unwrap()
+        .digest();
+    for _ in 0..24 {
+        let call = Uuid::new_v4();
+        store.reserve_model_call(task, call).unwrap();
+        store
+            .record_model_call(
+                task,
+                call,
+                ModelCallReceipt {
+                    status: ModelCallStatus::Completed,
+                    tokens: Some(10),
+                    report,
+                },
+            )
+            .unwrap();
+    }
+    assert_shared_receipt_is_bounded(root.path(), report, "/span/report/partial_text");
+}
+
+#[test]
+fn stored_byte_bounds_are_checked_before_receipt_expansion() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    let (root, mut store, session) = fixture();
+    let digest = receipt(&mut store, session);
+    let mut bundle = export(root.path());
+    bundle.limits.bytes = 1024;
+    bundle
+        .artifacts
+        .insert(digest, Payload::Present(STANDARD.encode(vec![b'x'; 2048])));
+    let error = bundle.replay().unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("decoded bundle exceeds byte bound"),
+        "{error}"
+    );
+}
+
+fn known_call(store: &mut Store, session: SessionId, task: orvek_harness::state::TaskId) {
+    use orvek_harness::state::{ModelCallReceipt, ModelCallStatus};
+
+    let call = Uuid::new_v4();
+    let report = store.public_artifacts().write(b"{}").unwrap().digest();
+    store.reserve_model_call(task, call).unwrap();
+    store
+        .record_model_call(
+            task,
+            call,
+            ModelCallReceipt {
+                status: ModelCallStatus::Completed,
+                tokens: Some(10),
+                report,
+            },
+        )
+        .unwrap();
+    let state = store.load_session(session).unwrap();
+    store
+        .session_command(
+            session,
+            state.revision,
+            Uuid::new_v4(),
+            SessionCommand::ProviderCost {
+                request: Uuid::new_v4(),
+                call,
+                cost_usd: Some("0.125".parse().unwrap()),
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn linked_receipts_keep_known_token_and_cost_totals() {
+    let (root, mut store, session) = fixture();
+    let task = start_task(&mut store, session);
+    known_call(&mut store, session, task);
+    let cost = export(root.path()).replay().unwrap().cost;
+    assert_eq!(cost.total_tokens, Some(10));
+    assert_eq!(cost.recorded_usd, "0.125".parse().unwrap());
+    assert!(cost.complete);
+    assert_eq!(cost.calls, 1);
+    assert_eq!(cost.unknown_calls, 0);
+}
+
+fn assert_unlinked_provider_usage_keeps_totals_unknown(mixed: bool) {
+    use orvek_harness::inference::Usage;
+
+    let (root, mut store, session) = fixture();
+    if mixed {
+        let task = start_task(&mut store, session);
+        known_call(&mut store, session, task);
+    }
+    let mut state = store.load_session(session).unwrap();
+    if state.active_request.is_none() {
+        state = store
+            .session_command(
+                session,
+                state.revision,
+                Uuid::new_v4(),
+                SessionCommand::Input {
+                    kind: orvek_harness::state::RequestKind::Conversation,
+                    content: vec![json!({"role":"user","content":"inspect"})],
+                },
+            )
+            .unwrap();
+    }
+    let request = state.active_request.unwrap();
+    store
+        .session_command(
+            session,
+            state.revision,
+            Uuid::new_v4(),
+            SessionCommand::ProviderUsage {
+                request,
+                call: None,
+                usage: Usage {
+                    input_tokens: Some(5),
+                    output_tokens: Some(5),
+                    total_tokens: Some(10),
+                    cost_usd: Some("0.25".parse().unwrap()),
+                    ..Default::default()
+                },
+                representation: None,
+            },
+        )
+        .unwrap();
+    let cost = export(root.path()).replay().unwrap().cost;
+    assert_eq!(cost.total_tokens, None, "mixed={mixed}");
+    assert!(!cost.complete, "mixed={mixed}");
+    assert_eq!(cost.calls, usize::from(mixed), "do not invent call IDs");
+    assert_eq!(cost.unknown_calls, 0, "no linked call has unknown cost");
+    assert_eq!(
+        cost.recorded_usd,
+        if mixed { "0.125" } else { "0" }.parse().unwrap()
+    );
+}
+
+fn assert_legacy_usage_charged_keeps_totals_unknown(mixed: bool) {
+    use orvek_harness::state::Usage;
+
+    let (root, mut store, session) = fixture();
+    let task = start_task(&mut store, session);
+    if mixed {
+        known_call(&mut store, session, task);
+    }
+    store
+        .charge_usage(
+            task,
+            Uuid::new_v4(),
+            Usage {
+                model_calls: 2,
+                tokens: 7,
+            },
+        )
+        .unwrap();
+    let report = export(root.path()).replay().unwrap();
+    assert_eq!(report.tasks[&task].usage.tokens, if mixed { 17 } else { 7 });
+    assert_eq!(report.cost.total_tokens, None, "mixed={mixed}");
+    assert!(!report.cost.complete, "mixed={mixed}");
+    assert_eq!(
+        report.cost.calls,
+        usize::from(mixed),
+        "do not invent call IDs"
+    );
+    assert_eq!(
+        report.cost.unknown_calls, 0,
+        "no linked call has unknown cost"
+    );
+    assert_eq!(
+        report.cost.recorded_usd,
+        if mixed { "0.125" } else { "0" }.parse().unwrap()
+    );
+}
+
+#[test]
+fn unlinked_provider_usage_keeps_totals_unknown() {
+    assert_unlinked_provider_usage_keeps_totals_unknown(false);
+}
+
+#[test]
+fn mixed_linked_and_unlinked_provider_usage_keeps_totals_unknown() {
+    assert_unlinked_provider_usage_keeps_totals_unknown(true);
+}
+
+#[test]
+fn legacy_usage_charged_keeps_totals_unknown() {
+    assert_legacy_usage_charged_keeps_totals_unknown(false);
+}
+
+#[test]
+fn mixed_linked_and_legacy_usage_charged_keeps_totals_unknown() {
+    assert_legacy_usage_charged_keeps_totals_unknown(true);
+}
