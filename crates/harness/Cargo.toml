@@ -22,6 +22,7 @@ memchr = "2.8.3"
 proc-macro2.workspace = true
 png.workspace = true
 rayon.workspace = true
+rquickjs = { version = "=0.12.1", default-features = false, features = ["std"] }
 reqwest.workspace = true
 rusqlite = { workspace = true, features = ["backup", "limits", "hooks"] }
 rustls.workspace = true

@@ -18,6 +18,7 @@ pub mod feedback;
 pub mod import;
 pub mod inference;
 pub mod input;
+pub mod interpreter;
 #[cfg(unix)]
 pub mod ipc;
 pub mod manual;

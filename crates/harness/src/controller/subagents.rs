@@ -2277,7 +2277,8 @@ mod execution_tests {
                         fixture.child.request,
                         task.id,
                         task.scope_revision,
-                        &proposal,
+                        &proposal.name,
+                        &proposal.call_id,
                         scenario.arguments,
                         &workspace,
                         token,
@@ -2409,7 +2410,6 @@ mod execution_tests {
     async fn real_docker_fork_via_host_dispatch_has_no_write_authority() {
         use crate::{
             controller::{Host, TaskWorkspace},
-            inference::ToolProposal,
             session::SessionCommand,
             trace::{TraceBundle, TraceLimits},
             workspace::{Snapshot, SnapshotPolicy},
@@ -2521,20 +2521,14 @@ mod execution_tests {
                 },
             )
         };
-        let proposal = ToolProposal {
-            item_id: "fc-fork".into(),
-            call_id: "fork".into(),
-            name: "spawn_agent".into(),
-            arguments: args.to_string(),
-            validity: ArgumentValidity::JsonObject,
-        };
         let spawned = host
             .dispatch(
                 fixture.child.session,
                 fixture.child.request,
                 task.id,
                 task.scope_revision,
-                &proposal,
+                "spawn_agent",
+                "fork",
                 args,
                 &workspace,
                 CancellationToken::new(),
@@ -2543,18 +2537,14 @@ mod execution_tests {
             .unwrap();
         assert!(spawned["agent_id"].is_string(), "{spawned}");
         let args = json!({"agent_ids":[spawned["agent_id"]],"timeout_ms":60000});
-        let proposal = ToolProposal {
-            name: "wait_agent".into(),
-            arguments: args.to_string(),
-            ..proposal
-        };
         let result = host
             .dispatch(
                 fixture.child.session,
                 fixture.child.request,
                 task.id,
                 task.scope_revision,
-                &proposal,
+                "wait_agent",
+                "fork",
                 args,
                 &workspace,
                 CancellationToken::new(),

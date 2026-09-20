@@ -46,6 +46,7 @@ use uuid::Uuid;
 mod auxiliary;
 mod event_intake;
 mod imports;
+mod interpreter;
 mod manual;
 mod monitor;
 pub mod notification;
@@ -388,6 +389,7 @@ pub struct Host {
     monitor_build: Option<crate::Digest>,
     event_intake: Mutex<()>,
     experimental_context_transitions: bool,
+    interpreters: Mutex<HashMap<SessionId, Arc<Mutex<crate::interpreter::Interpreter>>>>,
     completion_hook: Option<String>,
     root: PathBuf,
     store: Arc<Mutex<Store>>,
@@ -487,6 +489,7 @@ impl Host {
                 .map(|bytes| crate::Digest::of(&bytes)),
             event_intake: Mutex::new(()),
             experimental_context_transitions: false,
+            interpreters: Mutex::new(HashMap::new()),
             completion_hook: None,
             root: root.canonicalize()?,
             store: Arc::new(Mutex::new(store)),
@@ -1362,6 +1365,7 @@ impl Host {
         .await;
         let result = async {
             if let Err(error) = &result {
+                self.interpreters.lock().await.remove(&session);
                 let mut store = self.store.lock().await;
                 if let Ok(mut state) = store.load_session(session)
                     && state.active_request == Some(request)
@@ -2115,6 +2119,20 @@ impl Host {
                                 .await?
                         } else if proposal.name == "read_context" {
                             self.read_context(session_id, args).await?
+                        } else if proposal.name == "interpreter_eval" {
+                            self.evaluate_cell(
+                                session_id,
+                                request,
+                                task.id,
+                                scope_revision,
+                                &proposal.call_id,
+                                args,
+                                &allowed_tools,
+                                &workspace,
+                                cancellation.clone(),
+                                emit.clone(),
+                            )
+                            .await?
                         } else if proposal.name == "read_legacy" {
                             #[derive(Deserialize)]
                             #[serde(deny_unknown_fields)]
@@ -2223,7 +2241,8 @@ impl Host {
                                 request,
                                 task.id,
                                 scope_revision,
-                                &proposal,
+                                &proposal.name,
+                                &proposal.call_id,
                                 args,
                                 &workspace,
                                 cancellation.clone(),
@@ -2682,7 +2701,8 @@ impl Host {
         request: Uuid,
         task_id: TaskId,
         scope_revision: u64,
-        proposal: &ToolProposal,
+        name: &str,
+        call_id: &str,
         arguments: Value,
         workspace: &TaskWorkspace,
         cancellation: CancellationToken,
@@ -2690,7 +2710,13 @@ impl Host {
         if self.store.lock().await.load(task_id)?.scope_revision != scope_revision {
             return Ok(json!({"error":"tool proposal predates a user follow-up"}));
         }
-        if proposal.name == "task_status" {
+        if name == "read_context" {
+            return self.read_context(session, arguments).await;
+        }
+        if name == "read_review_feedback" {
+            return self.read_review_feedback(session, arguments).await;
+        }
+        if name == "task_status" {
             if !arguments.as_object().is_some_and(|args| args.is_empty()) {
                 return Ok(json!({"error":"task_status takes no arguments"}));
             }
@@ -2699,7 +2725,7 @@ impl Host {
                 json!({"request":state.request,"contract":state.contract,"phase":state.phase,"outcome":state.outcome,"generation":state.generation,"evidence":state.evidence,"findings":state.findings}),
             );
         }
-        if proposal.name == "measure_sloppiness" {
+        if name == "measure_sloppiness" {
             if !arguments.as_object().is_some_and(|args| args.is_empty()) {
                 return Ok(json!({"error":"measure_sloppiness takes no arguments"}));
             }
@@ -2722,7 +2748,7 @@ impl Host {
                 },
             );
         }
-        if proposal.name == "verify_task" {
+        if name == "verify_task" {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]
             struct Check {
@@ -2745,7 +2771,7 @@ impl Host {
             };
         }
         if matches!(
-            proposal.name.as_str(),
+            name,
             "spawn_agent"
                 | "send_agent_message"
                 | "wait_agent"
@@ -2779,13 +2805,10 @@ impl Host {
             };
             return Ok(self
                 .subagents
-                .execute(&proposal.name, arguments, &run, cancellation)
+                .execute(name, arguments, &run, cancellation)
                 .await);
         }
-        if !matches!(
-            proposal.name.as_str(),
-            "read_file" | "search" | "write_file" | "exec_command"
-        ) {
+        if !matches!(name, "read_file" | "search" | "write_file" | "exec_command") {
             return Ok(json!({"error":"tool is not in the admitted capability roster"}));
         }
         let native = self.native_tools.is_some();
@@ -2796,7 +2819,7 @@ impl Host {
                 return Ok(json!({"error":"tool proposal predates a user follow-up"}));
             }
             // Early writes invalidate evidence just like post-contract edits.
-            let mutates = matches!(proposal.name.as_str(), "write_file" | "exec_command");
+            let mutates = matches!(name, "write_file" | "exec_command");
             if mutates && !native {
                 state = store.invalidate_candidate(
                     task_id,
@@ -2807,7 +2830,7 @@ impl Host {
             let input = store
                 .artifacts()
                 .put(&serde_json::to_vec(
-                    &json!({"name":proposal.name,"arguments":arguments}),
+                    &json!({"name":name,"arguments":arguments}),
                 )?)
                 .map_err(StoreError::from)?;
             let environment = store
@@ -2831,8 +2854,8 @@ impl Host {
             let invocation = crate::state::JobInvocation {
                 session,
                 request,
-                call_id: Some(proposal.call_id.clone()),
-                capability: proposal.name.clone(),
+                call_id: Some(call_id.to_owned()),
+                capability: name.to_owned(),
                 input,
                 environment,
             };
@@ -2860,12 +2883,12 @@ impl Host {
                     task_id: task_id.0,
                     generation: state.generation,
                     job_id: job,
-                    timeout_ms: Some(if proposal.name == "exec_command" {
+                    timeout_ms: Some(if name == "exec_command" {
                         DEFAULT_EXEC_TIMEOUT_MS
                     } else {
                         60_000
                     }),
-                    max_output_bytes: if proposal.name == "read_file" {
+                    max_output_bytes: if name == "read_file" {
                         self.store
                             .lock()
                             .await
@@ -2878,7 +2901,7 @@ impl Host {
                     },
                 };
                 let run = native_tools
-                    .execute_recorded(&proposal.name, arguments, context, cancellation.clone())
+                    .execute_recorded(name, arguments, context, cancellation.clone())
                     .await;
                 let unreconcilable = run
                     .result
@@ -2908,7 +2931,7 @@ impl Host {
                     .ok_or(HostError::Invalid(
                         "workspace tools require an execution backend",
                     ))?
-                    .execute_recorded(&proposal.name, arguments, context, cancellation.clone())
+                    .execute_recorded(name, arguments, context, cancellation.clone())
                     .await;
                 let unreconcilable = run
                     .result
@@ -2928,7 +2951,7 @@ impl Host {
             JobStatus::Unknown
         } else if cancellation.is_cancelled() {
             JobStatus::Cancelled
-        } else if proposal.name == "exec_command"
+        } else if name == "exec_command"
             && result.as_ref().is_ok_and(|result| {
                 let status = &result["result"]["status"];
                 !(status["kind"] == "exited"
@@ -2949,7 +2972,7 @@ impl Host {
             Err(error) => json!({"error":error.to_string()}),
         };
         let mut store = self.store.lock().await;
-        let receipt = store.artifacts().put(&serde_json::to_vec(&json!({"version":1,"task":task_id,"job":job,"session":session,"request":request,"call_id":proposal.call_id,"backend":if native {"host"} else {"docker"},"status":status,"execution":execution,"diagnostic":diagnostic,"tool_result":output}))?).map_err(StoreError::from)?;
+        let receipt = store.artifacts().put(&serde_json::to_vec(&json!({"version":1,"task":task_id,"job":job,"session":session,"request":request,"call_id":call_id,"backend":if native {"host"} else {"docker"},"status":status,"execution":execution,"diagnostic":diagnostic,"tool_result":output}))?).map_err(StoreError::from)?;
         store.settle_execution_job(task_id, job, status, receipt)?;
         Ok(output)
     }
@@ -3671,6 +3694,7 @@ fn read_context_properties() -> Value {
 /// no subagents — those belong to the isolated Docker runtime.
 fn native_tool_definitions() -> Vec<Value> {
     let mut tools = HostTools::definitions();
+    tools.push(interpreter::definition());
     for (name, description, properties, required) in [
         (
             "read_legacy",
@@ -3722,6 +3746,7 @@ fn native_tool_definitions() -> Vec<Value> {
 
 fn tool_definitions(discovery: bool) -> Vec<Value> {
     let mut tools = WorkspaceTools::definitions();
+    tools.push(interpreter::definition());
     tools.extend(subagents::Subagents::definitions());
     for (name, description, properties, required) in [
         (

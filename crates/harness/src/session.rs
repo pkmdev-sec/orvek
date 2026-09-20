@@ -404,6 +404,11 @@ pub struct SessionBranch {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionState {
+    #[serde(
+        default,
+        skip_serializing_if = "crate::interpreter::InterpreterState::is_empty"
+    )]
+    pub interpreter: crate::interpreter::InterpreterState,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub completion_deliveries: BTreeMap<Uuid, CompletionDelivery>,
     pub feedbacks: std::collections::BTreeSet<Digest>,
@@ -490,6 +495,10 @@ pub enum SessionEvent {
     deny_unknown_fields
 )]
 pub enum SessionCommand {
+    Interpreter {
+        request: Uuid,
+        event: crate::interpreter::InterpreterEvent,
+    },
     CompletionHook(DeliveryEvent),
     ChildLifecycle(Box<crate::controller::subagents::lifecycle::Event>),
     TraceRecorded {
@@ -680,6 +689,7 @@ impl SessionState {
             current_task: None,
             tasks_by_request: BTreeMap::new(),
             tool_calls: BTreeMap::new(),
+            interpreter: Default::default(),
             kind: RequestKind::Conversation,
             active_request: None,
             outcome: None,
@@ -851,6 +861,9 @@ impl SessionState {
                 }
                 self.history.extend(items.clone());
             }
+            SessionCommand::Interpreter { request, event } => {
+                self.interpreter.apply(*request, event)
+            }
             SessionCommand::ProviderUsage { .. }
             | SessionCommand::ProviderCost { .. }
             | SessionCommand::ContextPrepared { .. }
@@ -873,7 +886,12 @@ impl SessionState {
                 self.current_task = Some(*task);
                 self.tasks_by_request.insert(*request, *task);
             }
-            SessionCommand::TurnSettled { outcome, error, .. } => {
+            SessionCommand::TurnSettled {
+                request,
+                outcome,
+                error,
+            } => {
+                self.interpreter.interrupt(*request);
                 self.active_request = None;
                 self.outcome = *outcome;
                 self.error = error.clone();

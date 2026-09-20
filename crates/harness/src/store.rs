@@ -1056,6 +1056,7 @@ impl Store {
         }
         match &command {
             SessionCommand::Response { request, .. }
+            | SessionCommand::Interpreter { request, .. }
             | SessionCommand::ProviderUsage { request, .. }
             | SessionCommand::WorkspaceSaved { request, .. }
             | SessionCommand::ToolResult { request, .. }
@@ -1070,6 +1071,98 @@ impl Store {
             _ => {}
         }
         match &command {
+            SessionCommand::Interpreter { request, event } => {
+                use crate::interpreter::InterpreterEvent;
+                match event {
+                    InterpreterEvent::Started {
+                        cell,
+                        task,
+                        outer_call,
+                        source,
+                        environment,
+                        ..
+                    } => {
+                        if state.interpreter.cells.contains_key(cell)
+                            || state.tasks_by_request.get(request) != Some(task)
+                            || !state.tool_calls.get(outer_call).is_some_and(|call| {
+                                call.request == *request && call.output.is_none()
+                            })
+                        {
+                            return Err(StoreError::Invalid(
+                                "interpreter cell has no pending outer call",
+                            ));
+                        }
+                        self.artifacts.read(*source)?;
+                        self.artifacts.read(*environment)?;
+                    }
+                    InterpreterEvent::CallStarted {
+                        cell,
+                        ordinal,
+                        call_id,
+                        arguments,
+                        ..
+                    } => {
+                        if *ordinal == 0
+                            || *call_id != format!("{cell}/{ordinal}")
+                            || state.interpreter.pending_calls.contains_key(call_id)
+                            || !state.interpreter.cells.get(cell).is_some_and(|cell| {
+                                cell.request == *request && cell.status.pending()
+                            })
+                        {
+                            return Err(StoreError::Invalid(
+                                "interpreter call has no active owning cell",
+                            ));
+                        }
+                        self.artifacts.read(*arguments)?;
+                    }
+                    InterpreterEvent::CallSettled {
+                        cell,
+                        ordinal,
+                        result,
+                    } => {
+                        if state
+                            .interpreter
+                            .pending_calls
+                            .get(&format!("{cell}/{ordinal}"))
+                            != Some(cell)
+                            || !state.interpreter.cells.get(cell).is_some_and(|cell| {
+                                cell.request == *request && cell.status.pending()
+                            })
+                        {
+                            return Err(StoreError::Invalid(
+                                "interpreter result has no pending call",
+                            ));
+                        }
+                        self.artifacts.read(*result)?;
+                    }
+                    InterpreterEvent::Settled {
+                        cell,
+                        result,
+                        checkpoint,
+                        ..
+                    } => {
+                        if !state
+                            .interpreter
+                            .cells
+                            .get(cell)
+                            .is_some_and(|cell| cell.request == *request && cell.status.pending())
+                            || state
+                                .interpreter
+                                .pending_calls
+                                .values()
+                                .any(|owner| owner == cell)
+                        {
+                            return Err(StoreError::Invalid(
+                                "interpreter cell is not ready to settle",
+                            ));
+                        }
+                        self.artifacts.read(*result)?;
+                        if let Some(checkpoint) = checkpoint {
+                            self.artifacts.read(checkpoint.artifact)?;
+                        }
+                    }
+                }
+            }
             SessionCommand::AdmissionPinned { profile, .. } => {
                 profile.validate().map_err(StoreError::Invalid)?
             }
@@ -1880,9 +1973,10 @@ impl Store {
                         && !session.tool_calls.get(call).is_some_and(|call| {
                             call.request == invocation.request && call.output.is_none()
                         })
+                        && !session.interpreter.admits(call, invocation.request, id)
                     {
                         return Err(StoreError::Invalid(
-                            "execution has no pending model proposal",
+                            "execution has no pending admitted tool call",
                         ));
                     }
                 }

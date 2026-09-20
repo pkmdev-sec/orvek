@@ -314,6 +314,32 @@ impl HostProjection {
                     SessionCommand::TraceRecorded { .. }
                     | SessionCommand::ChildLifecycle(_)
                     | SessionCommand::ContextTransition { .. } => Vec::new(),
+                    SessionCommand::Interpreter { event, .. } => {
+                        use orvek_harness::interpreter::InterpreterEvent;
+                        let message = match event {
+                            InterpreterEvent::Started { cell, .. } => {
+                                format!("Interpreter cell {cell} running")
+                            }
+                            InterpreterEvent::CallStarted {
+                                cell,
+                                ordinal,
+                                name,
+                                ..
+                            } => format!("Interpreter {cell}/{ordinal}: {name} pending"),
+                            InterpreterEvent::CallSettled {
+                                cell,
+                                ordinal,
+                                result,
+                            } => format!("Interpreter {cell}/{ordinal}: receipt {result}"),
+                            InterpreterEvent::Settled {
+                                cell, state_lost, ..
+                            } => format!(
+                                "Interpreter cell {cell} settled; live state lost: {state_lost}"
+                            ),
+                        };
+                        vec![ViewChange::Status(message)]
+                    }
+
                     SessionCommand::AdmissionPinned { .. }
                     | SessionCommand::LegacyImportBound { .. }
                     | SessionCommand::CompletionHook(_) => Vec::new(),
