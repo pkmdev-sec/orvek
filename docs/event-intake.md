@@ -83,7 +83,9 @@ that its task succeeded. `submission: null` means admission is still pending;
 `error` records the latest admission failure. Use `event inspect` to read progress.
 Queue receipts refresh about once per second. For schedules, `event source` includes
 `last_key`, which you can pass to `event inspect`. Terminal task outcomes remain owned
-by the normal submission queue.
+by the normal submission queue. Source configuration, interval cursors, and event
+receipts live in the host's intake tables. Trace bundles retain normal queue/task
+journal records, not a portable copy of those intake tables.
 
 Reuse the upstream delivery key after an acknowledgement loss. The host stores
 intent before admission, pins the exact input, and uses one deterministic request

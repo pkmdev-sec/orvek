@@ -394,25 +394,31 @@ The existing `scripts/check-docs.py` still checks links and syntax separately.
 | [README.md](../README.md) #4 | external-service | Downloads and installs a binary into the user environment. |
 | [README.md](../README.md) #5 | illustrative | Contributor checks; not an isolated capability scenario. |
 | [docs/compaction.md](../docs/compaction.md) #1 | illustrative | Configuration fragment only; does not exercise context projection. |
-| [docs/configuration.md](../docs/configuration.md) #1 | illustrative | Memory host example pending T01; TOML parsing is not wiring proof. |
+| [docs/configuration.md](../docs/configuration.md) #1 | illustrative | Memory configuration fragment; the memory_skills.py scenario separately proves host wiring. |
 | [docs/configuration.md](../docs/configuration.md) #2 | external-service | Needs user credentials and authentication service. |
 | [docs/configuration.md](../docs/configuration.md) #3 | illustrative | Token-helper placeholder must be replaced by the operator. |
 | [docs/configuration.md](../docs/configuration.md) #4 | illustrative | Configuration reference; not a behavior test. |
 | [docs/configuration.md](../docs/configuration.md) #5 | illustrative | Handler path is a placeholder; runnable hook coverage is below. |
 | [docs/configuration.md](../docs/configuration.md) #6 | illustrative | Visual settings require an interactive terminal. |
-| [docs/configuration.md](../docs/configuration.md) #7 | illustrative | Paths are placeholders; host skill discovery example pending T01. |
+| [docs/configuration.md](../docs/configuration.md) #7 | illustrative | Skill paths are placeholders; memory_skills.py separately proves host catalog and on-demand body delivery. |
 | [docs/configuration.md](../docs/configuration.md) #8 | external-service | Downloads an MCP server and needs a real workspace path. |
 | [docs/configuration.md](../docs/configuration.md) #9 | external-service | Needs an external MCP service and credentials. |
+| [docs/event-intake.md](../docs/event-intake.md) #1 | illustrative | Registration requires existing source/session IDs and user-selected protected checks; real CLI tests supply isolated fixtures. |
+| [docs/event-intake.md](../docs/event-intake.md) #2 | illustrative | Commands depend on source.json, payload.json and an existing configured session; no HTTP server is implied. |
+| [docs/event-intake.md](../docs/event-intake.md) #3 | illustrative | Interval trigger fragment; deterministic cursor/catch-up tests and real CLI tests exercise scheduling. |
+| [docs/event-intake.md](../docs/event-intake.md) #4 | illustrative | Cancellation commands require a configured source/event; real restart and cancellation tests supply those IDs. |
 | [docs/harness-host.md](../docs/harness-host.md) #1 | illustrative | Partial Rust call flow with caller-owned variables; reconnect coverage is below. |
 | [docs/harness-integration.md](../docs/harness-integration.md) #1 | illustrative | Contributor checks, not a self-contained host task. |
 | [docs/memory.md](../docs/memory.md) #1 | illustrative | Configuration fragment; the runnable memory_skills.py scenario enables an isolated local store. |
-| [docs/memory.md](../docs/memory.md) #2 | illustrative | Read shape assumes an existing remote namespace/key/version; memory_skills.py instead reads local keys returned by the real scan. |
-| [docs/memory.md](../docs/memory.md) #3 | illustrative | Write shape assumes an existing remote record and writer permission. |
-| [docs/memory.md](../docs/memory.md) #4 | illustrative | Delete shape assumes an existing remote record and writer permission. |
-| [docs/memory.md](../docs/memory.md) #5 | external-service | Remote endpoint, workspace and credential are placeholders. |
-| [docs/memory.md](../docs/memory.md) #6 | illustrative | Skill root configuration contains a user-specific path; memory_skills.py verifies an isolated catalog and explicit skill reads. |
-| [docs/memory.md](../docs/memory.md) #7 | illustrative | Build-and-run instructions for the standalone host-context verification script; they require a built binary rather than forming a self-contained scenario. |
-| [docs/memory.md](../docs/memory.md) #8 | external-service | Push/pull mutates remote/local memory and requires a configured service. |
+| [docs/memory.md](../docs/memory.md) #2 | illustrative | Read shape requires an existing namespace/key/version; the runnable scenario uses actual scan keys. |
+| [docs/memory.md](../docs/memory.md) #3 | illustrative | CAS write shape requires an existing writable remote record. |
+| [docs/memory.md](../docs/memory.md) #4 | illustrative | Delete shape requires an existing writable record and its current version. |
+| [docs/memory.md](../docs/memory.md) #5 | illustrative | Code-claim shape requires scan-before-put and a real admitted repository/source range; test-memory-evidence.py supplies these fixtures. |
+| [docs/memory.md](../docs/memory.md) #6 | illustrative | Lesson nomination needs a producing run and real source/test paths; a citation does not execute or certify the test. |
+| [docs/memory.md](../docs/memory.md) #7 | external-service | Remote endpoint, token and workspace are placeholders; this is not an isolated scenario. |
+| [docs/memory.md](../docs/memory.md) #8 | illustrative | Skill root is a user path placeholder; memory_skills.py verifies an isolated catalog. |
+| [docs/memory.md](../docs/memory.md) #9 | illustrative | Build-and-run commands need a current CLI; the three scripts independently drive real isolated host/evidence/transfer cases. |
+| [docs/memory.md](../docs/memory.md) #10 | external-service | Archive paths require existing user state; push/pull also need a remote service and mutate memory. Isolated transfer acceptance runs in test-memory-transfer.py. |
 | [docs/performance.md](../docs/performance.md) #1 | illustrative | Benchmark command; measures performance rather than host capability. |
 | [docs/sessions.md](../docs/sessions.md) #1 | illustrative | Interactive selector and SESSION_ID need existing user state. |
 | [docs/sessions.md](../docs/sessions.md) #2 | external-service | Downloads browser dependencies and installs development assets. |

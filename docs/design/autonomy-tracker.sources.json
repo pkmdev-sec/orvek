@@ -672,8 +672,8 @@
         "O34",
         "O35"
       ],
-      "owner": "finish-receipt-replay",
-      "implementation_revision": "668200d",
+      "owner": "parent-integration",
+      "implementation_revision": "b2541b2",
       "results": [
         "303 default harness tests passed;45 opt-in tests ignored (t04-full-harness-integrated.log).",
         "79 focused trace/provider/native/child/journal tests passed after review fixes (t04-review-fixes-integrated.log).",
@@ -683,7 +683,7 @@
         "Portable event/receipt replay and review implemented. Exact means record/closure consistency, not full controller-decision replay or complete historical causality.",
         "Final integrated CLI 3 plus release-pipeline 22 tests passed (t04-final-cli.log); all five CLI/IPC examples and27 Python script tests passed. Acceptance distinction documented in .agent-map/autonomy/T04-INTEGRATED.md."
       ],
-      "next_action": "Add used typed recorded provider/tool stubs and per-call causal consistency/gap reporting without claiming full controller-decision simulation.",
+      "next_action": "Document causal vs record exactness, supported gaps, and verify current-tree cross-feature integration before closing acceptance.",
       "worktree": "/tmp/orvek-autonomy-trace-receipts",
       "branch": "work/autonomy-trace-receipts"
     },
@@ -730,12 +730,12 @@
         "O10",
         "O21"
       ],
-      "owner": "implement-persistent-interpreter",
-      "implementation_revision": null,
+      "owner": "review-persistent-interpreter",
+      "implementation_revision": "dd50d843fc46",
       "results": [
         "Prototype only: rquickjs0.12.1 embedding, isolated retained values, memory/CPU limits, cancellation, explicit data-only checkpoint restore, and yielding promises passed seven native tests. No production integration or live-model savings claim. See .agent-map/autonomy/T06-PROTOTYPE.md and t06-interpreter-probe-final.log."
       ],
-      "next_action": "Design and implement bounded host-owned runtime and shared dispatch bridge after seven native QuickJS prototype tests passed.",
+      "next_action": "Independent interpreter authority/resource/serialization/recovery audit before parent merge and trace-closure integration.",
       "worktree": "/tmp/orvek-autonomy-t06",
       "branch": "work/autonomy-t06"
     },
@@ -815,8 +815,8 @@
         "O32",
         "O33"
       ],
-      "owner": "implement-event-intake",
-      "implementation_revision": "a0429a5",
+      "owner": "parent-integration",
+      "implementation_revision": "0547dc3",
       "results": [
         {
           "phase": "hook_fix",
@@ -831,7 +831,7 @@
           "log": ".agent-map/autonomy/t09-integrated-certificate.log"
         }
       ],
-      "next_action": "Implement local durable schedule/webhook adapters through existing admission queue; hook phase remains verified.",
+      "next_action": "Make blocked schedule authority failures queryable; parent11unit/12CLI/2Docker intake+hook checks pass after deterministic peer-credential fixture fix.",
       "phase_dependencies": {
         "hook_fix": [],
         "event_intake": [
@@ -839,8 +839,8 @@
           "T04"
         ]
       },
-      "worktree": "/tmp/orvek-autonomy-event-intake",
-      "branch": "work/autonomy-event-intake",
+      "worktree": "/Users/pumaurya/orvek",
+      "branch": "feat/autonomy-tracker",
       "followup_revisions": [
         "7684a17"
       ],
@@ -856,7 +856,7 @@
       "id": "T10",
       "title": "Quality monitoring and repair experiments",
       "rank": 10,
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "T03",
         "T04",
@@ -875,10 +875,12 @@
         "O15",
         "O19"
       ],
-      "owner": null,
+      "owner": "implement-quality-monitor",
       "implementation_revision": null,
       "results": [],
-      "next_action": "Complete dependencies, then implement the first unchecked step in the work card."
+      "next_action": "Implement asynchronous trace-driven isolated repair, frozen evaluator and new-session activation/rollback; no model-quality promotion without reliable evidence.",
+      "worktree": "/tmp/orvek-autonomy-t10",
+      "branch": "work/autonomy-t10"
     },
     {
       "id": "T11",

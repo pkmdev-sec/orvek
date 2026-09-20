@@ -18,9 +18,10 @@ pinned global cursor. Use `--through N` to select an earlier prefix. Arbitrary
 nonzero baselines are not supported. The default bounds are 100,000 events,
 10,000 artifact references, 64 MiB of decoded data, and 16 artifact hops. An
 oversized journal fails; bounded or missing artifact traversal remains explicit.
-The byte limit separately bounds stored decoded data and the sum of expanded
-receipt bytes plus serialized spans. Repeated receipt references consume that
-second budget each time. These are byte-accounting bounds, not an RSS limit.
+The byte limit separately bounds stored decoded data and replay materialization:
+expanded receipts, serialized spans, and recorded request/tool validation.
+Repeated references consume the replay budget each time. These are byte-accounting
+bounds, not an RSS or general hostile-input CPU limit.
 Bundle files are created without overwriting existing files, with mode 0600.
 
 **Treat bundles as private.** They can contain user input, source code, tool
@@ -38,10 +39,34 @@ Replay applies recorded events through the existing session and task reducers.
 It does not invoke inference, tool dispatch, verification, Docker, or networking.
 It validates selected context against its recorded source and compares the
 reconstructed task, candidate, evidence, certificate, and outcome identities.
-This is a receipt-driven diagnostic stub, **not a fresh verification run**.
-The `exact` flag covers recorded state and artifact consistency. It does not prove
-complete historical causality or replay the controller's decisions. Historical
-missing links are not enumerated per call.
+Typed recorded-provider and recorded-tool readers consume available bundle data
+and cross-check its relationships. They cannot contact a provider or execute a
+tool. This is **event/receipt replay, not controller-decision replay or fresh verification**.
+
+Two independent fields describe the result:
+
+- `exact` covers recorded state, artifact closure, and identity consistency.
+- `causality.complete` means the supported recorded relationships have no reported
+  gaps. It does not prove unrecorded decisions, external state, or remote delivery.
+
+`causality.calls` and `causality.tools` list checked links and explicit gaps for each
+call/job. Unattributed gaps remain separate. A status of `served` means the reader
+returned recorded data, **not that the original operation succeeded**. Current job
+status and original settlement status remain distinct: later fencing does not turn
+an unknown execution into success. Missing, omitted, legacy, and unsupported evidence
+cannot silently become a complete causal proof.
+
+Checks include logical input/tools/instructions, cache/model controls, prepared
+wire bytes, available native context/source, provider output/proposals, usage,
+call/child/task/request/job identities, tool arguments/results, and relevant event
+order. A child or another session's response cannot be published as parent history.
+Child follow-up input is checked against recorded provider/tool prefixes. Child
+origin/inbox reconstruction is not yet supported, including the newer durable
+lifecycle records; those calls report `child_origin_unavailable`. Bitmap, image,
+and saved-review materialization is not duplicated here and reports
+`context_materialization_unavailable` for affected inputs. Other supported checks
+still run. These gaps do not themselves mean the original execution failed.
+
 `finished_unverified` stays distinct from `complete` and has no certificate.
 
 New parent and child dispatch receipts contain session, request, task, call and
@@ -53,7 +78,8 @@ unavailable. Authentication metadata, resolved endpoints, and network framing
 are not recorded. Prompt/source content remains private and is retained verbatim.
 Child tool receipts bind those IDs to the admitted job before execution. Host
 retries retain distinct calls; transport retries retain their attempt numbers
-within a call. Old absent links are not inferred. The review packet includes the recorded intent, contract, candidate,
+within a call. Old absent links are not inferred. The review packet includes causal checks/gaps,
+the recorded intent, contract, candidate,
 delivery/patch identities, the patch payload (base64), checks, certificates, costs,
 and unresolved data.
 `exporter_revision` identifies the exporting binary, not the code that executed
