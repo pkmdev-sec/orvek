@@ -1,6 +1,6 @@
 import unittest
 
-from score import summarize
+from score import TOKEN_FIELDS, summarize
 
 
 def event(sequence, kind, payload):
@@ -13,8 +13,8 @@ class AccountingTests(unittest.TestCase):
             "usage": {"input_tokens": 100, "cached_input_tokens": 40,
                       "cache_write_input_tokens": 20, "output_tokens": 30,
                       "reasoning_output_tokens": 25, "total_tokens": 130},
-            "warmup_usage": {"input_tokens": 10, "total_tokens": 10},
-            "duration_ms": 90, "cost_usd": 0.01,
+            "warmup_usage": {**dict.fromkeys(TOKEN_FIELDS, 0), "input_tokens": 10, "total_tokens": 10},
+            "duration_ms": 90, "cost_usd": 0.01, "billing_uncertain_response_attempts": 0,
         })
         report = summarize([
             event(1, "model.call.completed", {"usage": {"input_tokens": 100}}),
@@ -42,3 +42,16 @@ class AccountingTests(unittest.TestCase):
     def test_unidentified_events_cannot_silently_merge(self):
         with self.assertRaises(ValueError):
             summarize([{"type": "run.completed", "payload": {}}])
+
+    def test_legacy_null_and_missing_fields_remain_unknown(self):
+        summary = summarize([event(1, "run.completed", {
+            "usage": {"input_tokens": 7, "output_tokens": 3, "cached_input_tokens": None},
+            "warmup_usage": dict.fromkeys(TOKEN_FIELDS, 0),
+        })])
+        self.assertEqual(summary["tokens"]["input_tokens"], 7)
+        self.assertIsNone(summary["tokens"]["cached_input_tokens"])
+        self.assertIsNone(summary["tokens"]["reasoning_output_tokens"])
+        self.assertIsNone(summary["summed_turn_duration_ms"])
+        self.assertIsNone(summary["billing_uncertain_attempts"])
+        self.assertFalse(summary["accounting_complete"])
+        self.assertIsNone(summarize([])["tokens"]["input_tokens"])

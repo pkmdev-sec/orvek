@@ -17,9 +17,11 @@ TOKEN_FIELDS = (
 
 
 def summarize(events):
-    totals = dict.fromkeys(TOKEN_FIELDS, 0)
+    samples = []
+    durations = []
+    uncertainties = []
     seen = set()
-    turns = failures = duration = uncertain = missing = local = remote = 0
+    turns = failures = missing = local = remote = 0
     cost = 0.0
     cost_reported = True
     for event in events:
@@ -45,15 +47,21 @@ def summarize(events):
             continue
         turns += 1
         failures += kind == "run.failed"
-        duration += payload.get("duration_ms", 0)
-        uncertain += payload.get("billing_uncertain_response_attempts", 0)
+        for field in ("duration_ms", "billing_uncertain_response_attempts"):
+            value = payload.get(field)
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError(f"invalid {field}")
+        durations.append(payload.get("duration_ms"))
+        uncertainties.append(payload.get("billing_uncertain_response_attempts"))
         for group in ("usage", "warmup_usage"):
             usage = payload.get(group) or {}
+            sample = {}
             for field in TOKEN_FIELDS:
-                count = usage.get(field, 0)
-                if type(count) is not int or count < 0:
+                count = usage.get(field)
+                if count is not None and (type(count) is not int or count < 0):
                     raise ValueError("invalid token count")
-                totals[field] += count
+                sample[field] = count
+            samples.append(sample)
         reported_cost = payload.get("cost_usd")
         if reported_cost is None:
             cost_reported = False
@@ -61,7 +69,13 @@ def summarize(events):
             raise ValueError("invalid cost estimate")
         else:
             cost += reported_cost
+    totals = {field: sum(sample[field] for sample in samples)
+              if samples and all(sample[field] is not None for sample in samples) else None
+              for field in TOKEN_FIELDS}
+    duration = sum(durations) if durations and all(value is not None for value in durations) else None
+    uncertain = sum(uncertainties) if uncertainties and all(value is not None for value in uncertainties) else None
     return {
+        "version": 2,
         "turns": turns,
         "failed_turns": failures,
         "local_compactions": local,
@@ -71,7 +85,8 @@ def summarize(events):
         "estimated_cost_usd": cost if turns and cost_reported else None,
         "missing_operation_usage": missing,
         "billing_uncertain_attempts": uncertain,
-        "accounting_complete": bool(turns) and cost_reported and not missing and not uncertain,
+        "accounting_complete": bool(turns) and cost_reported and not missing and uncertain == 0
+                               and all(value is not None for value in totals.values()),
     }
 
 
