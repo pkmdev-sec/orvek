@@ -123,6 +123,7 @@ jobs:
           python3 -B examples/host-docs/native.py target/debug/orvek
           python3 -B examples/host-docs/reconnect.py target/debug/orvek
           python3 -B examples/host-docs/completion_hook.py target/debug/orvek
+          python3 -B examples/host-docs/memory_skills.py target/debug/orvek
           python3 -B examples/host-docs/sandbox.py target/debug/orvek
       - name: Test controller isolation
         run: cargo test --locked --package orvek-harness --test controller_execution -- --ignored --test-threads=1

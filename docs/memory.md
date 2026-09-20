@@ -153,6 +153,10 @@ File edits refresh at the next provider-turn boundary. `AGENTS.md`, `CLAUDE.md`,
 instruction filenames are not loaded automatically by this service; a model can inspect admitted
 workspace files explicitly.
 
+Run the [memory and on-demand skill example](executable-examples.md#local-memory-and-on-demand-skills-across-sessions)
+for an isolated, two-session CLI flow. It checks real put/scan/read outputs, the exact skill body
+and digest, and `ContextPrepared` manifest artifacts. It uses one host and requires no Docker.
+
 Verify the no-TUI restart path with a local fake provider:
 
 ```sh

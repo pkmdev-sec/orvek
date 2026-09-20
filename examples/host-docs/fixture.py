@@ -32,7 +32,8 @@ def message():
 
 
 def tool(name, arguments):
-    return [{"type": "function_call", "id": "fc_" + name, "call_id": "call_" + name,
+    call_id = uuid.uuid4().hex
+    return [{"type": "function_call", "id": "fc_" + call_id, "call_id": "call_" + call_id,
              "name": name, "arguments": json.dumps(arguments), "status": "completed"}]
 
 
@@ -73,11 +74,14 @@ def wait_until(check, seconds=30):
 
 
 class HostFixture:
-    def __init__(self, binary, outputs, *, sandbox=False, hook=None):
+    def __init__(self, binary, outputs, *, sandbox=False, hook=None, memory=False, skills=None):
         self.binary = str(Path(binary).resolve())
+        # A callback receives (index, request) to choose calls from real tool outputs.
         self.outputs = outputs
         self.sandbox = sandbox
         self.hook = hook
+        self.memory = memory
+        self.skills = skills or {}
         self.requests = []
         self.provider_errors = []
         self.stack = ExitStack()
@@ -101,14 +105,19 @@ class HostFixture:
                 def do_POST(self):
                     index = len(fixture.requests)
                     body = self.rfile.read(int(self.headers["Content-Length"]))
-                    fixture.requests.append(json.loads(body))
-                    if self.path != "/v1/responses" or index >= len(fixture.outputs):
-                        fixture.provider_errors.append(f"unexpected request {index}: {self.path}")
-                        self.send_error(400)
+                    try:
+                        provider_request = json.loads(body)
+                        fixture.requests.append(provider_request)
+                        assert self.path == "/v1/responses", self.path
+                        output = (fixture.outputs(index, provider_request) if callable(fixture.outputs)
+                                  else fixture.outputs[index])
+                    except Exception as error:
+                        fixture.provider_errors.append(f"request {index}: {error!r}")
+                        self.send_error(500)
                         return
                     event = {"type": "response.completed", "response": {
                         "id": f"resp_{index}", "status": "completed",
-                        "output": fixture.outputs[index],
+                        "output": output,
                         "usage": {"input_tokens": 5, "output_tokens": 1, "total_tokens": 6}}}
                     data = ("event: response.completed\ndata: " + json.dumps(event) + "\n\n").encode()
                     self.send_response(200)
@@ -129,7 +138,16 @@ class HostFixture:
                       'web_search = false\nimage_generation = false\n')
             if self.hook:
                 config += f'completion_hook = {json.dumps(self.hook)}\n'
-            config += '[memory]\nenabled = false\n[skills]\nenabled = false\n'
+            config += f'[memory]\nenabled = {str(self.memory).lower()}\n'
+            config += f'[skills]\nenabled = {str(bool(self.skills)).lower()}\n'
+            if self.skills:
+                skills_root = self.root / "skills"
+                for name, content in self.skills.items():
+                    assert name and Path(name).name == name and name not in (".", ".."), name
+                    skill = skills_root / name / "SKILL.md"
+                    skill.parent.mkdir(parents=True)
+                    skill.write_text(content, encoding="utf-8")
+                config += f'roots = [{json.dumps(str(skills_root))}]\n'
             self.config.write_text(config)
             self.config.chmod(0o600)
             # Do not inherit user configuration, provider credentials, or proxy settings.
@@ -197,10 +215,11 @@ class HostFixture:
             "model": {"model": "sol", "thinking": "medium",
                       "reasoning_mode": "standard", "fast_mode": False}})["id"]
 
-    def run(self):
-        result = subprocess.run(self.command + ["run", "Write the local fixture result"],
+    def run(self, prompt="Write the local fixture result"):
+        result = subprocess.run(self.command + ["run", prompt],
                                 cwd=self.workspace, env=self.env, text=True,
                                 capture_output=True, timeout=120)
+        assert not self.provider_errors, self.provider_errors
         assert result.returncode == 0, (result.stdout, result.stderr)
         events = [json.loads(line) for line in result.stdout.splitlines()]
         assert all(event["protocol"] == "orvek.host" and event["version"] == 1 for event in events)
@@ -230,6 +249,8 @@ class HostFixture:
                 return records
             records.extend(page)
 
-    def assert_provider_consumed(self):
+    def assert_provider_consumed(self, expected=None):
         assert not self.provider_errors, self.provider_errors
-        assert len(self.requests) == len(self.outputs), (len(self.requests), len(self.outputs))
+        if expected is None:
+            expected = len(self.outputs)
+        assert len(self.requests) == expected, (len(self.requests), expected)

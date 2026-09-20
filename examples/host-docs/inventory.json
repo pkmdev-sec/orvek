@@ -123,14 +123,14 @@
     "block": 1,
     "sha256": "a5d032cfdb67ec5cec63100e9a73c8f1b556edaf71ac095e1cd1364d520bce1d",
     "kind": "illustrative",
-    "reason": "Memory host example pending T01."
+    "reason": "Configuration fragment; the runnable memory_skills.py scenario enables an isolated local store."
   },
   {
     "guide": "docs/memory.md",
     "block": 2,
     "sha256": "52abd47367a2a768d0b057b56fd9f03e873cb1fb8d9b03bea922526f935074c5",
     "kind": "illustrative",
-    "reason": "Read shape assumes an existing namespace/key/version; pending T01 wiring example."
+    "reason": "Read shape assumes an existing remote namespace/key/version; memory_skills.py instead reads local keys returned by the real scan."
   },
   {
     "guide": "docs/memory.md",
@@ -158,7 +158,7 @@
     "block": 6,
     "sha256": "845d0751fa9de16ef4894d30189d9f2329e6f6bbe8475c163b839ff5ea980909",
     "kind": "illustrative",
-    "reason": "Skill root configuration contains a user-specific path; the host-context lever tests discovery with an isolated fixture."
+    "reason": "Skill root configuration contains a user-specific path; memory_skills.py verifies an isolated catalog and explicit skill reads."
   },
   {
     "guide": "docs/memory.md",

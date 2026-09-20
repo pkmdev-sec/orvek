@@ -5,7 +5,9 @@ import json
 from pathlib import Path
 import tempfile
 import sys
+import tomllib
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("doc_examples", ROOT / "scripts/check-doc-examples.py")
@@ -81,6 +83,38 @@ class ExampleDriftTests(unittest.TestCase):
                             for error in checker.check(self.root, self.rows)))
         self.assertTrue(any("duplicate" in error
                             for error in checker.check(self.root, self.rows + self.rows[:1])))
+
+
+class HostContextFixtureTests(unittest.TestCase):
+    def test_repeated_tool_names_have_distinct_call_ids(self):
+        scan, = fixture.tool("memory", {"operation": "scan", "query": "fixture"})
+        rescan, = fixture.tool("memory", {"operation": "scan", "query": "fixture"})
+        self.assertNotEqual(scan["call_id"], rescan["call_id"])
+        self.assertNotEqual(scan["id"], rescan["id"])
+
+    def test_context_configuration_and_skill_exist_before_host_launch(self):
+        body = "---\nname: check-note\ndescription: Check notes.\n---\nFixture body.\n"
+        host = fixture.HostFixture(sys.executable, [], memory=True, skills={"check-note": body})
+
+        def inspect_setup(*args, **kwargs):
+            config = tomllib.loads(host.config.read_text())
+            self.assertTrue(config["memory"]["enabled"])
+            self.assertTrue(config["skills"]["enabled"])
+            root, = config["skills"]["roots"]
+            self.assertEqual(Path(root), host.root / "skills")
+            self.assertEqual((Path(root) / "check-note/SKILL.md").read_bytes(), body.encode())
+            self.assertEqual(host.config.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(kwargs["env"]["HOME"], str(host.home))
+            self.assertNotIn("CODEX_HOME", kwargs["env"])
+            self.assertNotIn("ORVEK_CONFIG", kwargs["env"])
+            raise RuntimeError("stop before host launch")
+
+        with patch.object(fixture.subprocess, "Popen", side_effect=inspect_setup):
+            with self.assertRaisesRegex(RuntimeError, "stop before host launch"):
+                with host:
+                    self.fail("host must not start")
+        self.assertFalse(host.provider_thread.is_alive())
+        self.assertFalse(host.root.exists())
 
 
 if __name__ == "__main__":

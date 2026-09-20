@@ -16,6 +16,7 @@ SCENARIOS = {
     "sandbox": "Verified sandbox completion",
     "reconnect": "Lost acknowledgement and journal reconnect",
     "completion_hook": "Local terminal hook delivery",
+    "memory_skills": "Local memory and on-demand skills across sessions",
 }
 
 
@@ -62,11 +63,11 @@ Build `orvek` with `cargo build --locked --package orvek --bin orvek`.
 Pass the built binary path as the only argument to each scenario below.
 Do not use Python's `-O` flag: it disables assertions.
 
-Native, reconnect and hook scenarios require Unix, but not Docker. The sandbox
-scenario also requires local Docker, a locally available `debian:bookworm-slim`
+Native, reconnect, hook and memory/skill scenarios require Unix, but not Docker.
+The sandbox scenario also requires local Docker, a locally available `debian:bookworm-slim`
 image, and `ORVEK_EXECUTOR_HELPER` pointing to a matching Linux helper. See
 [workspace execution](workspace-execution.md) for helper setup. Missing prerequisites
-fail; no case silently skips. CI runs all four in the Docker security job.
+fail; no case silently skips. CI runs all five in the Docker security job.
 
 The shared [fixture](../examples/host-docs/fixture.py) starts a separate foreground
 host, local provider, configuration, HOME and workspace for each run. It stops the
@@ -78,9 +79,10 @@ these examples control the provider and use only the temporary workspace.
 
 ## Coverage limits
 
-- **Memory/skill examples: pending.** T01 host wiring is verified separately by
-  `scripts/test-host-context.py`. Dedicated short examples in this guide still need
-  to inspect actual memory outputs and on-demand skill bodies.
+- The memory/skill example uses two fresh CLI sessions on one host and one isolated
+  local store. It checks real scan keys, full reads, explicit skill bytes/digests,
+  and stored context manifests. It does not test remote memory or a host restart.
+  `scripts/test-host-context.py` separately checks the restart path.
 - **Sanitized trace links: pending T04.** Journal assertions below are not portable
   trace bundles. No trace exports or offline replay claims are made here.
 - Reconnect drops an IPC acknowledgement and reconnects a journal watch. It does
@@ -92,7 +94,7 @@ these examples control the provider and use only the temporary workspace.
   from `crates/harness/tests/controller_execution.rs`, through public IPC rather
   than a second verification implementation. Delivery does not overwrite source.
 
-T11 remains partial until the pending examples and trace links are verified.
+T11 remains partial until sanitized trace links are verified.
 
 ## Runnable scenarios
 
