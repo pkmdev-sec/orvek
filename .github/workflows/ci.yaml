@@ -99,7 +99,8 @@ jobs:
     name: Docker security integration
     timeout-minutes: 45
     env:
-      ORVEK_EXECUTOR_HELPER: target/debug/orvek-executor
+      ORVEK_EXECUTOR_HELPER: target/release/orvek-executor
+      ORVEK_EXECUTOR_IMAGE: debian:bookworm-slim
       ORVEK_WORKSPACE_TEST_IMAGE: debian:bookworm-slim
     steps:
       - name: Checkout sources
@@ -112,28 +113,20 @@ jobs:
         with:
           shared-key: build
           save-if: false
+      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@nextest
       - name: Pull the isolated runtime image
         run: docker pull debian:bookworm-slim
       - name: Build the Linux executor helper
-        run: cargo build --locked --package orvek-executor --bin orvek-executor
+        run: cargo build --locked --release --package orvek-executor --bin orvek-executor --features stub
       - name: Build the CLI for executable documentation
         run: cargo build --locked --package orvek --bin orvek
       - name: Replay checked-in sanitized documentation traces
         run: python3 -B scripts/doc-traces.py --binary target/debug/orvek
       - name: Run all five host examples with sanitized export and replay assertions
         run: python3 -B scripts/doc-traces.py --generate --binary target/debug/orvek --output "${{ runner.temp }}/doc-traces"
-      - name: Test controller isolation
-        run: cargo test --locked --package orvek-harness --test controller_execution -- --ignored --test-threads=1
-      - name: Test Docker runtime boundaries
-        run: cargo test --locked --package orvek-harness --test docker_execution -- --ignored --test-threads=1
-      - name: Test native import isolation
-        run: cargo test --locked --package orvek-harness --test native_import -- --ignored --test-threads=1
-      - name: Test operator socket recovery
-        run: cargo test --locked --package orvek-harness --test operator_protocol -- --ignored --test-threads=1
-      - name: Test protected verification
-        run: cargo test --locked --package orvek-harness --test protected_verification -- --ignored --test-threads=1
-      - name: Test workspace command isolation
-        run: cargo test --locked --package orvek-harness --test workspace_tools -- --ignored --test-threads=1
+      - name: Run ignored Docker tests across every workspace target
+        run: just test-docker --locked
 
   cargo-build:
     needs: cache

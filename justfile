@@ -38,6 +38,10 @@ audit-components:
 test *args='':
     cargo nextest run {{args}}
 
+# Subprocess fixtures are invoked by their owning isolation tests, not as standalone tests.
+test-docker *args='':
+    cargo nextest run --workspace --all-features --run-ignored only --test-threads=1 --no-fail-fast -E 'not (test(=process_owner) or test(=poisoned_configuration_child) or test(=environment_fixture_child))' {{args}}
+
 test-docs:
     rustdoc --test README.md --edition 2024
 
