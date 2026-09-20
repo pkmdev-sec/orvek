@@ -537,6 +537,9 @@ pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<(
     }
     while handlers.join_next().await.is_some() {}
     drop(listener);
+    // Socket disappearance tells reconnecting clients that replacement may start.
+    // Release the store-owner lock before publishing that signal.
+    drop(host);
     std::fs::remove_file(socket)?;
     Ok(())
 }
