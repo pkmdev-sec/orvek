@@ -21,6 +21,10 @@ keeps resumable sessions, and uses your configured model provider for inference.
 By default, shell commands run with your permissions. The optional Docker runtime provides
 isolated verification and read-only child agents; see [Subagents](docs/subagents.md).
 
+## Workflow overview
+
+<img src="assets/orvex-differentiators.gif" alt="Orvex workflow: a durable host connects shared memory, read-only child agents, and browser review." width="1280">
+
 ## Install
 
 Requires Rust 1.97 or newer and a C toolchain. Orvek currently ships from source:

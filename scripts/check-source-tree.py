@@ -21,8 +21,9 @@ for encoded in tracked.split(b"\0"):
     environment = path.name == ".env" or path.name.startswith(".env.")
     example = path.name in {".env.example", ".env.sample", ".env.template"}
     generated = path.name == ".DS_Store" or path.suffix == ".pyc"
+    local_marketing = path == PurePosixPath("assets/marketing") or PurePosixPath("assets/marketing") in path.parents
     bundled_output = str(path).startswith(("dist/", "web/review/dist/"))
-    if any(part in private_or_generated for part in path.parts) or generated or bundled_output or (environment and not example):
+    if any(part in private_or_generated for part in path.parts) or generated or bundled_output or local_marketing or (environment and not example):
         violations.append(str(path))
 if violations:
     print("Remove local/generated files from the Git index:", file=sys.stderr)

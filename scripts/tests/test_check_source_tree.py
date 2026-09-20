@@ -54,9 +54,20 @@ class SourceHygieneTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn(path, result.stderr)
 
-    def test_public_graph_and_marketing_sources_are_allowed(self):
+    def test_local_marketing_is_rejected(self):
+        for path in [
+            "assets/marketing",
+            "assets/marketing/README.md",
+            "assets/marketing/orvex-comparison.gif",
+        ]:
+            with self.subTest(path=path):
+                result = self.check_paths([path])
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(path, result.stderr)
+
+    def test_public_graph_and_readme_assets_are_allowed(self):
         result = self.check_paths(
-            ["docs/codebase-graph/graph.json", "assets/marketing/README.md"]
+            ["docs/codebase-graph/graph.json", "assets/orvex-differentiators.gif"]
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

@@ -32,3 +32,6 @@ examples/orvek-memory-cloudflare/node_modules/
 
 # Local agent diagnostics and verification artifacts.
 .agent-map
+
+# Local marketing sources and exports; only the README GIF is published.
+/assets/marketing/

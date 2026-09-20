@@ -11,8 +11,8 @@ The public navigation graph lives under `docs/codebase-graph/` and remains versi
 - Git ignores `.agent-map` as a file or directory at any depth.
 - Docker contexts exclude root and nested `.agent-map` paths.
 - The existing CI source-hygiene check rejects even force-added private map paths.
-- Regression tests exercise real temporary Git indexes. Public graph and marketing
-  files remain allowed.
+- Regression tests exercise real temporary Git indexes. Public graph files and README assets remain
+  allowed; `assets/marketing/` remains local and is rejected if force-added.
 
 ## Temporary screenshot path and timeout
 

@@ -429,11 +429,6 @@
     {
       "kind": "contains",
       "source": "directory:assets",
-      "target": "directory:assets/marketing"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:assets",
       "target": "file:assets/README.md"
     },
     {
@@ -453,68 +448,8 @@
     },
     {
       "kind": "contains",
-      "source": "directory:assets/marketing",
-      "target": "file:assets/marketing/README.md"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:assets/marketing",
-      "target": "file:assets/marketing/SOURCES.md"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:assets/marketing",
-      "target": "file:assets/marketing/content.json"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:assets/marketing",
-      "target": "file:assets/marketing/manifest.json"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:assets/marketing",
-      "target": "file:assets/marketing/orvex-comparison.gif"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:assets/marketing",
-      "target": "file:assets/marketing/orvex-comparison.mp4"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:assets/marketing",
-      "target": "file:assets/marketing/orvex-comparison.png"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:assets/marketing",
-      "target": "file:assets/marketing/orvex-comparison.webp"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:assets/marketing",
-      "target": "file:assets/marketing/orvex-differentiators.gif"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:assets/marketing",
-      "target": "file:assets/marketing/orvex-differentiators.mp4"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:assets/marketing",
-      "target": "file:assets/marketing/orvex-differentiators.png"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:assets/marketing",
-      "target": "file:assets/marketing/orvex-differentiators.webp"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:assets/marketing",
-      "target": "file:assets/marketing/preview.html"
+      "source": "directory:assets",
+      "target": "file:assets/orvex-differentiators.gif"
     },
     {
       "kind": "contains",
@@ -2369,11 +2304,6 @@
     {
       "kind": "contains",
       "source": "directory:scripts",
-      "target": "file:scripts/generate-marketing-visuals.py"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:scripts",
       "target": "file:scripts/generate-readme-logo.py"
     },
     {
@@ -3720,56 +3650,6 @@
       "kind": "links_to",
       "source": "file:README.md",
       "target": "file:evals/README.md"
-    },
-    {
-      "kind": "links_to",
-      "source": "file:assets/marketing/README.md",
-      "target": "file:assets/marketing/SOURCES.md"
-    },
-    {
-      "kind": "links_to",
-      "source": "file:assets/marketing/README.md",
-      "target": "file:assets/marketing/orvex-comparison.gif"
-    },
-    {
-      "kind": "links_to",
-      "source": "file:assets/marketing/README.md",
-      "target": "file:assets/marketing/orvex-comparison.mp4"
-    },
-    {
-      "kind": "links_to",
-      "source": "file:assets/marketing/README.md",
-      "target": "file:assets/marketing/orvex-comparison.png"
-    },
-    {
-      "kind": "links_to",
-      "source": "file:assets/marketing/README.md",
-      "target": "file:assets/marketing/orvex-comparison.webp"
-    },
-    {
-      "kind": "links_to",
-      "source": "file:assets/marketing/README.md",
-      "target": "file:assets/marketing/orvex-differentiators.gif"
-    },
-    {
-      "kind": "links_to",
-      "source": "file:assets/marketing/README.md",
-      "target": "file:assets/marketing/orvex-differentiators.mp4"
-    },
-    {
-      "kind": "links_to",
-      "source": "file:assets/marketing/README.md",
-      "target": "file:assets/marketing/orvex-differentiators.png"
-    },
-    {
-      "kind": "links_to",
-      "source": "file:assets/marketing/README.md",
-      "target": "file:assets/marketing/orvex-differentiators.webp"
-    },
-    {
-      "kind": "links_to",
-      "source": "file:assets/marketing/README.md",
-      "target": "file:assets/marketing/preview.html"
     },
     {
       "kind": "links_to",
@@ -11714,12 +11594,6 @@
       "path": "assets"
     },
     {
-      "id": "directory:assets/marketing",
-      "kind": "directory",
-      "label": "marketing",
-      "path": "assets/marketing"
-    },
-    {
       "id": "directory:bin",
       "kind": "directory",
       "label": "bin",
@@ -12396,7 +12270,7 @@
       "id": "file:.dockerignore",
       "kind": "file",
       "label": ".dockerignore",
-      "lines": 21,
+      "lines": 23,
       "path": ".dockerignore"
     },
     {
@@ -12444,7 +12318,7 @@
       "id": "file:.gitignore",
       "kind": "file",
       "label": ".gitignore",
-      "lines": 34,
+      "lines": 37,
       "path": ".gitignore"
     },
     {
@@ -12500,7 +12374,7 @@
       "id": "file:README.md",
       "kind": "file",
       "label": "README.md",
-      "lines": 107,
+      "lines": 111,
       "path": "README.md"
     },
     {
@@ -12516,7 +12390,7 @@
       "id": "file:assets/README.md",
       "kind": "file",
       "label": "README.md",
-      "lines": 19,
+      "lines": 26,
       "path": "assets/README.md"
     },
     {
@@ -12526,102 +12400,6 @@
       "label": "favicon.svg",
       "lines": 12,
       "path": "assets/favicon.svg"
-    },
-    {
-      "file_kind": "documentation",
-      "id": "file:assets/marketing/README.md",
-      "kind": "file",
-      "label": "README.md",
-      "lines": 61,
-      "path": "assets/marketing/README.md"
-    },
-    {
-      "file_kind": "documentation",
-      "id": "file:assets/marketing/SOURCES.md",
-      "kind": "file",
-      "label": "SOURCES.md",
-      "lines": 63,
-      "path": "assets/marketing/SOURCES.md"
-    },
-    {
-      "file_kind": "configuration",
-      "id": "file:assets/marketing/content.json",
-      "kind": "file",
-      "label": "content.json",
-      "lines": 132,
-      "path": "assets/marketing/content.json"
-    },
-    {
-      "file_kind": "configuration",
-      "id": "file:assets/marketing/manifest.json",
-      "kind": "file",
-      "label": "manifest.json",
-      "lines": 43,
-      "path": "assets/marketing/manifest.json"
-    },
-    {
-      "file_kind": "binary-asset",
-      "id": "file:assets/marketing/orvex-comparison.gif",
-      "kind": "file",
-      "label": "orvex-comparison.gif",
-      "path": "assets/marketing/orvex-comparison.gif"
-    },
-    {
-      "file_kind": "binary-asset",
-      "id": "file:assets/marketing/orvex-comparison.mp4",
-      "kind": "file",
-      "label": "orvex-comparison.mp4",
-      "path": "assets/marketing/orvex-comparison.mp4"
-    },
-    {
-      "file_kind": "binary-asset",
-      "id": "file:assets/marketing/orvex-comparison.png",
-      "kind": "file",
-      "label": "orvex-comparison.png",
-      "path": "assets/marketing/orvex-comparison.png"
-    },
-    {
-      "file_kind": "binary-asset",
-      "id": "file:assets/marketing/orvex-comparison.webp",
-      "kind": "file",
-      "label": "orvex-comparison.webp",
-      "path": "assets/marketing/orvex-comparison.webp"
-    },
-    {
-      "file_kind": "binary-asset",
-      "id": "file:assets/marketing/orvex-differentiators.gif",
-      "kind": "file",
-      "label": "orvex-differentiators.gif",
-      "path": "assets/marketing/orvex-differentiators.gif"
-    },
-    {
-      "file_kind": "binary-asset",
-      "id": "file:assets/marketing/orvex-differentiators.mp4",
-      "kind": "file",
-      "label": "orvex-differentiators.mp4",
-      "path": "assets/marketing/orvex-differentiators.mp4"
-    },
-    {
-      "file_kind": "binary-asset",
-      "id": "file:assets/marketing/orvex-differentiators.png",
-      "kind": "file",
-      "label": "orvex-differentiators.png",
-      "path": "assets/marketing/orvex-differentiators.png"
-    },
-    {
-      "file_kind": "binary-asset",
-      "id": "file:assets/marketing/orvex-differentiators.webp",
-      "kind": "file",
-      "label": "orvex-differentiators.webp",
-      "path": "assets/marketing/orvex-differentiators.webp"
-    },
-    {
-      "file_kind": "web-asset",
-      "id": "file:assets/marketing/preview.html",
-      "kind": "file",
-      "label": "preview.html",
-      "lines": 36,
-      "path": "assets/marketing/preview.html"
     },
     {
       "file_kind": "binary-asset",
@@ -12636,6 +12414,13 @@
       "kind": "file",
       "label": "orvek-logo.png",
       "path": "assets/orvek-logo.png"
+    },
+    {
+      "file_kind": "binary-asset",
+      "id": "file:assets/orvex-differentiators.gif",
+      "kind": "file",
+      "label": "orvex-differentiators.gif",
+      "path": "assets/orvex-differentiators.gif"
     },
     {
       "file_kind": "cargo-manifest",
@@ -15177,7 +14962,7 @@
       "id": "file:scripts/check-source-tree.py",
       "kind": "file",
       "label": "check-source-tree.py",
-      "lines": 87,
+      "lines": 88,
       "path": "scripts/check-source-tree.py"
     },
     {
@@ -15187,14 +14972,6 @@
       "label": "generate-codebase-graph.py",
       "lines": 801,
       "path": "scripts/generate-codebase-graph.py"
-    },
-    {
-      "file_kind": "python-script",
-      "id": "file:scripts/generate-marketing-visuals.py",
-      "kind": "file",
-      "label": "generate-marketing-visuals.py",
-      "lines": 331,
-      "path": "scripts/generate-marketing-visuals.py"
     },
     {
       "file_kind": "python-script",
@@ -15225,7 +15002,7 @@
       "id": "file:scripts/tests/test_check_source_tree.py",
       "kind": "file",
       "label": "test_check_source_tree.py",
-      "lines": 65,
+      "lines": 76,
       "path": "scripts/tests/test_check_source_tree.py"
     },
     {
@@ -19746,26 +19523,26 @@
     ]
   },
   "statistics": {
-    "edges": 2246,
+    "edges": 2222,
     "files_by_kind": {
       "automation": 4,
-      "binary-asset": 11,
+      "binary-asset": 4,
       "cargo-manifest": 8,
       "ci-workflow": 4,
-      "configuration": 19,
-      "documentation": 53,
-      "python-script": 33,
+      "configuration": 17,
+      "documentation": 51,
+      "python-script": 32,
       "rust-source": 352,
       "supporting-file": 21,
       "typescript-source": 36,
-      "web-asset": 21
+      "web-asset": 20
     },
-    "nodes": 1176,
+    "nodes": 1162,
     "nodes_by_kind": {
       "component": 14,
       "dependency": 72,
-      "directory": 117,
-      "file": 562,
+      "directory": 116,
+      "file": 549,
       "module": 356,
       "package": 7,
       "repository": 1,
