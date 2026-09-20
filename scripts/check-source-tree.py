@@ -10,7 +10,7 @@ import sys
 repository = Path(__file__).resolve().parent.parent
 tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=repository)
 private_or_generated = {
-    ".codex", ".claude", ".agents", ".idea", ".vscode", ".tact", ".orvek",
+    ".agent-map", ".codex", ".claude", ".agents", ".idea", ".vscode", ".tact", ".orvek",
     "target", "node_modules", "__pycache__", ".venv", ".cache", ".dev", ".jj",
 }
 violations = []

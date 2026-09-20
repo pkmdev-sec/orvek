@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     steps:
       - name: Checkout sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,6 +40,21 @@ jobs:
 
           if [[ "$tag_version" != "$crate_version" ]]; then
             echo "Tag version $tag_version does not match crate version $crate_version" >&2
+            exit 1
+          fi
+
+      - name: Require successful CI for the tagged commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_sha=$(git rev-parse HEAD)
+          conclusion=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yaml/runs?head_sha=${release_sha}&event=push&branch=main&per_page=1" \
+            --jq '.workflow_runs[0].conclusion // "missing"')
+          if [[ "$conclusion" != "success" ]]; then
+            echo "Release blocked: main CI for ${release_sha} is ${conclusion}" >&2
             exit 1
           fi
 

@@ -4,7 +4,10 @@ Orvek currently ships from source. No Orvek crates, signed binaries, or containe
 published. The release workflow is not ready until these prerequisites are complete:
 
 - Release or upstream the pinned Nanocodex extensions and update dependencies.
-- Establish ownership of `orvek` and `orvek-memory` on crates.io.
+- Resolve the `orvek-harness` dependency on the non-publishable, path-only
+  `orvek-executor` crate. Choose and verify a publishable dependency graph before
+  enabling crate publication; the current workflow does not publish these prerequisites.
+- Establish ownership of every publishable crate in that graph on crates.io.
 - Set `CARGO_REGISTRY_TOKEN` with permission to publish those crates.
 - Allow GitHub Actions to create releases and publish GHCR packages.
 
@@ -29,7 +32,8 @@ Never move or reuse a published release tag.
 
 ## Workflow outputs
 
-The tag workflow checks the version and main ancestry, then:
+The tag workflow checks the version, main ancestry, and a successful main-push CI run for the
+exact tagged commit. Missing, pending, and failed CI results block the release. It then:
 
 1. Builds Linux x86-64/ARM64 and macOS Intel/Apple Silicon binaries.
 2. Packages, checksums, and signs binary archives and the review bundle.

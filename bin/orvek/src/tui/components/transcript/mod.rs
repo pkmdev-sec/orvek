@@ -1959,7 +1959,12 @@ fn render_entry(
         )),
     };
     if entry.trailing_spacer {
-        layout.lines.push(Line::default());
+        let spacer = if width >= 14 && matches!(entry.kind, EntryKind::Reasoning { .. }) {
+            Line::from(Span::styled("│", Style::default().fg(theme.muted())))
+        } else {
+            Line::default()
+        };
+        layout.lines.push(spacer);
         layout.links.push(Vec::new());
         layout.selections.push(Vec::new());
     }
@@ -2050,8 +2055,19 @@ fn render_assistant(
     workspace: &Path,
     images: &mut image::Cache,
 ) -> markdown::Layout {
-    let layout = markdown::render_cached(text, width, theme, workspace, images);
-    message_heading(layout, width, "Assistant", theme.accent())
+    let (label, gutter) = if width >= 14 {
+        ("╰▶ Assistant", "  ")
+    } else {
+        ("Assistant", "")
+    };
+    let layout = markdown::render_cached(
+        text,
+        width.saturating_sub(gutter.len() as u16),
+        theme,
+        workspace,
+        images,
+    );
+    message_heading(layout, width, label, theme.accent(), gutter)
 }
 
 fn render_reasoning(
@@ -2061,7 +2077,13 @@ fn render_reasoning(
     workspace: &Path,
     images: &mut image::Cache,
 ) -> markdown::Layout {
-    let mut layout = markdown::render_cached(text, width, theme, workspace, images);
+    let (label, gutter) = if width >= 14 {
+        ("╭─ reasoning", "│ ")
+    } else {
+        ("reasoning", "")
+    };
+    let content_width = width.saturating_sub(line_width(gutter) as u16);
+    let mut layout = markdown::render_cached(text, content_width, theme, workspace, images);
     for line in &mut layout.lines {
         for span in &mut line.spans {
             if span.style.fg.is_none() || span.style.fg == Some(theme.text()) {
@@ -2069,7 +2091,7 @@ fn render_reasoning(
             }
         }
     }
-    message_heading(layout, width, "reasoning", theme.muted())
+    message_heading(layout, width, label, theme.muted(), gutter)
 }
 
 fn message_heading(
@@ -2077,9 +2099,30 @@ fn message_heading(
     width: u16,
     label: &str,
     color: Color,
+    gutter: &str,
 ) -> markdown::Layout {
-    if usize::from(width) < label.len() {
+    if usize::from(width) < line_width(label) {
         return layout;
+    }
+    let offset = line_width(gutter) as u16;
+    if offset > 0 {
+        for line in &mut layout.lines {
+            line.spans.insert(
+                0,
+                Span::styled(gutter.to_owned(), Style::default().fg(color)),
+            );
+        }
+        for link in layout.links.iter_mut().flatten() {
+            link.start = link.start.saturating_add(offset);
+            link.end = link.end.saturating_add(offset);
+        }
+        for span in layout.selections.iter_mut().flatten() {
+            span.columns.start = span.columns.start.saturating_add(offset);
+            span.columns.end = span.columns.end.saturating_add(offset);
+        }
+        for image in &mut layout.images {
+            image.column = image.column.saturating_add(offset);
+        }
     }
     layout.lines.insert(
         0,
@@ -2809,7 +2852,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(
             rows.iter()
-                .any(|row| row.starts_with("Checking the files."))
+                .any(|row| row.starts_with("  Checking the files."))
         );
         assert!(rows.iter().any(|row| row.starts_with("╭─ answer")));
         assert!(
@@ -2817,6 +2860,273 @@ mod tests {
                 .any(|row| row.starts_with("│ The review is complete."))
         );
         assert_eq!(rows.iter().filter(|row| row.starts_with('╭')).count(), 1);
+    }
+
+    #[test]
+    fn delayed_previews_preserve_full_commentary_before_tools() {
+        use crate::tui::host_projection::HostProjection;
+        use orvek_harness::{
+            inference::Delta,
+            ipc::WatchFrame,
+            session::{JournalRecord, SessionCommand, SessionEvent, SessionId},
+            state::RequestKind,
+        };
+
+        let text = "The main split is clear: the project’s core logic lives in agent definitions; `infra/` provides workers that run a command-line tool.\n\nI’m tracing the scripts next. Several details matter for future changes: the pools share a launch template, capacity is controlled outside the configuration, and the base image contains runtime setup that this repository doesn’t define. I’m also checking where the documentation differs from the code.";
+        for reconciled_preview in [true, false] {
+            let session = SessionId::new();
+            let request = Uuid::new_v4();
+            let mut projection = HostProjection::new(session, 0);
+            if reconciled_preview {
+                projection.classify_auxiliary(request, true);
+            }
+            let journal = |sequence, command| {
+                WatchFrame::Journal(JournalRecord {
+                    sequence,
+                    aggregate: session.to_string(),
+                    kind: "session".into(),
+                    revision: sequence,
+                    event: serde_json::to_value(SessionEvent::Command {
+                        operation: request,
+                        command,
+                        at_ms: sequence,
+                    })
+                    .unwrap(),
+                })
+            };
+            let preview = |delta| WatchFrame::Preview {
+                session,
+                request,
+                delta,
+            };
+            let mut transcript = Transcript::new();
+            for frame in [
+                journal(
+                    1,
+                    SessionCommand::Input {
+                        kind: RequestKind::Task,
+                        content: vec![],
+                    },
+                ),
+                preview(Delta::ReasoningSummary {
+                    item_id: "reasoning-1".into(),
+                    text: "Inspecting ".into(),
+                }),
+                preview(Delta::Text {
+                    item_id: "message-1".into(),
+                    text: text.trim_end_matches("code.").into(),
+                }),
+                journal(
+                    2,
+                    SessionCommand::Response {
+                        request,
+                        items: vec![
+                            json!({"type":"reasoning", "id":"reasoning-1", "summary":[{"type":"summary_text", "text":"Inspecting test side effects"}]}),
+                            json!({"type":"message", "role":"assistant", "phase":"commentary", "id":"message-1", "content":text}),
+                            json!({"type":"function_call", "id":"tool-1", "call_id":"call-1", "name":"exec_command", "arguments":"{\"cmd\":\"cat source.rs\"}"}),
+                        ],
+                    },
+                ),
+                preview(Delta::Text {
+                    item_id: "message-1".into(),
+                    text: "code.".into(),
+                }),
+                preview(Delta::ReasoningSummary {
+                    item_id: "reasoning-1".into(),
+                    text: "test side effects".into(),
+                }),
+                preview(Delta::ToolArguments {
+                    item_id: "tool-1".into(),
+                    arguments: "}".into(),
+                }),
+            ] {
+                let changes = projection.apply(frame);
+                transcript.update(TranscriptEvent::Record(Arc::new(
+                    TranscriptRecord::from_host_batch(
+                        projection.sequence(),
+                        projection.recorded_ms(),
+                        projection.cursor(),
+                        changes,
+                    ),
+                )));
+            }
+            let assistants = transcript
+                .model
+                .entries()
+                .iter()
+                .filter_map(|entry| match &entry.kind {
+                    EntryKind::Assistant {
+                        text,
+                        complete,
+                        final_answer,
+                    } => Some((text.as_str(), *complete, *final_answer)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                assistants,
+                vec![(text, true, false)],
+                "reconciled={reconciled_preview}"
+            );
+            let summaries = transcript
+                .model
+                .entries()
+                .iter()
+                .filter_map(|entry| match &entry.kind {
+                    EntryKind::Reasoning { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(summaries, vec!["Inspecting test side effects"]);
+            assert_eq!(
+                transcript
+                    .model
+                    .entries()
+                    .iter()
+                    .filter(|entry| matches!(entry.kind, EntryKind::Tool(_)))
+                    .count(),
+                1
+            );
+
+            let backend = render(&mut transcript, 105, 24);
+            let rendered = backend
+                .buffer()
+                .content()
+                .chunks(105)
+                .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let summary = rendered.find("Inspecting test side effects").unwrap();
+            let start = rendered.find("The main split is clear:").unwrap();
+            let middle = rendered.find("I’m tracing the scripts next.").unwrap();
+            let end = rendered.find("code.").unwrap();
+            let tool = rendered.find("cat source.rs").unwrap();
+            assert!(summary < start && start < middle && middle < end && end < tool);
+        }
+    }
+
+    #[test]
+    fn connected_messages_reuse_cached_layouts_without_an_animation_timer() {
+        let mut transcript = Transcript::new();
+        transcript.update(TranscriptEvent::Record(agent_with_payload(
+            1,
+            DisplaySample::Reasoning,
+            json!({"model_call_index":1,"item_id":"notes","text":"Check the implementation."}),
+        )));
+        transcript.update(TranscriptEvent::Record(agent_with_payload(2, DisplaySample::Text,
+            json!({"model_call_index":1,"item_id":"commentary","phase":"commentary","text":"Here is the complete explanation."}))));
+        render(&mut transcript, 60, 8);
+        let cached = transcript
+            .cache
+            .entries
+            .iter()
+            .map(|(id, entry)| (*id, entry.lines.as_ptr()))
+            .collect::<Vec<_>>();
+        for _ in 0..32 {
+            render(&mut transcript, 60, 8);
+            for (id, lines) in &cached {
+                assert_eq!(transcript.cache.entries[id].lines.as_ptr(), *lines);
+            }
+            assert!(transcript.animation_deadline().is_none());
+        }
+        let backend = render(&mut transcript, 60, 8);
+        let rows = backend
+            .buffer()
+            .content()
+            .chunks(60)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>();
+        println!("\n{}", rows.join("\n"));
+    }
+
+    #[test]
+    fn reasoning_and_assistant_share_a_connected_gutter() {
+        let mut transcript = Transcript::new();
+        transcript.update(TranscriptEvent::Record(agent_with_payload(
+            1,
+            DisplaySample::Reasoning,
+            json!({"model_call_index":1,"text":"Checking the source"}),
+        )));
+        transcript.update(TranscriptEvent::Record(agent_with_payload(
+            2, DisplaySample::Text,
+            json!({"model_call_index":1,"item_id":"commentary","phase":"commentary","text":"Here is the explanation"}),
+        )));
+        let backend = render(&mut transcript, 60, 12);
+        let rows = backend
+            .buffer()
+            .content()
+            .chunks(60)
+            .map(|row| {
+                row.iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>();
+        let reasoning = rows.iter().position(|row| row == "╭─ reasoning").unwrap();
+        assert_eq!(
+            &rows[reasoning..reasoning + 5],
+            &[
+                "╭─ reasoning",
+                "│ Checking the source",
+                "│",
+                "╰▶ Assistant",
+                "  Here is the explanation",
+            ]
+        );
+    }
+
+    #[test]
+    fn connected_message_gutters_offset_native_images() {
+        let workspace = tempfile::tempdir().unwrap();
+        write_png(&workspace.path().join("sample.png"));
+        for sample in [DisplaySample::Reasoning, DisplaySample::Text] {
+            let mut transcript = Transcript::new();
+            transcript.cache.images = super::image::Cache::with_inline_images(true);
+            transcript.set_workspace(workspace.path());
+            transcript.update(TranscriptEvent::Record(agent_with_payload(1, sample,
+                json!({"model_call_index":1,"item_id":"message","phase":"commentary","text":"before ![sample](sample.png) after"}))));
+            render_until_image_ready(&mut transcript, 40, 12);
+            let entry = &transcript.model.entries()[0];
+            let cached = &transcript.cache.entries[&entry.id];
+            assert_eq!(cached.images[0].column, 2);
+            assert!(cached.images[0].line >= 1);
+            assert!(cached.images[0].column + cached.images[0].protocol.size().width <= 40);
+        }
+    }
+
+    #[test]
+    fn message_connectors_do_not_enter_links_or_copied_text() {
+        for render_message in [super::render_assistant, super::render_reasoning] {
+            let text = "[source](https://example.com)";
+            let theme = Theme::default();
+            let baseline = super::markdown::render(text, 38, &theme);
+            let layout = render_message(
+                text,
+                40,
+                &theme,
+                Path::new("/work"),
+                &mut super::image::Cache::default(),
+            );
+            assert!(layout.selections[0].is_empty());
+            assert_eq!(layout.links[1][0].start, baseline.links[0][0].start + 2);
+            assert_eq!(layout.links[1][0].end, baseline.links[0][0].end + 2);
+            assert_eq!(
+                layout.links[1][0].destination,
+                baseline.links[0][0].destination
+            );
+            assert_eq!(layout.selections[1].len(), baseline.selections[0].len());
+            for (shifted, original) in layout.selections[1].iter().zip(&baseline.selections[0]) {
+                assert_eq!(
+                    shifted.columns,
+                    original.columns.start + 2..original.columns.end + 2
+                );
+                assert_eq!(shifted.source, original.source);
+            }
+            assert_eq!(layout.envelopes, baseline.envelopes);
+            assert_eq!(layout.selection_source, baseline.selection_source);
+        }
     }
 
     #[test]
@@ -2842,10 +3152,10 @@ mod tests {
                 &mut super::image::Cache::default(),
             );
             let user = render_user("Question", 200, &theme);
-            assert_eq!(answer.lines[0].to_string(), "Assistant");
-            assert_eq!(answer.lines[1].to_string(), "Final reply");
-            assert_eq!(reasoning.lines[0].to_string(), "reasoning");
-            assert_eq!(reasoning.lines[1].to_string(), "Working notes");
+            assert_eq!(answer.lines[0].to_string(), "╰▶ Assistant");
+            assert_eq!(answer.lines[1].to_string(), "  Final reply");
+            assert_eq!(reasoning.lines[0].to_string(), "╭─ reasoning");
+            assert_eq!(reasoning.lines[1].to_string(), "│ Working notes");
             assert!(user.lines[0].to_string().starts_with("╭─ you"));
             assert!(user.lines.last().unwrap().to_string().ends_with('╯'));
             assert_eq!(answer.lines[0].spans[0].style.fg, Some(theme.accent()));
@@ -2853,7 +3163,7 @@ mod tests {
             for layout in [&answer, &reasoning] {
                 assert_eq!(layout.lines.len(), 2);
                 assert!(layout.selections[0].is_empty());
-                assert_eq!(layout.selections[1][0].columns.start, 0);
+                assert_eq!(layout.selections[1][0].columns.start, 2);
                 assert!(
                     layout
                         .lines
@@ -3623,7 +3933,8 @@ mod tests {
                     let row = rows.iter().position(|row| row.contains(label)).unwrap();
                     let cells = &backend.buffer().content()
                         [row * usize::from(width)..(row + 1) * usize::from(width)];
-                    assert_eq!(non_blank_bounds(cells).unwrap().0, usize::from(axis));
+                    let expected = usize::from(axis) + usize::from(label == "fn main()") * 2;
+                    assert_eq!(non_blank_bounds(cells).unwrap().0, expected);
                 }
             }
             assert_eq!(
@@ -3766,7 +4077,7 @@ mod tests {
         assert_eq!(next, completed + 2);
         assert!(rows[completed + 1].trim().is_empty());
         assert!(rows[user_end + 1].trim().is_empty());
-        assert!(rows[tool - 1].trim().is_empty());
+        assert_eq!(rows[tool - 1].trim(), "│");
         assert!(rows[tool + 1].trim().is_empty());
     }
 

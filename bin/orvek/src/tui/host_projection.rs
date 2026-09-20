@@ -125,6 +125,7 @@ pub(crate) struct HostProjection {
     revision: u64,
     recorded_ms: u64,
     active_request: Option<Uuid>,
+    confirmed_items: BTreeSet<String>,
     auxiliary: BTreeMap<Uuid, bool>,
     tasks: BTreeSet<TaskId>,
     task_order: VecDeque<TaskId>,
@@ -138,6 +139,7 @@ impl HostProjection {
             revision: 0,
             recorded_ms: 0,
             active_request: None,
+            confirmed_items: BTreeSet::new(),
             auxiliary: BTreeMap::new(),
             tasks: BTreeSet::new(),
             task_order: VecDeque::new(),
@@ -193,6 +195,16 @@ impl HostProjection {
                 request,
                 delta,
             } if session == self.session && self.active_request == Some(request) => {
+                match &delta {
+                    Delta::Text { item_id, .. }
+                    | Delta::ReasoningSummary { item_id, .. }
+                    | Delta::ToolArguments { item_id, .. }
+                        if self.confirmed_items.contains(item_id) =>
+                    {
+                        return Vec::new();
+                    }
+                    _ => {}
+                }
                 match delta {
                     Delta::Text { item_id, text } => vec![ViewChange::Assistant {
                         request: Some(request),
@@ -318,14 +330,19 @@ impl HostProjection {
                     SessionCommand::AuxiliaryStarted => {
                         if self.auxiliary.get(&operation) == Some(&true) {
                             self.active_request = Some(operation);
+                            self.confirmed_items.clear();
                             vec![ViewChange::RequestStarted { request: operation }]
                         } else {
                             Vec::new()
                         }
                     }
                     SessionCommand::AuxiliaryRecorded { .. } => Vec::new(),
-                    SessionCommand::AuxiliaryPublished { request, text, .. } => text
-                        .map(|text| {
+                    SessionCommand::AuxiliaryPublished { request, text, .. } => {
+                        if self.active_request == Some(request) {
+                            self.active_request = None;
+                            self.confirmed_items.clear();
+                        }
+                        text.map(|text| {
                             vec![ViewChange::Assistant {
                                 request: Some(request),
                                 item: format!("auxiliary-{request}"),
@@ -335,7 +352,8 @@ impl HostProjection {
                                 final_answer: true,
                             }]
                         })
-                        .unwrap_or_default(),
+                        .unwrap_or_default()
+                    }
                     SessionCommand::QueueEdited { .. } | SessionCommand::QueueMoved { .. } => {
                         vec![ViewChange::QueueChanged]
                     }
@@ -357,11 +375,21 @@ impl HostProjection {
                     }
                     SessionCommand::Input { content, .. } => {
                         self.active_request = Some(operation);
+                        self.confirmed_items.clear();
                         let mut changes = vec![ViewChange::RequestStarted { request: operation }];
                         changes.extend(history_items(Some(operation), &content));
                         changes
                     }
                     SessionCommand::Response { request, items } => {
+                        // Journal delivery can overtake queued previews. Once committed,
+                        // an item's full content must not accept older streaming deltas.
+                        if self.active_request == Some(request) {
+                            self.confirmed_items.extend(
+                                items
+                                    .iter()
+                                    .filter_map(|item| item["id"].as_str().map(str::to_owned)),
+                            );
+                        }
                         // A response boundary is required to infer a missing phase. Flattened
                         // history may mix tool calls and messages from several responses.
                         let final_answer = items
@@ -430,6 +458,7 @@ impl HostProjection {
                         }
                         if self.active_request == Some(request) {
                             self.active_request = None;
+                            self.confirmed_items.clear();
                         }
                         vec![ViewChange::RequestSettled { request, error }]
                     }
@@ -741,6 +770,26 @@ mod tests {
             unreachable!()
         };
         assert_eq!(preview_id, final_id);
+        for delta in [
+            Delta::Text {
+                item_id: "provider-item".into(),
+                text: "Draft".into(),
+            },
+            Delta::ReasoningSummary {
+                item_id: "reasoning-1".into(),
+                text: "Late summary".into(),
+            },
+        ] {
+            assert!(
+                projection
+                    .apply(WatchFrame::Preview {
+                        session,
+                        request,
+                        delta
+                    })
+                    .is_empty()
+            );
+        }
     }
 
     #[test]
@@ -938,6 +987,60 @@ mod tests {
                 if item_id.as_deref() == Some("fc-1")
                     && call_id == "call-1" && name == "exec_command"
         )));
+    }
+
+    #[test]
+    fn confirmation_only_suppresses_previews_for_that_item_and_request() {
+        let session = SessionId::new();
+        let request = Uuid::new_v4();
+        let mut projection = HostProjection::new(session, 0);
+        projection.apply(event_at(
+            session,
+            1,
+            request,
+            SessionCommand::Input {
+                kind: RequestKind::Task,
+                content: vec![],
+            },
+        ));
+        projection.apply(event_at(
+            session,
+            2,
+            request,
+            SessionCommand::Response {
+                request,
+                items: vec![json!({"role":"assistant", "id":"message-1", "content":"Complete"})],
+            },
+        ));
+        let preview = |request, item: &str| WatchFrame::Preview {
+            session,
+            request,
+            delta: Delta::Text {
+                item_id: item.into(),
+                text: "Next".into(),
+            },
+        };
+        assert!(projection.apply(preview(request, "message-1")).is_empty());
+        assert!(
+            matches!(projection.apply(preview(request, "message-2")).as_slice(),
+            [ViewChange::Assistant { text, .. }] if text == "Next")
+        );
+
+        let next_request = Uuid::new_v4();
+        projection.apply(event_at(
+            session,
+            3,
+            next_request,
+            SessionCommand::Input {
+                kind: RequestKind::Task,
+                content: vec![],
+            },
+        ));
+        assert!(projection.apply(preview(request, "message-2")).is_empty());
+        assert!(
+            matches!(projection.apply(preview(next_request, "message-1")).as_slice(),
+            [ViewChange::Assistant { text, .. }] if text == "Next")
+        );
     }
 
     #[test]

@@ -41,6 +41,7 @@ struct Reply {
     body: Vec<u8>,
     fragment: bool,
     stall: Duration,
+    header_stall: Duration,
     cost_usd: Option<&'static str>,
 }
 impl Reply {
@@ -61,6 +62,7 @@ impl Reply {
             body,
             fragment: false,
             stall: Duration::ZERO,
+            header_stall: Duration::ZERO,
             cost_usd: None,
         }
     }
@@ -71,6 +73,7 @@ impl Reply {
             body: b"{\"error\":\"provider-controlled secret text\"}".to_vec(),
             fragment: false,
             stall: Duration::ZERO,
+            header_stall: Duration::ZERO,
             cost_usd: None,
         }
     }
@@ -81,6 +84,7 @@ impl Reply {
             body: value.to_string().into_bytes(),
             fragment: false,
             stall: Duration::ZERO,
+            header_stall: Duration::ZERO,
             cost_usd: None,
         }
     }
@@ -145,6 +149,7 @@ async fn server(replies: Vec<Reply>) -> (String, JoinHandle<Vec<Captured>>) {
                 reply.status,
                 reply.body.len()
             );
+            tokio::time::sleep(reply.header_stall).await;
             if socket.write_all(header.as_bytes()).await.is_err() {
                 continue;
             }
@@ -768,6 +773,43 @@ async fn cancellation_before_dispatch_has_no_attempts_or_spend() {
     );
     assert!(outcome.attempts.is_empty());
     assert!(!outcome.billing_uncertain());
+}
+
+#[tokio::test]
+async fn response_headers_use_idle_budget_after_connection() {
+    for (idle, total, succeeds) in [
+        (Duration::from_secs(1), Duration::from_secs(3), true),
+        (Duration::from_millis(40), Duration::from_secs(3), false),
+        (Duration::from_secs(1), Duration::from_millis(150), false),
+    ] {
+        let mut reply = Reply::sse(vec![
+            created(),
+            terminal("completed", vec![message("complete")], usage()),
+        ]);
+        reply.header_stall = Duration::from_millis(200);
+        let (base, served) = server(vec![reply]).await;
+        let outcome = client(
+            &base,
+            Limits {
+                connect_timeout: Duration::from_millis(100),
+                idle_timeout: idle,
+                total_timeout: total,
+                ..limits()
+            },
+        )
+        .respond(&request(), &CancellationToken::new(), |_| {})
+        .await;
+        assert_eq!(served.await.unwrap().len(), 1);
+        assert_eq!(outcome.attempts.len(), 1);
+        if succeeds {
+            assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
+            assert!(outcome.response.is_some());
+        } else {
+            assert_eq!(outcome.failure.unwrap().kind, FailureKind::Timeout);
+            assert!(outcome.attempts[0].billing_uncertain);
+            assert!(outcome.response.is_none());
+        }
+    }
 }
 
 #[tokio::test]

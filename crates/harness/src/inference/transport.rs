@@ -654,8 +654,10 @@ impl ResponsesClient {
         emit: &mut impl FnMut(Delta),
     ) -> Result<(), AttemptFailure> {
         state.dispatched();
+        // The client owns TCP/TLS connection timing. Header latency is an idle
+        // wait after dispatch and remains bounded by the overall call deadline.
         let response = timeout(
-            self.limits.connect_timeout,
+            self.limits.idle_timeout,
             self.client
                 .post(endpoint.clone())
                 .headers(headers)

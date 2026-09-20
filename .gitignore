@@ -31,4 +31,4 @@ examples/orvek-memory-cloudflare/node_modules/
 !.env.template
 
 # Local agent diagnostics and verification artifacts.
-/.agent-map/
+.agent-map

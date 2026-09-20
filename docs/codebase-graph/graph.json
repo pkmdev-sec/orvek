@@ -1844,6 +1844,11 @@
     {
       "kind": "contains",
       "source": "directory:docs/audits",
+      "target": "file:docs/audits/production-hygiene-and-transcript-2026-09-20.md"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:docs/audits",
       "target": "file:docs/audits/ratatui-visual-opportunities-2026-09-19.md"
     },
     {
@@ -2305,6 +2310,11 @@
       "kind": "contains",
       "source": "directory:scripts/tests",
       "target": "file:scripts/tests/test_analyze_context_cost.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:scripts/tests",
+      "target": "file:scripts/tests/test_check_source_tree.py"
     },
     {
       "kind": "contains",
@@ -3670,6 +3680,11 @@
       "kind": "links_to",
       "source": "file:docs/audits/codebase-review-2026-09-19.md",
       "target": "file:scripts/generate-codebase-graph.py"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/audits/production-hygiene-and-transcript-2026-09-20.md",
+      "target": "file:RELEASES.md"
     },
     {
       "kind": "links_to",
@@ -12250,7 +12265,7 @@
       "id": "file:.dockerignore",
       "kind": "file",
       "label": ".dockerignore",
-      "lines": 18,
+      "lines": 21,
       "path": ".dockerignore"
     },
     {
@@ -12290,7 +12305,7 @@
       "id": "file:.github/workflows/release.yaml",
       "kind": "file",
       "label": "release.yaml",
-      "lines": 492,
+      "lines": 508,
       "path": ".github/workflows/release.yaml"
     },
     {
@@ -12362,7 +12377,7 @@
       "id": "file:RELEASES.md",
       "kind": "file",
       "label": "RELEASES.md",
-      "lines": 46,
+      "lines": 50,
       "path": "RELEASES.md"
     },
     {
@@ -12976,7 +12991,7 @@
       "id": "file:bin/orvek/src/tui/components/transcript/mod.rs",
       "kind": "file",
       "label": "mod.rs",
-      "lines": 4977,
+      "lines": 5288,
       "path": "bin/orvek/src/tui/components/transcript/mod.rs"
     },
     {
@@ -13112,7 +13127,7 @@
       "id": "file:bin/orvek/src/tui/host_projection.rs",
       "kind": "file",
       "label": "host_projection.rs",
-      "lines": 1089,
+      "lines": 1192,
       "path": "bin/orvek/src/tui/host_projection.rs"
     },
     {
@@ -13224,7 +13239,7 @@
       "id": "file:bin/orvek/tests/release_pipeline.rs",
       "kind": "file",
       "label": "release_pipeline.rs",
-      "lines": 626,
+      "lines": 718,
       "path": "bin/orvek/tests/release_pipeline.rs"
     },
     {
@@ -13567,7 +13582,7 @@
       "id": "file:crates/harness/src/inference/transport.rs",
       "kind": "file",
       "label": "transport.rs",
-      "lines": 886,
+      "lines": 888,
       "path": "crates/harness/src/inference/transport.rs"
     },
     {
@@ -13911,7 +13926,7 @@
       "id": "file:crates/harness/tests/provider_protocol.rs",
       "kind": "file",
       "label": "provider_protocol.rs",
-      "lines": 1600,
+      "lines": 1642,
       "path": "crates/harness/tests/provider_protocol.rs"
     },
     {
@@ -14217,6 +14232,14 @@
       "label": "codebase-review-2026-09-19.md",
       "lines": 224,
       "path": "docs/audits/codebase-review-2026-09-19.md"
+    },
+    {
+      "file_kind": "documentation",
+      "id": "file:docs/audits/production-hygiene-and-transcript-2026-09-20.md",
+      "kind": "file",
+      "label": "production-hygiene-and-transcript-2026-09-20.md",
+      "lines": 93,
+      "path": "docs/audits/production-hygiene-and-transcript-2026-09-20.md"
     },
     {
       "file_kind": "documentation",
@@ -14961,6 +14984,14 @@
       "label": "test_analyze_context_cost.py",
       "lines": 196,
       "path": "scripts/tests/test_analyze_context_cost.py"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:scripts/tests/test_check_source_tree.py",
+      "kind": "file",
+      "label": "test_check_source_tree.py",
+      "lines": 65,
+      "path": "scripts/tests/test_check_source_tree.py"
     },
     {
       "file_kind": "python-script",
@@ -19480,26 +19511,26 @@
     ]
   },
   "statistics": {
-    "edges": 2218,
+    "edges": 2221,
     "files_by_kind": {
       "automation": 4,
       "binary-asset": 3,
       "cargo-manifest": 8,
       "ci-workflow": 4,
       "configuration": 17,
-      "documentation": 50,
-      "python-script": 31,
+      "documentation": 51,
+      "python-script": 32,
       "rust-source": 352,
       "supporting-file": 21,
       "typescript-source": 36,
       "web-asset": 20
     },
-    "nodes": 1159,
+    "nodes": 1161,
     "nodes_by_kind": {
       "component": 14,
       "dependency": 72,
       "directory": 116,
-      "file": 546,
+      "file": 548,
       "module": 356,
       "package": 7,
       "repository": 1,

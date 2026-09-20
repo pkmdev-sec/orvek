@@ -624,3 +624,95 @@ fn container_build_uses_the_verified_local_binary() {
         "target/image-context"
     );
 }
+
+#[test]
+fn release_requires_successful_ci_for_the_exact_main_commit() {
+    let release = workflow(RELEASE_WORKFLOW);
+    assert_eq!(
+        release["jobs"]["validate"]["permissions"]["actions"].as_str(),
+        Some("read")
+    );
+    let gate = release["jobs"]["validate"]["steps"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .find(|step| step["name"].as_str() == Some("Require successful CI for the tagged commit"))
+        .expect("release must require successful CI");
+    let script = gate["run"].as_str().unwrap();
+    for required in [
+        "git rev-parse HEAD",
+        "actions/workflows/ci.yaml/runs",
+        "head_sha=${release_sha}",
+        "event=push",
+        "branch=main",
+        "exit 1",
+    ] {
+        assert_contains(script, required);
+    }
+    assert_eq!(
+        gate["env"]["GH_TOKEN"].as_str(),
+        Some("${{ github.token }}")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn release_ci_gate_fails_closed_and_queries_the_checked_out_commit() {
+    use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+    let release = workflow(RELEASE_WORKFLOW);
+    let script = release["jobs"]["validate"]["steps"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .find(|step| step["name"].as_str() == Some("Require successful CI for the tagged commit"))
+        .unwrap()["run"]
+        .as_str()
+        .unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let gh = temp.path().join("gh");
+    fs::write(&gh, "#!/bin/sh\nprintf '%s\n' \"$*\" > \"$QUERY_FILE\"\nprintf '%s\n' \"$CI_CONCLUSION\"\nexit \"$API_EXIT\"\n").unwrap();
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let sha = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(sha.status.success());
+    let sha = String::from_utf8(sha.stdout).unwrap();
+    for (conclusion, api_exit, succeeds) in [
+        ("success", "0", true),
+        ("failure", "0", false),
+        ("missing", "0", false),
+        ("null", "0", false),
+        ("cancelled", "0", false),
+        ("success", "1", false),
+    ] {
+        let query = temp.path().join("query");
+        let output = Command::new("bash")
+            .args(["-c", script])
+            .current_dir(&root)
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    temp.path().display(),
+                    std::env::var("PATH").unwrap()
+                ),
+            )
+            .env("GITHUB_REPOSITORY", "fixture/repository")
+            .env("QUERY_FILE", &query)
+            .env("CI_CONCLUSION", conclusion)
+            .env("API_EXIT", api_exit)
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.success(),
+            succeeds,
+            "{conclusion}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let query = fs::read_to_string(query).unwrap();
+        assert!(query.contains(&format!("head_sha={}&event=push&branch=main", sha.trim())));
+    }
+}
