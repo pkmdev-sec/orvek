@@ -269,6 +269,11 @@
     {
       "kind": "contains",
       "source": "directory:.",
+      "target": "directory:.config"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:.",
       "target": "directory:.github"
     },
     {
@@ -395,6 +400,11 @@
       "kind": "contains",
       "source": "directory:.",
       "target": "file:task.md"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:.config",
+      "target": "file:.config/nextest.toml"
     },
     {
       "kind": "contains",
@@ -13176,6 +13186,12 @@
       "path": "."
     },
     {
+      "id": "directory:.config",
+      "kind": "directory",
+      "label": ".config",
+      "path": ".config"
+    },
+    {
       "id": "directory:.github",
       "kind": "directory",
       "label": ".github",
@@ -13930,6 +13946,14 @@
       "kind": "directory",
       "label": "review",
       "path": "web/review"
+    },
+    {
+      "file_kind": "configuration",
+      "id": "file:.config/nextest.toml",
+      "kind": "file",
+      "label": "nextest.toml",
+      "lines": 5,
+      "path": ".config/nextest.toml"
     },
     {
       "file_kind": "supporting-file",
@@ -15474,7 +15498,7 @@
       "id": "file:crates/harness/src/ipc.rs",
       "kind": "file",
       "label": "ipc.rs",
-      "lines": 1246,
+      "lines": 1249,
       "path": "crates/harness/src/ipc.rs"
     },
     {
@@ -15538,7 +15562,7 @@
       "id": "file:crates/harness/src/review/files.rs",
       "kind": "file",
       "label": "files.rs",
-      "lines": 180,
+      "lines": 182,
       "path": "crates/harness/src/review/files.rs"
     },
     {
@@ -15602,7 +15626,7 @@
       "id": "file:crates/harness/src/session.rs",
       "kind": "file",
       "label": "session.rs",
-      "lines": 1074,
+      "lines": 1143,
       "path": "crates/harness/src/session.rs"
     },
     {
@@ -15642,7 +15666,7 @@
       "id": "file:crates/harness/src/store.rs",
       "kind": "file",
       "label": "store.rs",
-      "lines": 3755,
+      "lines": 3915,
       "path": "crates/harness/src/store.rs"
     },
     {
@@ -22208,13 +22232,13 @@
     ]
   },
   "statistics": {
-    "edges": 2541,
+    "edges": 2543,
     "files_by_kind": {
       "automation": 4,
       "binary-asset": 6,
       "cargo-manifest": 8,
       "ci-workflow": 4,
-      "configuration": 26,
+      "configuration": 27,
       "documentation": 58,
       "python-script": 52,
       "rust-source": 393,
@@ -22222,12 +22246,12 @@
       "typescript-source": 36,
       "web-asset": 20
     },
-    "nodes": 1310,
+    "nodes": 1312,
     "nodes_by_kind": {
       "component": 14,
       "dependency": 73,
-      "directory": 127,
-      "file": 631,
+      "directory": 128,
+      "file": 632,
       "module": 397,
       "package": 7,
       "repository": 1,

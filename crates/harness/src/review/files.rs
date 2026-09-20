@@ -111,6 +111,8 @@ impl Root {
             Err(error) => return Err(std::io::Error::from(error).into()),
         };
         let kind = rustix::fs::FileType::from_raw_mode(stat.st_mode);
+        #[allow(clippy::useless_conversion)]
+        let permissions = u32::from(stat.st_mode) & 0o7777;
         let (bytes, kind, mode, permissions) = if kind == rustix::fs::FileType::Symlink {
             let target =
                 rustix::fs::readlinkat(&parent, name, Vec::new()).map_err(std::io::Error::from)?;
@@ -121,7 +123,7 @@ impl Root {
                 target.as_bytes().to_vec(),
                 FileKind::Symlink,
                 0o120000,
-                u32::from(stat.st_mode) & 0o7777,
+                permissions,
             )
         } else if kind == rustix::fs::FileType::Directory {
             return Ok(None);

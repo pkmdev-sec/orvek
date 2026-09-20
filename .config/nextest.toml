@@ -1,0 +1,5 @@
+[profile.default]
+
+[[profile.default.overrides]]
+filter = "binary(completion_hook)"
+threads-required = "num-cpus"
