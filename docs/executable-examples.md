@@ -409,6 +409,8 @@ The existing `scripts/check-docs.py` still checks links and syntax separately.
 | [docs/event-intake.md](../docs/event-intake.md) #4 | illustrative | Cancellation commands require a configured source/event; real restart and cancellation tests supply those IDs. |
 | [docs/harness-host.md](../docs/harness-host.md) #1 | illustrative | Partial Rust call flow with caller-owned variables; reconnect coverage is below. |
 | [docs/harness-integration.md](../docs/harness-integration.md) #1 | illustrative | Contributor checks, not a self-contained host task. |
+| [docs/interpreter.md](../docs/interpreter.md) #1 | illustrative | Cell body only; the interpreter host and CLI tests exercise this flow. |
+| [docs/interpreter.md](../docs/interpreter.md) #2 | illustrative | Contributor test commands; not an isolated capability scenario. |
 | [docs/memory.md](../docs/memory.md) #1 | illustrative | Configuration fragment; the runnable memory_skills.py scenario enables an isolated local store. |
 | [docs/memory.md](../docs/memory.md) #2 | illustrative | Read shape requires an existing namespace/key/version; the runnable scenario uses actual scan keys. |
 | [docs/memory.md](../docs/memory.md) #3 | illustrative | CAS write shape requires an existing writable remote record. |

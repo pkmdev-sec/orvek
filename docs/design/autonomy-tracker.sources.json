@@ -199,7 +199,7 @@
       "path": "crates/harness/src/controller.rs",
       "anchor": "fn tool_definitions(discovery: bool)",
       "line": 3553,
-      "sha256": "1dfb2d0b0859424a980ad7fbf035356698e1db841ae27366e1135d383fa98fe9",
+      "sha256": "f7fd390eae02c5a7a01b8d4ef7c81bc372d67ac10f129147231e503dce2fc1e4",
       "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
       "research_line": 3421,
       "research_anchor": "fn tool_definitions(discovery: bool)",
@@ -211,28 +211,28 @@
       "path": "crates/memory/src/model.rs",
       "anchor": "pub struct MemoryRecord",
       "line": 47,
-      "sha256": "9e23956e1343f83f1d92a792ea488079ae706ee4a02661a49ae8ad7164ef6f7c"
+      "sha256": "d57ca1dd6bae7db130937e200aefed87fe69b20348c60f1eab5581250133c310"
     },
     {
       "id": "O05",
       "path": "crates/memory/src/store/local.rs",
       "anchor": "pub async fn merge_remote_export(",
       "line": 278,
-      "sha256": "f0d773407935f9fa15429c7afa76820a2314ac238d9dfdeefc720bc449accc65"
+      "sha256": "95bcd2b8927bbf6702b31999d08728811fb0b44099398a025af7bfabb76ae7d5"
     },
     {
       "id": "O06",
       "path": "crates/harness/src/context.rs",
       "anchor": "pub fn project(",
       "line": 298,
-      "sha256": "c8fa549e89e2a431647871658490123ebe8b67712f758fc12e6148d7b986bde8"
+      "sha256": "b0b207550860ecc22aeb62576540eade4faa97083d4dd0cb3fe05f6dc5d29875"
     },
     {
       "id": "O07",
       "path": "crates/harness/src/context.rs",
       "anchor": "pub fn read_text_page(",
       "line": 199,
-      "sha256": "c8fa549e89e2a431647871658490123ebe8b67712f758fc12e6148d7b986bde8"
+      "sha256": "b0b207550860ecc22aeb62576540eade4faa97083d4dd0cb3fe05f6dc5d29875"
     },
     {
       "id": "O08",
@@ -246,7 +246,7 @@
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "async fn spawn(",
       "line": 615,
-      "sha256": "7de8cd4a95f113d9453490e8000bfbbde84a1df73f73d3d5c0ec1614c8dfd0f8",
+      "sha256": "4d4f349caa1dbfc8a571cff99edfe6e3d8f3c226492a4cef828a1c13c67b7c94",
       "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
       "research_line": 448,
       "reviewed_revision": "ca42e5c",
@@ -268,7 +268,7 @@
       "path": "crates/harness/src/store.rs",
       "anchor": "pub struct Store",
       "line": 99,
-      "sha256": "c570ccf37cefd0cee4181cf4ba72d26d5d542abcd9cb5112edc9f14645cdbe92",
+      "sha256": "6fc8f71cbf5f8033295e07f1f46f4bf8e09b1411059de7a37fbdbfb8bc7987e6",
       "research_sha256": "6596b46f427eef5e69d2019223ac8784c3968ac0f2e871f76ae0c117338c1fc0",
       "research_line": 99,
       "reviewed_revision": "668200d",
@@ -333,14 +333,14 @@
       "path": "crates/harness/src/admission_profile.rs",
       "anchor": "pub struct HarnessBinding",
       "line": 87,
-      "sha256": "52ebd470528d7badf29f10b0364257821c6841304ded3661b6941a3fdea74b73"
+      "sha256": "abaf4f65bfed21894285072cea373380b1bb55b29b4efdaf3836f1a673640685"
     },
     {
       "id": "O20",
       "path": "crates/harness/src/controller.rs",
       "anchor": "fn native_tool_definitions(",
       "line": 3502,
-      "sha256": "1dfb2d0b0859424a980ad7fbf035356698e1db841ae27366e1135d383fa98fe9",
+      "sha256": "f7fd390eae02c5a7a01b8d4ef7c81bc372d67ac10f129147231e503dce2fc1e4",
       "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
       "research_line": 3370,
       "research_anchor": "fn native_tool_definitions(",
@@ -352,7 +352,7 @@
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "async fn run_tool(",
       "line": 1243,
-      "sha256": "7de8cd4a95f113d9453490e8000bfbbde84a1df73f73d3d5c0ec1614c8dfd0f8",
+      "sha256": "4d4f349caa1dbfc8a571cff99edfe6e3d8f3c226492a4cef828a1c13c67b7c94",
       "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
       "research_line": 950,
       "reviewed_revision": "ca42e5c",
@@ -363,7 +363,7 @@
       "path": "crates/harness/src/controller.rs",
       "anchor": "async fn reconcile_unresolved(",
       "line": 3155,
-      "sha256": "1dfb2d0b0859424a980ad7fbf035356698e1db841ae27366e1135d383fa98fe9",
+      "sha256": "f7fd390eae02c5a7a01b8d4ef7c81bc372d67ac10f129147231e503dce2fc1e4",
       "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
       "research_line": 3023,
       "research_anchor": "async fn reconcile_unresolved(",
@@ -409,7 +409,7 @@
       "path": "bin/orvek/src/app/host.rs",
       "anchor": "config.agent().completion_hook()",
       "line": 424,
-      "sha256": "6f4c93d76a0da310e38483bc390d72de730180806c78e3242923749710d1aeee",
+      "sha256": "6c2a3c6e049ff7a13c2740d6d45c82b85acf1e26ef9e1fb7cee1e9969485e332",
       "research_sha256": "99ef0f522c905c812719d2e1e11668349a0c646b5eb374534a990cc075289e1e",
       "research_line": 422,
       "research_anchor": "config.agent().completion_hook()",
@@ -421,7 +421,7 @@
       "path": "crates/harness/tests/native_host.rs",
       "anchor": "restart_keeps_unknown_native_jobs_unfenced_and_never_replays_them",
       "line": 896,
-      "sha256": "c7a8238d8103704b71ce1aef43716a368dc7b3f87cbc6cf4ce05865f33c370d1",
+      "sha256": "d81853acded0f2eae252b025afe8214c8497db2a5c56053d143fa2b2c0158196",
       "research_sha256": "c06974a427a25ddd1e15bda8928f4b7e2c98a992db91fc4e916a70ca84d1d319",
       "research_line": 813,
       "reviewed_revision": "668200d",
@@ -432,7 +432,7 @@
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "Ok(ChildAnswer::Unsubmitted(last_text))",
       "line": 1218,
-      "sha256": "7de8cd4a95f113d9453490e8000bfbbde84a1df73f73d3d5c0ec1614c8dfd0f8",
+      "sha256": "4d4f349caa1dbfc8a571cff99edfe6e3d8f3c226492a4cef828a1c13c67b7c94",
       "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
       "research_line": 927,
       "reviewed_revision": "ca42e5c",
@@ -444,7 +444,7 @@
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "fn child_definitions(",
       "line": 1403,
-      "sha256": "7de8cd4a95f113d9453490e8000bfbbde84a1df73f73d3d5c0ec1614c8dfd0f8",
+      "sha256": "4d4f349caa1dbfc8a571cff99edfe6e3d8f3c226492a4cef828a1c13c67b7c94",
       "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
       "research_line": 1061,
       "reviewed_revision": "ca42e5c",
@@ -455,7 +455,7 @@
       "path": "crates/harness/src/services.rs",
       "anchor": "pub trait ContextService",
       "line": 17,
-      "sha256": "023169d11803278fcdbed2a5e5d8f967d1efd4b4faae11655dc4ceadd862e861",
+      "sha256": "02fc8ad5ee25c5509005bc6ed9fa44bbf8397034ce7878857a282299d512d824",
       "reviewed_revision": "7684a17",
       "review_note": "Host-owned optional context interface, with credentials outside recorded manifests."
     },
@@ -464,7 +464,7 @@
       "path": "bin/orvek/src/core/context.rs",
       "anchor": "impl ContextSession for ConfiguredContextSession",
       "line": 80,
-      "sha256": "f0dfdd670e37b756e6ba86c56d35a8f74f9da9e925c53fba1488eacccb36ee64",
+      "sha256": "95f97db13ae3db0aa805e907c23b85fbb04debdf268a5a2955fb38861823b81d",
       "reviewed_revision": "7684a17",
       "review_note": "Production selected-memory and skill adapter; encoded output bounds and no silent backend fallback."
     },
@@ -482,7 +482,7 @@
       "path": "crates/harness/src/ipc.rs",
       "anchor": "let recovery_host = host.clone();",
       "line": 409,
-      "sha256": "9a1a02a0846292016954bc9cb928baf388a964bf31572288a23f166fd5bc85f4",
+      "sha256": "137d944cbbaa4f77a26c56e958f0e3602925653626896b48c3bc6b859fd8682a",
       "reviewed_revision": "ca42e5c",
       "review_note": "Reviewed nonblocking hook recovery remains intact; IPC5 rejects old clients before new child lifecycle/outcome frames."
     },
@@ -491,7 +491,7 @@
       "path": "crates/harness/src/trace.rs",
       "anchor": "pub fn replay(&self)",
       "line": 318,
-      "sha256": "5482684785d977d34c97dd2c05e66eb10594601bb8d82b99ffa4eabeb5115086",
+      "sha256": "99b39b984f44dc3a860e62c4446701e6250e02621a68bd885b6616bba4e4c83a",
       "reviewed_revision": "668200d",
       "review_note": "Pinned portable bundles; validated closure plus bounded receipt materialization. Exactness is record consistency, not full decision replay."
     },
@@ -500,7 +500,7 @@
       "path": "crates/harness/src/inference/transport.rs",
       "anchor": "pub enum RequestProvenance",
       "line": 202,
-      "sha256": "54803a5e6f3198cf46fefbffc04d1046d6d0373529a202f28eaf36d95fc8fca5",
+      "sha256": "2fc060d18c1c179a50677089c73397cd59fa01ec4c4c7ea8386a9e26c16fc1e4",
       "reviewed_revision": "668200d",
       "review_note": "Prepared effective serialized bodies, transport, dialect and route source. Historical/uncaptured bodies remain unavailable; no remote-delivery claim."
     },
@@ -509,7 +509,7 @@
       "path": "crates/harness/src/controller/subagents/lifecycle.rs",
       "anchor": "pub enum Outcome",
       "line": 59,
-      "sha256": "e6fe7c3b8fee0334c42b01ed5c1dcaf12d76a07c86b82c414e7324ee513d895a",
+      "sha256": "d5d1b095e660bab19a8e746d797673b0ca4364e264867dc12f47bde28f1e169a",
       "reviewed_revision": "ca42e5c",
       "review_note": "Typed durable child outcomes and deterministic lifecycle operation IDs; context manifests pin filtered source without granting authority."
     }
@@ -653,7 +653,7 @@
       "id": "T04",
       "title": "Causal trace bundles and replay",
       "rank": 4,
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "T02",
         "T03"
@@ -681,17 +681,32 @@
         "3 actual-Docker repair/patch/parent-child cases passed (t04-docker-repair-integrated.log,t04-docker-child-integrated.log).",
         "All-feature check and strict all-target/all-feature clippy passed on integrated tree (t04-all-feature-check.log,t04-integrated-clippy.log).",
         "Portable event/receipt replay and review implemented. Exact means record/closure consistency, not full controller-decision replay or complete historical causality.",
-        "Final integrated CLI 3 plus release-pipeline 22 tests passed (t04-final-cli.log); all five CLI/IPC examples and27 Python script tests passed. Acceptance distinction documented in .agent-map/autonomy/T04-INTEGRATED.md."
+        "Final integrated CLI 3 plus release-pipeline 22 tests passed (t04-final-cli.log); all five CLI/IPC examples and27 Python script tests passed. Acceptance distinction documented in .agent-map/autonomy/T04-INTEGRATED.md.",
+        {
+          "phase": "all_cards_integration",
+          "command": "cargo test --locked -p orvek-harness -- --test-threads=2",
+          "passed": 382,
+          "log": ".agent-map/autonomy/all-cards-full.log"
+        },
+        {
+          "phase": "all_cards_integration",
+          "command": "cargo test --locked -p orvek-harness --test interpreter_host --test docker_execution --test subagents --test workspace_tools -- --include-ignored --test-threads=1",
+          "passed": 54,
+          "log": ".agent-map/autonomy/all-cards-docker.log"
+        }
       ],
-      "next_action": "Document causal vs record exactness, supported gaps, and verify current-tree cross-feature integration before closing acceptance.",
+      "next_action": "Fix the separate read_context page-digest artifact-reference gap in replay; record it as an explicit gap until then.",
       "worktree": "/tmp/orvek-autonomy-trace-receipts",
-      "branch": "work/autonomy-trace-receipts"
+      "branch": "work/autonomy-trace-receipts",
+      "verification_notes": [
+        "Receipt/state replay is implemented and tested. Controller-decision replay and historical per-call causal completeness stay out of scope."
+      ]
     },
     {
       "id": "T05",
       "title": "Evidence-backed memory",
       "rank": 5,
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "T01",
         "T04"
@@ -705,18 +720,34 @@
         "O04",
         "O05"
       ],
-      "owner": "fix-evidence-memory",
-      "implementation_revision": "2d8aeb1",
-      "results": [],
-      "next_action": "Fix five independently reproduced transfer/proposal/source-root defects, then integrate and rerun actual Store/HTTP/CLI acceptance.",
+      "owner": "parent-integration",
+      "implementation_revision": "3ade995",
+      "results": [
+        {
+          "phase": "all_cards_integration",
+          "command": "cargo test --locked -p orvek-harness -- --test-threads=2",
+          "passed": 382,
+          "log": ".agent-map/autonomy/all-cards-full.log"
+        },
+        {
+          "phase": "all_cards_integration",
+          "command": "cargo test --locked -p orvek-harness --test interpreter_host --test docker_execution --test subagents --test workspace_tools -- --include-ignored --test-threads=1",
+          "passed": 54,
+          "log": ".agent-map/autonomy/all-cards-docker.log"
+        }
+      ],
+      "next_action": "Keep memory tool descriptions stating the admitted host-repository boundary when new sources are added.",
       "worktree": "/tmp/orvek-autonomy-t05",
-      "branch": "work/autonomy-t05"
+      "branch": "work/autonomy-t05",
+      "verification_notes": [
+        "Integrated as 68391b8, 42c1ef9 and the source-boundary revision 3ade995."
+      ]
     },
     {
       "id": "T06",
       "title": "Host-admitted interpreter",
       "rank": 6,
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "T02",
         "T04"
@@ -730,20 +761,35 @@
         "O10",
         "O21"
       ],
-      "owner": "review-persistent-interpreter",
-      "implementation_revision": "dd50d843fc46",
+      "owner": "parent-integration",
+      "implementation_revision": "e22f310",
       "results": [
-        "Prototype only: rquickjs0.12.1 embedding, isolated retained values, memory/CPU limits, cancellation, explicit data-only checkpoint restore, and yielding promises passed seven native tests. No production integration or live-model savings claim. See .agent-map/autonomy/T06-PROTOTYPE.md and t06-interpreter-probe-final.log."
+        "Prototype only: rquickjs0.12.1 embedding, isolated retained values, memory/CPU limits, cancellation, explicit data-only checkpoint restore, and yielding promises passed seven native tests. No production integration or live-model savings claim. See .agent-map/autonomy/T06-PROTOTYPE.md and t06-interpreter-probe-final.log.",
+        {
+          "phase": "all_cards_integration",
+          "command": "cargo test --locked -p orvek-harness -- --test-threads=2",
+          "passed": 382,
+          "log": ".agent-map/autonomy/all-cards-full.log"
+        },
+        {
+          "phase": "all_cards_integration",
+          "command": "cargo test --locked -p orvek-harness --test interpreter_host --test docker_execution --test subagents --test workspace_tools -- --include-ignored --test-threads=1",
+          "passed": 54,
+          "log": ".agent-map/autonomy/all-cards-docker.log"
+        }
       ],
-      "next_action": "Independent interpreter authority/resource/serialization/recovery audit before parent merge and trace-closure integration.",
+      "next_action": "Extend the bridge only through already-admitted capabilities; keep native writes and native children unavailable.",
       "worktree": "/tmp/orvek-autonomy-t06",
-      "branch": "work/autonomy-t06"
+      "branch": "work/autonomy-t06",
+      "verification_notes": [
+        "Merged as d564589 plus the accessor regression e22f310. Fixture comparisons are scripted; no live-model cost, latency or quality claim."
+      ]
     },
     {
       "id": "T07",
       "title": "Model-directed context",
       "rank": 7,
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "T03",
         "T04"
@@ -757,12 +803,28 @@
         "O07",
         "O08"
       ],
-      "owner": "implement-context-transitions",
-      "implementation_revision": null,
-      "results": [],
-      "next_action": "Implement experimental opt-in transitions and controlled paired instrumentation; do not ship enabled without live quality/full-cost evidence.",
+      "owner": "parent-integration",
+      "implementation_revision": "441be81",
+      "results": [
+        {
+          "phase": "all_cards_integration",
+          "command": "cargo test --locked -p orvek-harness -- --test-threads=2",
+          "passed": 382,
+          "log": ".agent-map/autonomy/all-cards-full.log"
+        },
+        {
+          "phase": "all_cards_integration",
+          "command": "cargo test --locked -p orvek-harness --test interpreter_host --test docker_execution --test subagents --test workspace_tools -- --include-ignored --test-threads=1",
+          "passed": 54,
+          "log": ".agent-map/autonomy/all-cards-docker.log"
+        }
+      ],
+      "next_action": "Keep transitions default-disabled until paired real-quality and full-cost evidence exists.",
       "worktree": "/tmp/orvek-autonomy-t07",
-      "branch": "work/autonomy-t07"
+      "branch": "work/autonomy-t07",
+      "verification_notes": [
+        "Integrated as 7a23c84 with the cache-segment replay fix 441be81. Scripted fixtures showed more calls and bytes, so the quality/cost gate is unmet."
+      ]
     },
     {
       "id": "T08",
@@ -802,7 +864,7 @@
       "id": "T09",
       "title": "Terminal hooks and event intake",
       "rank": 9,
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [],
       "sources": [
         "L01",
@@ -816,7 +878,7 @@
         "O33"
       ],
       "owner": "parent-integration",
-      "implementation_revision": "0547dc3",
+      "implementation_revision": "7ed3ca2",
       "results": [
         {
           "phase": "hook_fix",
@@ -829,9 +891,21 @@
           "command": "cargo test --locked -p orvek-harness --test controller_execution completion_hook_failure_cannot_revoke_a_verified_sandbox_result -- --ignored",
           "passed": 1,
           "log": ".agent-map/autonomy/t09-integrated-certificate.log"
+        },
+        {
+          "phase": "all_cards_integration",
+          "command": "cargo test --locked -p orvek-harness -- --test-threads=2",
+          "passed": 382,
+          "log": ".agent-map/autonomy/all-cards-full.log"
+        },
+        {
+          "phase": "all_cards_integration",
+          "command": "cargo test --locked -p orvek-harness --test interpreter_host --test docker_execution --test subagents --test workspace_tools -- --include-ignored --test-threads=1",
+          "passed": 54,
+          "log": ".agent-map/autonomy/all-cards-docker.log"
         }
       ],
-      "next_action": "Make blocked schedule authority failures queryable; parent11unit/12CLI/2Docker intake+hook checks pass after deterministic peer-credential fixture fix.",
+      "next_action": "Add further local intake adapters only through the same admission queue.",
       "phase_dependencies": {
         "hook_fix": [],
         "event_intake": [
@@ -846,17 +920,18 @@
       ],
       "phase_status": {
         "hook_fix": "done",
-        "event_intake": "planned"
+        "event_intake": "done"
       },
       "verification_notes": [
-        "A pre-cleanup concurrent run failed the timeout cleanup marker assertion; its retry could not link due ENOSPC. Root cause of that observation was not isolated. After cleanup, one serial and two concurrent suites passed (9 tests each), including the integrated tree. Prior failure log: /tmp/orvek-t09-startup-green.log. No claim that cleanup fixed a proven code defect."
+        "A pre-cleanup concurrent run failed the timeout cleanup marker assertion; its retry could not link due ENOSPC. Root cause of that observation was not isolated. After cleanup, one serial and two concurrent suites passed (9 tests each), including the integrated tree. Prior failure log: /tmp/orvek-t09-startup-green.log. No claim that cleanup fixed a proven code defect.",
+        "Event intake integrated as 4082866, 0547dc3 and the blocked-schedule diagnostics 7ed3ca2."
       ]
     },
     {
       "id": "T10",
       "title": "Quality monitoring and repair experiments",
       "rank": 10,
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "T03",
         "T04",
@@ -875,12 +950,28 @@
         "O15",
         "O19"
       ],
-      "owner": "implement-quality-monitor",
-      "implementation_revision": null,
-      "results": [],
-      "next_action": "Implement asynchronous trace-driven isolated repair, frozen evaluator and new-session activation/rollback; no model-quality promotion without reliable evidence.",
+      "owner": "parent-integration",
+      "implementation_revision": "f039122",
+      "results": [
+        {
+          "phase": "all_cards_integration",
+          "command": "cargo test --locked -p orvek-harness -- --test-threads=2",
+          "passed": 382,
+          "log": ".agent-map/autonomy/all-cards-full.log"
+        },
+        {
+          "phase": "all_cards_integration",
+          "command": "cargo test --locked -p orvek-harness --test interpreter_host --test docker_execution --test subagents --test workspace_tools -- --include-ignored --test-threads=1",
+          "passed": 54,
+          "log": ".agent-map/autonomy/all-cards-docker.log"
+        }
+      ],
+      "next_action": "Do not widen automatic repair beyond typed native read capacity without a reliable evaluator.",
       "worktree": "/tmp/orvek-autonomy-t10",
-      "branch": "work/autonomy-t10"
+      "branch": "work/autonomy-t10",
+      "verification_notes": [
+        "Repair scope is native read-reply capacity as typed JSON configuration only. No code patching, prompt/model promotion, or live-model quality claim."
+      ]
     },
     {
       "id": "T11",

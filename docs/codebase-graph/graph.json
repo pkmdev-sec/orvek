@@ -579,6 +579,11 @@
     {
       "kind": "contains",
       "source": "directory:bin/orvek/src/app",
+      "target": "file:bin/orvek/src/app/monitor.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:bin/orvek/src/app",
       "target": "file:bin/orvek/src/app/secret.rs"
     },
     {
@@ -1074,6 +1079,16 @@
     {
       "kind": "contains",
       "source": "directory:bin/orvek/tests",
+      "target": "file:bin/orvek/tests/interpreter_cli.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:bin/orvek/tests",
+      "target": "file:bin/orvek/tests/monitor.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:bin/orvek/tests",
       "target": "file:bin/orvek/tests/release_pipeline.rs"
     },
     {
@@ -1169,6 +1184,11 @@
     {
       "kind": "contains",
       "source": "directory:crates/harness/src",
+      "target": "directory:crates/harness/src/context"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src",
       "target": "directory:crates/harness/src/context_render"
     },
     {
@@ -1190,6 +1210,16 @@
       "kind": "contains",
       "source": "directory:crates/harness/src",
       "target": "directory:crates/harness/src/inference"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src",
+      "target": "directory:crates/harness/src/interpreter"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src",
+      "target": "directory:crates/harness/src/monitor"
     },
     {
       "kind": "contains",
@@ -1314,6 +1344,11 @@
     {
       "kind": "contains",
       "source": "directory:crates/harness/src",
+      "target": "file:crates/harness/src/interpreter.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src",
       "target": "file:crates/harness/src/ipc.rs"
     },
     {
@@ -1325,6 +1360,11 @@
       "kind": "contains",
       "source": "directory:crates/harness/src",
       "target": "file:crates/harness/src/manual.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src",
+      "target": "file:crates/harness/src/monitor.rs"
     },
     {
       "kind": "contains",
@@ -1393,6 +1433,11 @@
     },
     {
       "kind": "contains",
+      "source": "directory:crates/harness/src/context",
+      "target": "file:crates/harness/src/context/transitions.rs"
+    },
+    {
+      "kind": "contains",
       "source": "directory:crates/harness/src/context_render",
       "target": "directory:crates/harness/src/context_render/fonts"
     },
@@ -1419,6 +1464,11 @@
     {
       "kind": "contains",
       "source": "directory:crates/harness/src/controller",
+      "target": "directory:crates/harness/src/controller/monitor"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/controller",
       "target": "directory:crates/harness/src/controller/subagents"
     },
     {
@@ -1439,7 +1489,17 @@
     {
       "kind": "contains",
       "source": "directory:crates/harness/src/controller",
+      "target": "file:crates/harness/src/controller/interpreter.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/controller",
       "target": "file:crates/harness/src/controller/manual.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/controller",
+      "target": "file:crates/harness/src/controller/monitor.rs"
     },
     {
       "kind": "contains",
@@ -1465,6 +1525,11 @@
       "kind": "contains",
       "source": "directory:crates/harness/src/controller",
       "target": "file:crates/harness/src/controller/workspace.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/controller/monitor",
+      "target": "file:crates/harness/src/controller/monitor/tests.rs"
     },
     {
       "kind": "contains",
@@ -1495,6 +1560,16 @@
       "kind": "contains",
       "source": "directory:crates/harness/src/inference",
       "target": "file:crates/harness/src/inference/transport.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/interpreter",
+      "target": "file:crates/harness/src/interpreter/bootstrap.js"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/monitor",
+      "target": "file:crates/harness/src/monitor/evaluation.rs"
     },
     {
       "kind": "contains",
@@ -1564,6 +1639,11 @@
     {
       "kind": "contains",
       "source": "directory:crates/harness/src/store",
+      "target": "file:crates/harness/src/store/monitor.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/store",
       "target": "file:crates/harness/src/store/submissions.rs"
     },
     {
@@ -1604,6 +1684,11 @@
     {
       "kind": "contains",
       "source": "directory:crates/harness/tests",
+      "target": "file:crates/harness/tests/context_transitions.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/tests",
       "target": "file:crates/harness/tests/controller_execution.rs"
     },
     {
@@ -1619,12 +1704,22 @@
     {
       "kind": "contains",
       "source": "directory:crates/harness/tests",
+      "target": "file:crates/harness/tests/interpreter_host.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/tests",
       "target": "file:crates/harness/tests/legacy_import.rs"
     },
     {
       "kind": "contains",
       "source": "directory:crates/harness/tests",
       "target": "file:crates/harness/tests/legacy_publish.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/tests",
+      "target": "file:crates/harness/tests/monitor.rs"
     },
     {
       "kind": "contains",
@@ -1964,7 +2059,17 @@
     {
       "kind": "contains",
       "source": "directory:docs",
+      "target": "file:docs/interpreter.md"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:docs",
       "target": "file:docs/memory.md"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:docs",
+      "target": "file:docs/monitoring.md"
     },
     {
       "kind": "contains",
@@ -2169,6 +2274,11 @@
     {
       "kind": "contains",
       "source": "directory:evals",
+      "target": "directory:evals/context_transitions"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:evals",
       "target": "directory:evals/harbor_adapter"
     },
     {
@@ -2210,6 +2320,26 @@
       "kind": "contains",
       "source": "directory:evals/context_cost",
       "target": "file:evals/context_cost/recent-usage-fixture.json"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:evals/context_transitions",
+      "target": "file:evals/context_transitions/README.md"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:evals/context_transitions",
+      "target": "file:evals/context_transitions/run_paired.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:evals/context_transitions",
+      "target": "file:evals/context_transitions/test_accounting.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:evals/context_transitions",
+      "target": "file:evals/context_transitions/verify_sandbox.py"
     },
     {
       "kind": "contains",
@@ -4419,6 +4549,11 @@
     {
       "kind": "links_to",
       "source": "file:docs/executable-examples.md",
+      "target": "file:docs/interpreter.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
       "target": "file:docs/memory.md"
     },
     {
@@ -4630,11 +4765,6 @@
       "kind": "imports_local",
       "source": "file:evals/snapcompact/test_run_paired.py",
       "target": "file:evals/snapcompact/paired_report.py"
-    },
-    {
-      "kind": "imports_local",
-      "source": "file:evals/snapcompact/test_run_paired.py",
-      "target": "file:evals/snapcompact/run_paired.py"
     },
     {
       "kind": "imports_local",
@@ -6649,12 +6779,22 @@
     {
       "kind": "declares_module",
       "source": "module:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::interpreter"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib",
       "target": "module:orvek-harness:lib::ipc"
     },
     {
       "kind": "declares_module",
       "source": "module:orvek-harness:lib",
       "target": "module:orvek-harness:lib::manual"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::monitor"
     },
     {
       "kind": "declares_module",
@@ -6767,9 +6907,19 @@
       "target": "file:crates/harness/src/completion.rs"
     },
     {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib::context",
+      "target": "module:orvek-harness:lib::context::transitions"
+    },
+    {
       "kind": "implemented_by",
       "source": "module:orvek-harness:lib::context",
       "target": "file:crates/harness/src/context.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::context::transitions",
+      "target": "file:crates/harness/src/context/transitions.rs"
     },
     {
       "kind": "implemented_by",
@@ -6809,7 +6959,17 @@
     {
       "kind": "declares_module",
       "source": "module:orvek-harness:lib::controller",
+      "target": "module:orvek-harness:lib::controller::interpreter"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib::controller",
       "target": "module:orvek-harness:lib::controller::manual"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib::controller",
+      "target": "module:orvek-harness:lib::controller::monitor"
     },
     {
       "kind": "declares_module",
@@ -6858,8 +7018,28 @@
     },
     {
       "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::controller::interpreter",
+      "target": "file:crates/harness/src/controller/interpreter.rs"
+    },
+    {
+      "kind": "implemented_by",
       "source": "module:orvek-harness:lib::controller::manual",
       "target": "file:crates/harness/src/controller/manual.rs"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib::controller::monitor",
+      "target": "module:orvek-harness:lib::controller::monitor::tests"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::controller::monitor",
+      "target": "file:crates/harness/src/controller/monitor.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::controller::monitor::tests",
+      "target": "file:crates/harness/src/controller/monitor/tests.rs"
     },
     {
       "kind": "implemented_by",
@@ -6983,6 +7163,21 @@
     },
     {
       "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::interpreter",
+      "target": "file:crates/harness/src/interpreter.rs"
+    },
+    {
+      "kind": "includes",
+      "source": "module:orvek-harness:lib::interpreter",
+      "target": "file:crates/harness/src/interpreter.rs"
+    },
+    {
+      "kind": "includes",
+      "source": "module:orvek-harness:lib::interpreter",
+      "target": "file:crates/harness/src/interpreter/bootstrap.js"
+    },
+    {
+      "kind": "implemented_by",
       "source": "module:orvek-harness:lib::ipc",
       "target": "file:crates/harness/src/ipc.rs"
     },
@@ -6990,6 +7185,21 @@
       "kind": "implemented_by",
       "source": "module:orvek-harness:lib::manual",
       "target": "file:crates/harness/src/manual.rs"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib::monitor",
+      "target": "module:orvek-harness:lib::monitor::evaluation"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::monitor",
+      "target": "file:crates/harness/src/monitor.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::monitor::evaluation",
+      "target": "file:crates/harness/src/monitor/evaluation.rs"
     },
     {
       "kind": "declares_module",
@@ -7119,6 +7329,11 @@
     {
       "kind": "declares_module",
       "source": "module:orvek-harness:lib::store",
+      "target": "module:orvek-harness:lib::store::monitor"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib::store",
       "target": "module:orvek-harness:lib::store::submissions"
     },
     {
@@ -7145,6 +7360,11 @@
       "kind": "implemented_by",
       "source": "module:orvek-harness:lib::store::manual",
       "target": "file:crates/harness/src/store/manual.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::store::monitor",
+      "target": "file:crates/harness/src/store/monitor.rs"
     },
     {
       "kind": "implemented_by",
@@ -7243,6 +7463,16 @@
     },
     {
       "kind": "implemented_by",
+      "source": "module:orvek-harness:test:context_transitions::tests::context_transitions",
+      "target": "file:crates/harness/tests/context_transitions.rs"
+    },
+    {
+      "kind": "imports",
+      "source": "module:orvek-harness:test:context_transitions::tests::context_transitions",
+      "target": "package:orvek-harness"
+    },
+    {
+      "kind": "implemented_by",
       "source": "module:orvek-harness:test:controller_execution::tests::controller_execution",
       "target": "file:crates/harness/tests/controller_execution.rs"
     },
@@ -7273,6 +7503,16 @@
     },
     {
       "kind": "implemented_by",
+      "source": "module:orvek-harness:test:interpreter_host::tests::interpreter_host",
+      "target": "file:crates/harness/tests/interpreter_host.rs"
+    },
+    {
+      "kind": "imports",
+      "source": "module:orvek-harness:test:interpreter_host::tests::interpreter_host",
+      "target": "package:orvek-harness"
+    },
+    {
+      "kind": "implemented_by",
       "source": "module:orvek-harness:test:legacy_import::tests::legacy_import",
       "target": "file:crates/harness/tests/legacy_import.rs"
     },
@@ -7289,6 +7529,16 @@
     {
       "kind": "imports",
       "source": "module:orvek-harness:test:legacy_publish::tests::legacy_publish",
+      "target": "package:orvek-harness"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-harness:test:monitor::tests::monitor",
+      "target": "file:crates/harness/tests/monitor.rs"
+    },
+    {
+      "kind": "imports",
+      "source": "module:orvek-harness:test:monitor::tests::monitor",
       "target": "package:orvek-harness"
     },
     {
@@ -7889,6 +8139,11 @@
     {
       "kind": "declares_module",
       "source": "module:orvek:bin:orvek::app",
+      "target": "module:orvek:bin:orvek::app::monitor"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek:bin:orvek::app",
       "target": "module:orvek:bin:orvek::app::secret"
     },
     {
@@ -8050,6 +8305,16 @@
       "kind": "implemented_by",
       "source": "module:orvek:bin:orvek::app::installation",
       "target": "file:bin/orvek/src/app/installation.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek:bin:orvek::app::monitor",
+      "target": "file:bin/orvek/src/app/monitor.rs"
+    },
+    {
+      "kind": "imports",
+      "source": "module:orvek:bin:orvek::app::monitor",
+      "target": "package:orvek-harness"
     },
     {
       "kind": "implemented_by",
@@ -9103,6 +9368,26 @@
     },
     {
       "kind": "implemented_by",
+      "source": "module:orvek:test:interpreter_cli::tests::interpreter_cli",
+      "target": "file:bin/orvek/tests/interpreter_cli.rs"
+    },
+    {
+      "kind": "imports",
+      "source": "module:orvek:test:interpreter_cli::tests::interpreter_cli",
+      "target": "package:orvek-harness"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek:test:monitor::tests::monitor",
+      "target": "file:bin/orvek/tests/monitor.rs"
+    },
+    {
+      "kind": "imports",
+      "source": "module:orvek:test:monitor::tests::monitor",
+      "target": "package:orvek-harness"
+    },
+    {
+      "kind": "implemented_by",
       "source": "module:orvek:test:release_pipeline::tests::release_pipeline",
       "target": "file:bin/orvek/tests/release_pipeline.rs"
     },
@@ -9529,6 +9814,16 @@
     {
       "kind": "defines",
       "source": "package:orvek",
+      "target": "target:orvek:test:interpreter_cli"
+    },
+    {
+      "kind": "defines",
+      "source": "package:orvek",
+      "target": "target:orvek:test:monitor"
+    },
+    {
+      "kind": "defines",
+      "source": "package:orvek",
       "target": "target:orvek:test:release_pipeline"
     },
     {
@@ -9849,6 +10144,11 @@
     {
       "kind": "defines",
       "source": "package:orvek-harness",
+      "target": "target:orvek-harness:test:context_transitions"
+    },
+    {
+      "kind": "defines",
+      "source": "package:orvek-harness",
       "target": "target:orvek-harness:test:controller_execution"
     },
     {
@@ -9864,12 +10164,22 @@
     {
       "kind": "defines",
       "source": "package:orvek-harness",
+      "target": "target:orvek-harness:test:interpreter_host"
+    },
+    {
+      "kind": "defines",
+      "source": "package:orvek-harness",
       "target": "target:orvek-harness:test:legacy_import"
     },
     {
       "kind": "defines",
       "source": "package:orvek-harness",
       "target": "target:orvek-harness:test:legacy_publish"
+    },
+    {
+      "kind": "defines",
+      "source": "package:orvek-harness",
+      "target": "target:orvek-harness:test:monitor"
     },
     {
       "kind": "defines",
@@ -10010,6 +10320,11 @@
       "kind": "depends_on",
       "source": "package:orvek-harness",
       "target": "dependency:reqwest"
+    },
+    {
+      "kind": "depends_on",
+      "source": "package:orvek-harness",
+      "target": "dependency:rquickjs"
     },
     {
       "kind": "depends_on",
@@ -11104,6 +11419,11 @@
     {
       "kind": "contains",
       "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::context::transitions"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
       "target": "module:orvek-harness:lib::context_cost"
     },
     {
@@ -11139,7 +11459,22 @@
     {
       "kind": "contains",
       "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::controller::interpreter"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
       "target": "module:orvek-harness:lib::controller::manual"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::controller::monitor"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::controller::monitor::tests"
     },
     {
       "kind": "contains",
@@ -11234,12 +11569,27 @@
     {
       "kind": "contains",
       "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::interpreter"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
       "target": "module:orvek-harness:lib::ipc"
     },
     {
       "kind": "contains",
       "source": "target:orvek-harness:lib",
       "target": "module:orvek-harness:lib::manual"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::monitor"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::monitor::evaluation"
     },
     {
       "kind": "contains",
@@ -11334,6 +11684,11 @@
     {
       "kind": "contains",
       "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::store::monitor"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
       "target": "module:orvek-harness:lib::store::submissions"
     },
     {
@@ -11393,6 +11748,11 @@
     },
     {
       "kind": "contains",
+      "source": "target:orvek-harness:test:context_transitions",
+      "target": "module:orvek-harness:test:context_transitions::tests::context_transitions"
+    },
+    {
+      "kind": "contains",
       "source": "target:orvek-harness:test:controller_execution",
       "target": "module:orvek-harness:test:controller_execution::tests::controller_execution"
     },
@@ -11408,6 +11768,11 @@
     },
     {
       "kind": "contains",
+      "source": "target:orvek-harness:test:interpreter_host",
+      "target": "module:orvek-harness:test:interpreter_host::tests::interpreter_host"
+    },
+    {
+      "kind": "contains",
       "source": "target:orvek-harness:test:legacy_import",
       "target": "module:orvek-harness:test:legacy_import::tests::legacy_import"
     },
@@ -11415,6 +11780,11 @@
       "kind": "contains",
       "source": "target:orvek-harness:test:legacy_publish",
       "target": "module:orvek-harness:test:legacy_publish::tests::legacy_publish"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:test:monitor",
+      "target": "module:orvek-harness:test:monitor::tests::monitor"
     },
     {
       "kind": "contains",
@@ -11730,6 +12100,11 @@
       "kind": "contains",
       "source": "target:orvek:bin:orvek",
       "target": "module:orvek:bin:orvek::app::installation"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek:bin:orvek",
+      "target": "module:orvek:bin:orvek::app::monitor"
     },
     {
       "kind": "contains",
@@ -12193,6 +12568,16 @@
     },
     {
       "kind": "contains",
+      "source": "target:orvek:test:interpreter_cli",
+      "target": "module:orvek:test:interpreter_cli::tests::interpreter_cli"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek:test:monitor",
+      "target": "module:orvek:test:monitor::tests::monitor"
+    },
+    {
+      "kind": "contains",
       "source": "target:orvek:test:release_pipeline",
       "target": "module:orvek:test:release_pipeline::tests::release_pipeline"
     },
@@ -12478,6 +12863,11 @@
       "id": "dependency:reqwest",
       "kind": "dependency",
       "label": "reqwest"
+    },
+    {
+      "id": "dependency:rquickjs",
+      "kind": "dependency",
+      "label": "rquickjs"
     },
     {
       "id": "dependency:rstest",
@@ -12831,6 +13221,12 @@
       "path": "crates/harness/src/capabilities"
     },
     {
+      "id": "directory:crates/harness/src/context",
+      "kind": "directory",
+      "label": "context",
+      "path": "crates/harness/src/context"
+    },
+    {
       "id": "directory:crates/harness/src/context_render",
       "kind": "directory",
       "label": "context_render",
@@ -12847,6 +13243,12 @@
       "kind": "directory",
       "label": "controller",
       "path": "crates/harness/src/controller"
+    },
+    {
+      "id": "directory:crates/harness/src/controller/monitor",
+      "kind": "directory",
+      "label": "monitor",
+      "path": "crates/harness/src/controller/monitor"
     },
     {
       "id": "directory:crates/harness/src/controller/subagents",
@@ -12871,6 +13273,18 @@
       "kind": "directory",
       "label": "inference",
       "path": "crates/harness/src/inference"
+    },
+    {
+      "id": "directory:crates/harness/src/interpreter",
+      "kind": "directory",
+      "label": "interpreter",
+      "path": "crates/harness/src/interpreter"
+    },
+    {
+      "id": "directory:crates/harness/src/monitor",
+      "kind": "directory",
+      "label": "monitor",
+      "path": "crates/harness/src/monitor"
     },
     {
       "id": "directory:crates/harness/src/review",
@@ -13003,6 +13417,12 @@
       "kind": "directory",
       "label": "context_cost",
       "path": "evals/context_cost"
+    },
+    {
+      "id": "directory:evals/context_transitions",
+      "kind": "directory",
+      "label": "context_transitions",
+      "path": "evals/context_transitions"
     },
     {
       "id": "directory:evals/harbor_adapter",
@@ -13477,7 +13897,7 @@
       "id": "file:Cargo.lock",
       "kind": "file",
       "label": "Cargo.lock",
-      "lines": 6177,
+      "lines": 6178,
       "path": "Cargo.lock"
     },
     {
@@ -13617,7 +14037,7 @@
       "id": "file:bin/orvek/src/app/cli.rs",
       "kind": "file",
       "label": "cli.rs",
-      "lines": 1513,
+      "lines": 1519,
       "path": "bin/orvek/src/app/cli.rs"
     },
     {
@@ -13665,7 +14085,7 @@
       "id": "file:bin/orvek/src/app/host.rs",
       "kind": "file",
       "label": "host.rs",
-      "lines": 831,
+      "lines": 840,
       "path": "bin/orvek/src/app/host.rs"
     },
     {
@@ -13689,8 +14109,16 @@
       "id": "file:bin/orvek/src/app/mod.rs",
       "kind": "file",
       "label": "mod.rs",
-      "lines": 21,
+      "lines": 22,
       "path": "bin/orvek/src/app/mod.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:bin/orvek/src/app/monitor.rs",
+      "kind": "file",
+      "label": "monitor.rs",
+      "lines": 53,
+      "path": "bin/orvek/src/app/monitor.rs"
     },
     {
       "file_kind": "rust-source",
@@ -14313,7 +14741,7 @@
       "id": "file:bin/orvek/src/tui/host_projection.rs",
       "kind": "file",
       "label": "host_projection.rs",
-      "lines": 1197,
+      "lines": 1223,
       "path": "bin/orvek/src/tui/host_projection.rs"
     },
     {
@@ -14438,6 +14866,22 @@
     },
     {
       "file_kind": "rust-source",
+      "id": "file:bin/orvek/tests/interpreter_cli.rs",
+      "kind": "file",
+      "label": "interpreter_cli.rs",
+      "lines": 344,
+      "path": "bin/orvek/tests/interpreter_cli.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:bin/orvek/tests/monitor.rs",
+      "kind": "file",
+      "label": "monitor.rs",
+      "lines": 231,
+      "path": "bin/orvek/tests/monitor.rs"
+    },
+    {
+      "file_kind": "rust-source",
       "id": "file:bin/orvek/tests/release_pipeline.rs",
       "kind": "file",
       "label": "release_pipeline.rs",
@@ -14513,7 +14957,7 @@
       "id": "file:crates/harness/Cargo.toml",
       "kind": "file",
       "label": "Cargo.toml",
-      "lines": 52,
+      "lines": 53,
       "path": "crates/harness/Cargo.toml"
     },
     {
@@ -14545,7 +14989,7 @@
       "id": "file:crates/harness/src/admission_profile.rs",
       "kind": "file",
       "label": "admission_profile.rs",
-      "lines": 303,
+      "lines": 334,
       "path": "crates/harness/src/admission_profile.rs"
     },
     {
@@ -14601,8 +15045,16 @@
       "id": "file:crates/harness/src/context.rs",
       "kind": "file",
       "label": "context.rs",
-      "lines": 756,
+      "lines": 769,
       "path": "crates/harness/src/context.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/harness/src/context/transitions.rs",
+      "kind": "file",
+      "label": "transitions.rs",
+      "lines": 287,
+      "path": "crates/harness/src/context/transitions.rs"
     },
     {
       "file_kind": "rust-source",
@@ -14664,7 +15116,7 @@
       "id": "file:crates/harness/src/controller.rs",
       "kind": "file",
       "label": "controller.rs",
-      "lines": 3724,
+      "lines": 3883,
       "path": "crates/harness/src/controller.rs"
     },
     {
@@ -14693,11 +15145,35 @@
     },
     {
       "file_kind": "rust-source",
+      "id": "file:crates/harness/src/controller/interpreter.rs",
+      "kind": "file",
+      "label": "interpreter.rs",
+      "lines": 309,
+      "path": "crates/harness/src/controller/interpreter.rs"
+    },
+    {
+      "file_kind": "rust-source",
       "id": "file:crates/harness/src/controller/manual.rs",
       "kind": "file",
       "label": "manual.rs",
       "lines": 181,
       "path": "crates/harness/src/controller/manual.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/harness/src/controller/monitor.rs",
+      "kind": "file",
+      "label": "monitor.rs",
+      "lines": 512,
+      "path": "crates/harness/src/controller/monitor.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/harness/src/controller/monitor/tests.rs",
+      "kind": "file",
+      "label": "tests.rs",
+      "lines": 479,
+      "path": "crates/harness/src/controller/monitor/tests.rs"
     },
     {
       "file_kind": "rust-source",
@@ -14720,7 +15196,7 @@
       "id": "file:crates/harness/src/controller/subagents.rs",
       "kind": "file",
       "label": "subagents.rs",
-      "lines": 3082,
+      "lines": 3072,
       "path": "crates/harness/src/controller/subagents.rs"
     },
     {
@@ -14728,7 +15204,7 @@
       "id": "file:crates/harness/src/controller/subagents/lifecycle.rs",
       "kind": "file",
       "label": "lifecycle.rs",
-      "lines": 169,
+      "lines": 268,
       "path": "crates/harness/src/controller/subagents/lifecycle.rs"
     },
     {
@@ -14845,10 +15321,26 @@
     },
     {
       "file_kind": "rust-source",
+      "id": "file:crates/harness/src/interpreter.rs",
+      "kind": "file",
+      "label": "interpreter.rs",
+      "lines": 719,
+      "path": "crates/harness/src/interpreter.rs"
+    },
+    {
+      "file_kind": "supporting-file",
+      "id": "file:crates/harness/src/interpreter/bootstrap.js",
+      "kind": "file",
+      "label": "bootstrap.js",
+      "lines": 70,
+      "path": "crates/harness/src/interpreter/bootstrap.js"
+    },
+    {
+      "file_kind": "rust-source",
       "id": "file:crates/harness/src/ipc.rs",
       "kind": "file",
       "label": "ipc.rs",
-      "lines": 1056,
+      "lines": 1096,
       "path": "crates/harness/src/ipc.rs"
     },
     {
@@ -14856,7 +15348,7 @@
       "id": "file:crates/harness/src/lib.rs",
       "kind": "file",
       "label": "lib.rs",
-      "lines": 41,
+      "lines": 43,
       "path": "crates/harness/src/lib.rs"
     },
     {
@@ -14866,6 +15358,22 @@
       "label": "manual.rs",
       "lines": 61,
       "path": "crates/harness/src/manual.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/harness/src/monitor.rs",
+      "kind": "file",
+      "label": "monitor.rs",
+      "lines": 211,
+      "path": "crates/harness/src/monitor.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/harness/src/monitor/evaluation.rs",
+      "kind": "file",
+      "label": "evaluation.rs",
+      "lines": 143,
+      "path": "crates/harness/src/monitor/evaluation.rs"
     },
     {
       "file_kind": "rust-source",
@@ -14960,7 +15468,7 @@
       "id": "file:crates/harness/src/session.rs",
       "kind": "file",
       "label": "session.rs",
-      "lines": 957,
+      "lines": 1010,
       "path": "crates/harness/src/session.rs"
     },
     {
@@ -14992,7 +15500,7 @@
       "id": "file:crates/harness/src/store.rs",
       "kind": "file",
       "label": "store.rs",
-      "lines": 3614,
+      "lines": 3710,
       "path": "crates/harness/src/store.rs"
     },
     {
@@ -15029,6 +15537,14 @@
     },
     {
       "file_kind": "rust-source",
+      "id": "file:crates/harness/src/store/monitor.rs",
+      "kind": "file",
+      "label": "monitor.rs",
+      "lines": 302,
+      "path": "crates/harness/src/store/monitor.rs"
+    },
+    {
+      "file_kind": "rust-source",
       "id": "file:crates/harness/src/store/submissions.rs",
       "kind": "file",
       "label": "submissions.rs",
@@ -15048,7 +15564,7 @@
       "id": "file:crates/harness/src/trace.rs",
       "kind": "file",
       "label": "trace.rs",
-      "lines": 1033,
+      "lines": 1034,
       "path": "crates/harness/src/trace.rs"
     },
     {
@@ -15056,7 +15572,7 @@
       "id": "file:crates/harness/src/trace/receipts.rs",
       "kind": "file",
       "label": "receipts.rs",
-      "lines": 1104,
+      "lines": 1109,
       "path": "crates/harness/src/trace/receipts.rs"
     },
     {
@@ -15125,6 +15641,14 @@
     },
     {
       "file_kind": "rust-source",
+      "id": "file:crates/harness/tests/context_transitions.rs",
+      "kind": "file",
+      "label": "context_transitions.rs",
+      "lines": 479,
+      "path": "crates/harness/tests/context_transitions.rs"
+    },
+    {
+      "file_kind": "rust-source",
       "id": "file:crates/harness/tests/controller_execution.rs",
       "kind": "file",
       "label": "controller_execution.rs",
@@ -15149,6 +15673,14 @@
     },
     {
       "file_kind": "rust-source",
+      "id": "file:crates/harness/tests/interpreter_host.rs",
+      "kind": "file",
+      "label": "interpreter_host.rs",
+      "lines": 787,
+      "path": "crates/harness/tests/interpreter_host.rs"
+    },
+    {
+      "file_kind": "rust-source",
       "id": "file:crates/harness/tests/legacy_import.rs",
       "kind": "file",
       "label": "legacy_import.rs",
@@ -15165,10 +15697,18 @@
     },
     {
       "file_kind": "rust-source",
+      "id": "file:crates/harness/tests/monitor.rs",
+      "kind": "file",
+      "label": "monitor.rs",
+      "lines": 651,
+      "path": "crates/harness/tests/monitor.rs"
+    },
+    {
+      "file_kind": "rust-source",
       "id": "file:crates/harness/tests/native_host.rs",
       "kind": "file",
       "label": "native_host.rs",
-      "lines": 1249,
+      "lines": 1482,
       "path": "crates/harness/tests/native_host.rs"
     },
     {
@@ -15656,7 +16196,7 @@
       "id": "file:docs/design/autonomy-tracker.md",
       "kind": "file",
       "label": "autonomy-tracker.md",
-      "lines": 366,
+      "lines": 365,
       "path": "docs/design/autonomy-tracker.md"
     },
     {
@@ -15664,7 +16204,7 @@
       "id": "file:docs/design/autonomy-tracker.sources.json",
       "kind": "file",
       "label": "autonomy-tracker.sources.json",
-      "lines": 1001,
+      "lines": 1092,
       "path": "docs/design/autonomy-tracker.sources.json"
     },
     {
@@ -15856,7 +16396,7 @@
       "id": "file:docs/executable-examples.md",
       "kind": "file",
       "label": "executable-examples.md",
-      "lines": 431,
+      "lines": 433,
       "path": "docs/executable-examples.md"
     },
     {
@@ -15877,11 +16417,27 @@
     },
     {
       "file_kind": "documentation",
+      "id": "file:docs/interpreter.md",
+      "kind": "file",
+      "label": "interpreter.md",
+      "lines": 113,
+      "path": "docs/interpreter.md"
+    },
+    {
+      "file_kind": "documentation",
       "id": "file:docs/memory.md",
       "kind": "file",
       "label": "memory.md",
       "lines": 317,
       "path": "docs/memory.md"
+    },
+    {
+      "file_kind": "documentation",
+      "id": "file:docs/monitoring.md",
+      "kind": "file",
+      "label": "monitoring.md",
+      "lines": 136,
+      "path": "docs/monitoring.md"
     },
     {
       "file_kind": "documentation",
@@ -15962,6 +16518,38 @@
       "label": "recent-usage-fixture.json",
       "lines": 135,
       "path": "evals/context_cost/recent-usage-fixture.json"
+    },
+    {
+      "file_kind": "documentation",
+      "id": "file:evals/context_transitions/README.md",
+      "kind": "file",
+      "label": "README.md",
+      "lines": 67,
+      "path": "evals/context_transitions/README.md"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:evals/context_transitions/run_paired.py",
+      "kind": "file",
+      "label": "run_paired.py",
+      "lines": 228,
+      "path": "evals/context_transitions/run_paired.py"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:evals/context_transitions/test_accounting.py",
+      "kind": "file",
+      "label": "test_accounting.py",
+      "lines": 36,
+      "path": "evals/context_transitions/test_accounting.py"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:evals/context_transitions/verify_sandbox.py",
+      "kind": "file",
+      "label": "verify_sandbox.py",
+      "lines": 70,
+      "path": "evals/context_transitions/verify_sandbox.py"
     },
     {
       "file_kind": "python-script",
@@ -16208,7 +16796,7 @@
       "id": "file:examples/host-docs/inventory.json",
       "kind": "file",
       "label": "inventory.json",
-      "lines": 289,
+      "lines": 303,
       "path": "examples/host-docs/inventory.json"
     },
     {
@@ -19355,6 +19943,13 @@
       "target": "target:orvek-harness:lib"
     },
     {
+      "id": "module:orvek-harness:lib::context::transitions",
+      "kind": "module",
+      "label": "orvek-harness:lib::context::transitions",
+      "path": "crates/harness/src/context/transitions.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
       "id": "module:orvek-harness:lib::context_cost",
       "kind": "module",
       "label": "orvek-harness:lib::context_cost",
@@ -19404,10 +19999,31 @@
       "target": "target:orvek-harness:lib"
     },
     {
+      "id": "module:orvek-harness:lib::controller::interpreter",
+      "kind": "module",
+      "label": "orvek-harness:lib::controller::interpreter",
+      "path": "crates/harness/src/controller/interpreter.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
       "id": "module:orvek-harness:lib::controller::manual",
       "kind": "module",
       "label": "orvek-harness:lib::controller::manual",
       "path": "crates/harness/src/controller/manual.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
+      "id": "module:orvek-harness:lib::controller::monitor",
+      "kind": "module",
+      "label": "orvek-harness:lib::controller::monitor",
+      "path": "crates/harness/src/controller/monitor.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
+      "id": "module:orvek-harness:lib::controller::monitor::tests",
+      "kind": "module",
+      "label": "orvek-harness:lib::controller::monitor::tests",
+      "path": "crates/harness/src/controller/monitor/tests.rs",
       "target": "target:orvek-harness:lib"
     },
     {
@@ -19537,6 +20153,13 @@
       "target": "target:orvek-harness:lib"
     },
     {
+      "id": "module:orvek-harness:lib::interpreter",
+      "kind": "module",
+      "label": "orvek-harness:lib::interpreter",
+      "path": "crates/harness/src/interpreter.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
       "id": "module:orvek-harness:lib::ipc",
       "kind": "module",
       "label": "orvek-harness:lib::ipc",
@@ -19548,6 +20171,20 @@
       "kind": "module",
       "label": "orvek-harness:lib::manual",
       "path": "crates/harness/src/manual.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
+      "id": "module:orvek-harness:lib::monitor",
+      "kind": "module",
+      "label": "orvek-harness:lib::monitor",
+      "path": "crates/harness/src/monitor.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
+      "id": "module:orvek-harness:lib::monitor::evaluation",
+      "kind": "module",
+      "label": "orvek-harness:lib::monitor::evaluation",
+      "path": "crates/harness/src/monitor/evaluation.rs",
       "target": "target:orvek-harness:lib"
     },
     {
@@ -19677,6 +20314,13 @@
       "target": "target:orvek-harness:lib"
     },
     {
+      "id": "module:orvek-harness:lib::store::monitor",
+      "kind": "module",
+      "label": "orvek-harness:lib::store::monitor",
+      "path": "crates/harness/src/store/monitor.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
       "id": "module:orvek-harness:lib::store::submissions",
       "kind": "module",
       "label": "orvek-harness:lib::store::submissions",
@@ -19761,6 +20405,13 @@
       "target": "target:orvek-harness:test:context_retrieval"
     },
     {
+      "id": "module:orvek-harness:test:context_transitions::tests::context_transitions",
+      "kind": "module",
+      "label": "orvek-harness:test:context_transitions::tests::context_transitions",
+      "path": "crates/harness/tests/context_transitions.rs",
+      "target": "target:orvek-harness:test:context_transitions"
+    },
+    {
       "id": "module:orvek-harness:test:controller_execution::tests::controller_execution",
       "kind": "module",
       "label": "orvek-harness:test:controller_execution::tests::controller_execution",
@@ -19782,6 +20433,13 @@
       "target": "target:orvek-harness:test:execution_admission"
     },
     {
+      "id": "module:orvek-harness:test:interpreter_host::tests::interpreter_host",
+      "kind": "module",
+      "label": "orvek-harness:test:interpreter_host::tests::interpreter_host",
+      "path": "crates/harness/tests/interpreter_host.rs",
+      "target": "target:orvek-harness:test:interpreter_host"
+    },
+    {
       "id": "module:orvek-harness:test:legacy_import::tests::legacy_import",
       "kind": "module",
       "label": "orvek-harness:test:legacy_import::tests::legacy_import",
@@ -19794,6 +20452,13 @@
       "label": "orvek-harness:test:legacy_publish::tests::legacy_publish",
       "path": "crates/harness/tests/legacy_publish.rs",
       "target": "target:orvek-harness:test:legacy_publish"
+    },
+    {
+      "id": "module:orvek-harness:test:monitor::tests::monitor",
+      "kind": "module",
+      "label": "orvek-harness:test:monitor::tests::monitor",
+      "path": "crates/harness/tests/monitor.rs",
+      "target": "target:orvek-harness:test:monitor"
     },
     {
       "id": "module:orvek-harness:test:native_host::tests::native_host",
@@ -20234,6 +20899,13 @@
       "kind": "module",
       "label": "orvek:bin:orvek::app::installation",
       "path": "bin/orvek/src/app/installation.rs",
+      "target": "target:orvek:bin:orvek"
+    },
+    {
+      "id": "module:orvek:bin:orvek::app::monitor",
+      "kind": "module",
+      "label": "orvek:bin:orvek::app::monitor",
+      "path": "bin/orvek/src/app/monitor.rs",
       "target": "target:orvek:bin:orvek"
     },
     {
@@ -20881,6 +21553,20 @@
       "target": "target:orvek:test:event_intake"
     },
     {
+      "id": "module:orvek:test:interpreter_cli::tests::interpreter_cli",
+      "kind": "module",
+      "label": "orvek:test:interpreter_cli::tests::interpreter_cli",
+      "path": "bin/orvek/tests/interpreter_cli.rs",
+      "target": "target:orvek:test:interpreter_cli"
+    },
+    {
+      "id": "module:orvek:test:monitor::tests::monitor",
+      "kind": "module",
+      "label": "orvek:test:monitor::tests::monitor",
+      "path": "bin/orvek/tests/monitor.rs",
+      "target": "target:orvek:test:monitor"
+    },
+    {
       "id": "module:orvek:test:release_pipeline::tests::release_pipeline",
       "kind": "module",
       "label": "orvek:test:release_pipeline::tests::release_pipeline",
@@ -21069,6 +21755,12 @@
       "package": "orvek-harness"
     },
     {
+      "id": "target:orvek-harness:test:context_transitions",
+      "kind": "target",
+      "label": "orvek-harness test:context_transitions",
+      "package": "orvek-harness"
+    },
+    {
       "id": "target:orvek-harness:test:controller_execution",
       "kind": "target",
       "label": "orvek-harness test:controller_execution",
@@ -21087,6 +21779,12 @@
       "package": "orvek-harness"
     },
     {
+      "id": "target:orvek-harness:test:interpreter_host",
+      "kind": "target",
+      "label": "orvek-harness test:interpreter_host",
+      "package": "orvek-harness"
+    },
+    {
       "id": "target:orvek-harness:test:legacy_import",
       "kind": "target",
       "label": "orvek-harness test:legacy_import",
@@ -21096,6 +21794,12 @@
       "id": "target:orvek-harness:test:legacy_publish",
       "kind": "target",
       "label": "orvek-harness test:legacy_publish",
+      "package": "orvek-harness"
+    },
+    {
+      "id": "target:orvek-harness:test:monitor",
+      "kind": "target",
+      "label": "orvek-harness test:monitor",
       "package": "orvek-harness"
     },
     {
@@ -21261,6 +21965,18 @@
       "package": "orvek"
     },
     {
+      "id": "target:orvek:test:interpreter_cli",
+      "kind": "target",
+      "label": "orvek test:interpreter_cli",
+      "package": "orvek"
+    },
+    {
+      "id": "target:orvek:test:monitor",
+      "kind": "target",
+      "label": "orvek test:monitor",
+      "package": "orvek"
+    },
+    {
       "id": "target:orvek:test:release_pipeline",
       "kind": "target",
       "label": "orvek test:release_pipeline",
@@ -21320,36 +22036,36 @@
     ]
   },
   "statistics": {
-    "edges": 2443,
+    "edges": 2520,
     "files_by_kind": {
       "automation": 4,
       "binary-asset": 5,
       "cargo-manifest": 8,
       "ci-workflow": 4,
       "configuration": 25,
-      "documentation": 55,
-      "python-script": 47,
-      "rust-source": 377,
-      "supporting-file": 23,
+      "documentation": 58,
+      "python-script": 50,
+      "rust-source": 391,
+      "supporting-file": 24,
       "typescript-source": 36,
       "web-asset": 20
     },
-    "nodes": 1255,
+    "nodes": 1301,
     "nodes_by_kind": {
       "component": 14,
-      "dependency": 72,
-      "directory": 121,
-      "file": 604,
-      "module": 381,
+      "dependency": 73,
+      "directory": 126,
+      "file": 625,
+      "module": 395,
       "package": 7,
       "repository": 1,
-      "target": 54,
+      "target": 59,
       "workspace": 1
     },
     "static_reference_coverage": {
       "rust_compile_time_includes": {
-        "detected": 25,
-        "resolved": 25
+        "detected": 27,
+        "resolved": 27
       },
       "typescript_relative_imports": {
         "detected": 47,

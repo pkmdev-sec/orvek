@@ -1,6 +1,6 @@
 # Orvek autonomy and harness tracker
 
-Status: T01, T02, T03, T08, and T11 implemented and verified. T09 hooks are verified; event intake is underway. T04 replay acceptance is in progress. T05 audit fixes, T06, and experimental T07 implementation are underway. Baseline: `720210c0cbceebe89c123038049e9aebf77ba47d`. Sources inspected on 2026-09-20.
+Status: All eleven cards are implemented on this branch. T01, T02, T03, T08, and T11 were accepted earlier. T04 replay, T05 memory, T06 interpreter, experimental T07 transitions, T09 event intake, and T10 monitoring are now integrated and verified with the limits recorded below. Baseline: `720210c0cbceebe89c123038049e9aebf77ba47d`. Sources inspected on 2026-09-20.
 
 ## Decision
 
@@ -37,9 +37,14 @@ Verification at the research baseline:
 - **T03**, `757b6b4`: all 32 SnapCompact tests pass, including null measurements, failed/interrupted admissions, malformed logs, child failures, torn records, pairing controls, and report denominators. The original six tests were retained or migrated to schema v2; archived zero-filled records are not accepted as measured evidence.
 - **T04 integration**, `4871c93` through `668200d`: 303 default harness tests, 79 focused trace/provider tests, 20 app-host tests, and three actual-Docker repair/patch/child cases pass. Review found and reproduced receipt memory amplification, wire-payload mismatch, legacy unknown/zero accounting, and context closure defects; their integrated regressions now pass. All-feature compilation and strict Clippy pass. Portable receipt replay is implemented; controller-decision replay and per-call historical causal completeness are not established. T04 remains open for its final acceptance audit.
 - **T11 memory/skills phase**, `d154278`: the parent reran the real two-session put/scan/read and on-demand skill example, including manifest identities. Five executable examples now exist. `8975a7c` adds sanitized fixture trace links; the parent regenerated them on the merged runtime and verified offline replay/review, false-exact rejection, all 38 Python tests, and 35 classified guide fences. Every trace omits all artifact payloads and is explicitly non-exact. Later runtime changes require regeneration.
+- **T05 evidence memory**, `68391b8` through `3ade995`: the parent reran all memory-crate tests, 22 app-host tests including Docker, and three real CLI scripts covering legacy migration, A→B→C→A transfer provenance, idempotent replay, stale dirty sources, atomic refresh, asynchronous proposals, and portable archives. A new requirement was added test-first: the memory tool description must state that source freshness checks the admitted host repository, not isolated candidate bytes.
+- **T07 experimental transitions**, `7a23c84` plus `441be81`: nine transition tests, 16 native-host tests, and 18 trace-bundle tests pass. Review found that offline replay rebuilt cache segments from stable history alone while the controller also includes derived summaries; the reproduced regression now passes. Transitions stay disabled by default. Scripted fixtures produced more calls and bytes than the native path, so the paired quality and full-cost gate is unmet.
+- **T10 monitoring and repair**, `f039122`: 14 harness monitor tests, nine controller monitor tests, and one real CLI release/repair/rollback test pass. Automatic repair changes only native read-reply capacity as typed JSON configuration. It never patches code, promotes a model or prompt, or claims live-model quality.
+- **T06 persistent interpreter**, `d564589` plus `e22f310`: five actor tests, nine host tests including real Docker delegation, and two real CLI crash/restart tests pass. An independent review found that checkpoint encoding built descriptors that inherited `Object.prototype`, so a poisoned `get` accessor ran one real `read_file` job before rejection. The parent reproduced that defect, then fixed encoding to use null-prototype descriptors.
+- **All eleven cards on one tree**, `e22f310`: 382 harness tests pass with none failing, 54 tests pass with real Docker, all-feature compilation and strict Clippy pass, and the doc gates check 43 guide fences, five regenerated fixture traces, 38 Python tests, and 50 Markdown files.
 - The existing Docker boundary suite also passes: 14 tests against Docker 29.7.2 with `debian:bookworm-slim` and the static ARM64 executor helper.
 
-The manifest records rerun commands. No live-model or competitor comparison has run. Repository-wide integration checks remain pending while other work lands.
+The manifest records rerun commands. No live-model or competitor comparison has run. Two acceptance limits remain open by design: T06's serial-versus-composed comparison and T07's forced-transition evaluation need live-provider quality, cost, and latency evidence, and T10's cohort comparison needs real traffic. Offline replay also still treats `read_context` page digests as artifact references, so retrieval flows report a missing artifact instead of exact closure.
 
 ## Preserve these strengths
 
@@ -158,7 +163,7 @@ T01, T02, T03, T08, and T11 are complete within the limits recorded below. T09 h
 
 - [x] Define a versioned manifest and bounded artifact traversal. Record missing or deliberately omitted payloads. Do not upload traces by default.
 - [x] Record missing child causal links at execution time. Split model/tool/check spans without manufacturing intermediate rationale.
-- [ ] Implement offline event/receipt replay with a provider/tool stub. No network calls or command execution in replay mode. Compare state, selected context, and outcome identities.
+- [x] Implement offline event/receipt replay with a provider/tool stub. No network calls or command execution in replay mode. Compare state, selected context, and outcome identities.
 - [x] Add a separate experimental re-execution path in a fresh environment. Reusing old tool outputs is diagnostic replay, not proof that changed code works.
 - [x] Build N−1 prefix fixtures and a review packet containing user intent, contract, patch, verification, cost confidence, and unresolved facts.
 - [x] Test child work, retries, rejected completion, successful repair, tampered blobs, missing artifacts, and cursor gaps. Export filtering must mark a bundle non-exact when payloads are removed.
@@ -166,51 +171,47 @@ T01, T02, T03, T08, and T11 are complete within the limits recorded below. T09 h
 **Done:** another local installation explains and replays the same recorded task offline. A redacted review bundle cannot masquerade as an exact replay bundle. Provider-hidden reasoning and unrecorded external state remain unavailable.
 
 **Integration limit:** receipt-driven replay is implemented and tested. The remaining replay acceptance audit must distinguish it from full controller-decision replay and historical causal completeness.
-
 ### T05: Give memory scope, evidence, and a refresh path
 
 **Evidence:** O04/O05, T01; L06/L14/X02. Local schema has no repository scope or evidence references. Remote import deliberately loses namespace provenance. Probation ends on read, which measures use, not truth.
 
 **Decision:** Extend the existing versioned store with explicit global/repository scope, origin, and evidence references. Treat preference, procedural instruction, and code-backed claim differently. For a code claim, freshness derives from persisted source identity and current content, not from a self-reported confidence score. Changed evidence means stale, not false.
 
-- [ ] Migrate without relabeling old unscoped records as repository facts. Preserve legacy records as unscoped/unverified and preserve origin on future imports.
-- [ ] Store source path/range or artifact digest, repository identity, checked revision/content digest, and producing trace. Use content identity for dirty worktrees; a Git commit alone is insufficient.
-- [ ] Surface stale/unavailable evidence on scan/read. Recheck changed sources only; an unrelated edit must not force a full-model review of the corpus.
-- [ ] Refresh or correct content and evidence atomically with CAS. An interrupted refresh remains stale. A read does not certify a claim.
-- [ ] Add an asynchronous post-run lesson proposal that links to evidence and a behavior test. Merge repeated lessons; do not store whole transcripts or silently rewrite managed instruction files.
-- [ ] Export/import a portable manifest plus readable records. Verify namespaces, provenance, versions, and citations survive transfer; keep ordinary file views as adapters.
+- [x] Migrate without relabeling old unscoped records as repository facts. Preserve legacy records as unscoped/unverified and preserve origin on future imports.
+- [x] Store source path/range or artifact digest, repository identity, checked revision/content digest, and producing trace. Use content identity for dirty worktrees; a Git commit alone is insufficient.
+- [x] Surface stale/unavailable evidence on scan/read. Recheck changed sources only; an unrelated edit must not force a full-model review of the corpus.
+- [x] Refresh or correct content and evidence atomically with CAS. An interrupted refresh remains stale. A read does not certify a claim.
+- [x] Add an asynchronous post-run lesson proposal that links to evidence and a behavior test. Merge repeated lessons; do not store whole transcripts or silently rewrite managed instruction files.
+- [x] Export/import a portable manifest plus readable records. Verify namespaces, provenance, versions, and citations survive transfer; keep ordinary file views as adapters.
 
 **Done:** a commit sequence containing a feature change, unrelated edit, deletion, and revert produces correct stale/verified/unknown states. A second model can reuse the same store without relearning preferences. A false tool-output instruction remains data and cannot gain host authority through a memory write. No approval-per-memory-write loop is introduced.
-
 ### T06: Compose tools in a persistent interpreter
 
 **Evidence:** O03/O10/O21; L03 and D01 QuickJS code. Native/sandbox shell tools can already execute code. They do not provide persistent in-loop values with typed bridges to host services.
 
 **Decision:** Prototype a small interpreter as a host-owned capability. Keep model reasoning in the model, large working values in the interpreter, and durable artifacts in the artifact store. Do not mandate QuickJS until embedding, cancellation, and persistence tests justify it. This adds a tool; it does not remove shell access.
 
-- [ ] Route every bridged tool call through the same dispatch, task/job identity, cancellation, and receipt code as ordinary tools. An outer `eval` receipt cannot stand in for its inner side effects.
-- [ ] Start with read/search/context retrieval and child orchestration. Enable writes only through the already-admitted capability path, not ambient host access.
-- [ ] Give each session an isolated runtime. Specify which values persist across calls, turns, and restart. Initially checkpoint explicit serializable values; invalidate live handles rather than serializing processes, sockets, or credentials.
-- [ ] On restore, verify version/source/digest and restore recorded values only. Never rebuild state by rerunning effectful cells. Mark state loss explicitly and let the model reconstruct pure computations.
-- [ ] Make long tool waits resumable through handles and host events. VM execution limits do not bound host-call wall time. Preserve cancellation and resource controls without adding a blanket task call/spend cap.
+- [x] Route every bridged tool call through the same dispatch, task/job identity, cancellation, and receipt code as ordinary tools. An outer `eval` receipt cannot stand in for its inner side effects.
+- [x] Start with read/search/context retrieval and child orchestration. Enable writes only through the already-admitted capability path, not ambient host access.
+- [x] Give each session an isolated runtime. Specify which values persist across calls, turns, and restart. Initially checkpoint explicit serializable values; invalidate live handles rather than serializing processes, sockets, or credentials.
+- [x] On restore, verify version/source/digest and restore recorded values only. Never rebuild state by rerunning effectful cells. Mark state loss explicitly and let the model reconstruct pure computations.
+- [x] Make long tool waits resumable through handles and host events. VM execution limits do not bound host-call wall time. Preserve cancellation and resource controls without adding a blanket task call/spend cap.
 - [ ] Compare serial tool use against programmatic composition on the same structured-data and delegation tasks. Measure correctness, model round trips, context bytes, total provider cost, and latency.
 
 **Done:** one program filters a large result, delegates selected slices, and returns cited evidence without inserting every intermediate value into the prompt. Restart never duplicates an external action. L03's reported token savings are motivation, not an acceptance target.
-
 ### T07: Let the model choose context transitions without losing source
 
 **Evidence:** O06–O08; L10. `project` currently cuts old complete tool pairs to fit a byte allowance and inserts an omission notice. Exact history remains retrievable. Continuous bitmap conversion and cache-aware accounting already exist.
 
 **Decision:** Add a model-requested transition for a settled history range, with a purpose such as “research complete; implementation begins.” Store a derived task-state summary or evidence index linked to original bytes. Preserve the native live tail, original request, and protected contract. The model proposes a view, not edits to task truth.
 
-- [ ] Test useful phase boundaries and negative cases where a transition would discard active work. Do not force compaction after an arbitrary number of turns.
-- [ ] Record summary provenance, covered source ranges, pending obligations, and retrieval links. Validate ranges and protocol pairs, not the truth of arbitrary summary prose by assertion.
-- [ ] Integrate with existing stable segments, bitmap selection, and cache identity. Measure cache loss and extra summary/retrieval calls, not only fewer input tokens.
-- [ ] Keep prior/native view available on failure. Provider-size recovery still obeys actual provider limits; do not claim fallback always fits.
+- [x] Test useful phase boundaries and negative cases where a transition would discard active work. Do not force compaction after an arbitrary number of turns.
+- [x] Record summary provenance, covered source ranges, pending obligations, and retrieval links. Validate ranges and protocol pairs, not the truth of arbitrary summary prose by assertion.
+- [x] Integrate with existing stable segments, bitmap selection, and cache identity. Measure cache loss and extra summary/retrieval calls, not only fewer input tokens.
+- [x] Keep prior/native view available on failure. Provider-size recovery still obeys actual provider limits; do not claim fallback always fits.
 - [ ] Force frequent transitions in isolated evals, then test goal retention, exact needle retrieval, and continuation after restart/fork. Keep stress settings out of production defaults.
 
 **Done:** the model can request a phase transition and later retrieve omitted source byte-for-byte. It does not declare completion because obligations disappeared. Ship only with paired quality and full-cost evidence; no new runtime spend cap or forced task stop.
-
 ### T08: Make delegation durable and choose context deliberately
 
 **Evidence:** O09/O21/O28/O29/O36; X01 and D01. At baseline, child state was ephemeral, prose could look completed, and caller schemas were not delivered. `4f9e4b9` adds durable lifecycle and context selection. `ebee40f` versions incompatible child events as operator protocol 5. `ca42e5c` verifies exact trace closure for a real-Docker fork. Source and API details are in [Subagents](../subagents.md).
@@ -236,26 +237,24 @@ T01, T02, T03, T08, and T11 are complete within the limits recorded below. T09 h
 - [x] Add a failing headless/TUI parity test for the configured hook. Define covered terminal outcomes, output handling, timeout, and cancellation.
 - [x] Persist delivery intent and result with a stable delivery ID. Offer idempotency keys to receivers. An arbitrary shell hook cannot promise exactly-once external effects after lost acknowledgement.
 - [x] Treat ambiguous delivery as unknown; retry automatically only when the receiver can deduplicate or the action is demonstrably repeatable.
-- [ ] For later schedule/webhook intake, persist trigger identity, deduplication key, payload digest, selected session, and submission receipt. Reuse the admission queue rather than run a second controller.
-- [ ] Define catch-up after downtime, trigger coalescing, and cancellation. Local adapters first; no public unauthenticated server is implied.
+- [x] For later schedule/webhook intake, persist trigger identity, deduplication key, payload digest, selected session, and submission receipt. Reuse the admission queue rather than run a second controller.
+- [x] Define catch-up after downtime, trigger coalescing, and cancellation. Local adapters first; no public unauthenticated server is implied.
 
 **Done:** reconnect does not rerun a settled notification. A repeated event submits one logical task. Event automation needs no per-event human approval, but cannot authorize tools beyond the configured host authority.
-
 ### T10: Close the improvement loop without live self-corruption
 
 **Evidence:** O14/O15/O19 and T03/T04; L01/L04/L07/L08/L09/L13.
 
 **Decision:** Build an asynchronous consumer of durable traces. Separate operational anomalies, task-quality failures, and evaluator failures. Generate a candidate fix in an isolated workspace; test it against both the triggering case and held-out regressions. Existing tasks stay pinned to their admitted behavior. Never let a repair agent weaken the grader to make its own patch pass.
 
-- [ ] Start with known signatures and denominators: job outcome, provider error, unresolved effect, verification failure, user correction, and missing usage. Keep sampling decisions and skipped evaluations observable.
+- [x] Start with known signatures and denominators: job outcome, provider error, unresolved effect, verification failure, user correction, and missing usage. Keep sampling decisions and skipped evaluations observable.
 - [ ] Compare matched model/build/environment cohorts and failures per relevant opportunity, not raw counts from unequal traffic windows. Label sparse data and provider outages as uncertain.
-- [ ] Require a source/diff-to-symptom hypothesis before coding. L07's Poisson test assumes independence; use it only when justified and account for multiple signatures and correlated failures.
+- [x] Require a source/diff-to-symptom hypothesis before coding. L07's Poisson test assumes independence; use it only when justified and account for multiple signatures and correlated failures.
 - [ ] Produce a regression fixture, then a candidate code/tool/prompt/memory change. Run deterministic checks and isolated repeated live comparisons where behavior requires a model. Keep evaluation data separate from training/tuning inputs.
-- [ ] Promote versioned behavior/configuration automatically only after its predeclared outcome checks pass. Publish code repairs as tested patch artifacts; installing a new host build is a separate release operation, never an in-place rewrite of a running host.
-- [ ] Record the previous version and support rollback for new sessions. Do not rewrite in-flight contracts, tool schemas, or replay evidence.
+- [x] Promote versioned behavior/configuration automatically only after its predeclared outcome checks pass. Publish code repairs as tested patch artifacts; installing a new host build is a separate release operation, never an in-place rewrite of a running host.
+- [x] Record the previous version and support rollback for new sessions. Do not rewrite in-flight contracts, tool schemas, or replay evidence.
 
 **Done:** an injected release regression creates a diagnostic trace, regression test, tested candidate, and reversible behavior update without an approval gate. A provider outage and unrelated docs-only change do not produce a speculative code fix. Monitor failure leaves user tasks running. Subjective quality with no reliable evaluator remains unproven, not automatically “passed.”
-
 ### T11: Make capability docs prove real host behavior
 
 **Evidence:** O01/O02/O16/O25; L05/L12. Current documentation checks parse examples and validate links. They do not prove the displayed memory operations or configured hooks reach the host.

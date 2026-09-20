@@ -147,6 +147,20 @@
     "reason": "Contributor checks, not a self-contained host task."
   },
   {
+    "guide": "docs/interpreter.md",
+    "block": 1,
+    "sha256": "6b665c8229ff9269aefc9734611f277bb8b268bb82ad0348a1bae53342018b6f",
+    "kind": "illustrative",
+    "reason": "Cell body only; the interpreter host and CLI tests exercise this flow."
+  },
+  {
+    "guide": "docs/interpreter.md",
+    "block": 2,
+    "sha256": "c9eb6883453cab51036d1c6fb71143e72b1839771c7027d43a25d18761d4b2d6",
+    "kind": "illustrative",
+    "reason": "Contributor test commands; not an isolated capability scenario."
+  },
+  {
     "guide": "docs/memory.md",
     "block": 1,
     "sha256": "a5d032cfdb67ec5cec63100e9a73c8f1b556edaf71ac095e1cd1364d520bce1d",
