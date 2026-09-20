@@ -3,6 +3,124 @@
 Use `orvek config path` to find the selected file. Use `orvek config show` to print effective
 settings with secrets redacted. The file is optional.
 
+## Capabilities
+
+### Configuration, authentication, skills, and MCP
+
+Orvek reads an optional TOML file and applies CLI overrides before environment and file settings.
+Use the [path and precedence reference](#paths-and-precedence) to select a configuration directory.
+[Authentication](#authentication) supports shared Codex credentials, environment API keys, and an
+executable helper for short-lived keys. The default host runtime runs tools with your permissions;
+see [Agent settings](#agent-settings) for the optional Docker runtime and model controls.
+
+[Skills](#skills) add trusted local `SKILL.md` instructions. [MCP tools](#mcp-tools) connect local
+stdio or remote servers. Skills can direct tool execution, and local MCP environment values can
+place secrets in the config file. Review those trust and credential requirements before enabling them.
+
+### Sessions, review, and reflection
+
+The detached host keeps authoritative session history and an append-only journal. Use `orvek resume`
+to choose a session or `orvek --resume SESSION_ID` to open one directly. `Ctrl+T` forks stable history
+into a second pane with independent later work. Only one fork can be open at a time. Stored sessions
+can contain unredacted conversation data.
+
+Enter `/review` while idle to review the branch diff in a browser. Inline and general feedback returns
+to the composer for editing before you send it. Source builds need separately installed browser
+assets. Closing the browser does not cancel the review or an active answer.
+
+**Reflect on session** reviews the current conversation and relevant historical sessions, then reports
+findings and proposed actions. It does not apply memory or configuration changes. See
+[Sessions and review](sessions.md) for asset setup, cancellation, and saved-data handling.
+
+### Local and remote memory
+
+Memory stores conclusions across sessions and is disabled by default. Add this to your configuration
+and start a new session:
+
+```toml
+[memory]
+enabled = true
+```
+
+Leave `memory.remote` unconfigured for local-only memory. Sessions share
+`<config-dir>/memory/v1.sqlite3`; no Cloudflare service is needed. Agents read memory through
+explicit tools. Memory is separate from durable session history.
+
+The local store has no repository, workspace, or author namespaces. Put any scope in the record
+itself. Memory does not override current instructions or `AGENTS.md`. The database is unencrypted;
+do not store credentials, transcripts, or transient plans.
+
+Optional remote memory selects a remote-only backend for configured workspace roots and their linked
+Git worktrees. Other workspaces use local memory. Remote failures never fall back to local storage,
+and there is no automatic synchronization or combined search. Credentials control namespace access
+and reader or writer permissions; children remain read-only. Explicit `orvek memory push` replaces
+the writer's remote namespace, while `orvek memory pull` merges into local memory. See
+[Memory](memory.md) for remote setup, transfer precautions, record limits, and expiry rules.
+
+### Context projection and legacy compaction data
+
+The host derives a context view for each inference request without deleting, summarizing, or rewriting
+the authoritative history. Settled tool output can remain native text or use host-rendered PNG pages.
+Comparable provider receipts guide the choice; missing measurements or failures restore native text
+for the affected segment. The `read_context` tool retrieves exact authorized history text without
+rerunning a tool.
+
+Set `agent.context_window_tokens` for new sessions. It accepts 16,384 through 1,000,000 tokens and
+defaults to 272,000. Legacy `[agent.compaction]` settings still map `input_budget_tokens` to this value.
+Projection does not add a spend limit, call limit, or execution stop. Historical SQLite imports retain
+unknown tables as opaque data; keep your own copy if vendor-private archives matter. See
+[Host-owned context views](compaction.md) for selection, branch access, and recovery rules.
+
+### Subagents
+
+Subagents perform focused, read-only work in direct child sessions. They require
+`agent.execution = "sandbox"`, enabled subagents, a local Docker service, the configured executor
+image, and a matching `ORVEK_EXECUTOR_HELPER`. Host mode does not expose subagent tools.
+
+Children use the parent's selected model but do not inherit its conversation. The parent supplies
+the task and a JSON result schema. Children cannot edit files or create other children, and they share
+a workspace snapshot rather than separate worktrees. Each child is limited to 12 model calls and
+8,192 output tokens. `agent.max_subagents` limits active child turns across the host to at most 32.
+The live registry starts empty after the host exits. See [Subagents](subagents.md) for configuration,
+management tools, result storage, and failure states.
+
+### Sloppiness diagnostics
+
+The read-only `measure_sloppiness` tool reports source lines, verbosity, and complexity-related
+erosion from workspace source. It runs in both execution modes without invoking a compiler, shell,
+network service, or external analyzer. Sandbox tasks also receive a frozen-baseline comparison;
+host tasks receive only the current report.
+
+Source-line and clone metrics cover detected textual languages. Redundant-AST and complexity analysis
+currently have a Rust adapter; other languages report that limitation. These signals are not a
+quality score and cannot replace behavior checks or complete a task. See
+[Sloppiness diagnostics](sloppiness.md) for metrics, exclusions, and analysis bounds.
+
+### Performance notes
+
+The TUI caches wrapping, syntax styles, and layout work. Its scheduler combines streaming updates
+while allowing keyboard input to request an immediate frame. Long output and terminal I/O still add
+work; frame-rate limits do not guarantee throughput.
+
+Forks retain the root session's provider cache-routing key so an exact shared prefix can be reused.
+Diverged content remains separate, and a cache miss processes the complete projected request. See
+[Performance notes](performance.md) for local benchmarks and optional CodSpeed setup. Those benchmarks
+measure rendering, not model latency or task success.
+
+### Evaluations
+
+The Harbor adapter runs the pinned Terminal-Bench 2.1 dataset in local Docker environments with each
+task's verifier. Setup requires `uv`, Docker with Buildx on a local Unix socket, and a valid
+Codex-compatible auth file. Apple Silicon also needs Docker Desktop Rosetta support for x86-64
+verifiers. Live trials consume model usage; the setup claims no benchmark score. The optional Docker
+execution path has not been validated for Orvek 0.1.0.
+
+`just check-harbor` checks the adapter, Rust code, and configuration without model requests. Trial
+results distinguish verifier failures from errors that prevented a valid result. Report both completed
+and errored trial counts with mean reward; unavailable subscription costs are not zero. See
+[Harbor evaluations](../evals/README.md) for setup, credential isolation, trial commands, and comparison
+requirements.
+
 ## Paths and precedence
 
 - CLI flags override environment variables and file settings.
@@ -109,11 +227,9 @@ Leave them unset for the configured authentication route.
 
 ## Memory and context projection
 
-Both settings have separate purposes:
-
-- [Memory](memory.md) stores conclusions across sessions. It is disabled by default.
-- [Context projection](compaction.md) is automatic and host-owned. Configure its model window with
-  `agent.context_window_tokens`; legacy provider compaction settings remain accepted.
+See [Local and remote memory](#local-and-remote-memory) for opt-in storage setup and
+[Context projection and legacy compaction data](#context-projection-and-legacy-compaction-data)
+for automatic request views and model-window settings.
 
 Changes to agent tools and instructions apply to new or restored sessions. Reloading configuration
 does not replace a running agent's tool set.

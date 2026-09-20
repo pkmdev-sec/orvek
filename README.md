@@ -8,22 +8,11 @@
 Orvek is a native coding agent for the terminal. It works with local files and shell commands,
 keeps resumable sessions, and uses your configured model provider for inference.
 
-## Features
+## Capabilities
 
-- Read, edit, and inspect code with local tools.
-- Resume conversations or fork a session into a separate thread.
-- Share local SQLite memory across sessions using the same configuration.
-- Keep accepted work and resumable context in a detached durable host.
-- Delegate tasks to child agents and collect structured results.
-- Review diffs in a browser and send feedback to the agent.
-- Add local skills and MCP tools.
+<a href="docs/configuration.md#capabilities"><img src="assets/orvex-differentiators.gif" alt="Orvex capabilities: configuration, authentication, skills and MCP; sessions, review and reflection; local and remote memory; context projection and legacy compaction data; subagents; sloppiness diagnostics; performance notes; evaluations." width="1280"></a>
 
-By default, shell commands run with your permissions. The optional Docker runtime provides
-isolated verification and read-only child agents; see [Subagents](docs/subagents.md).
-
-## Workflow overview
-
-<img src="assets/orvex-differentiators.gif" alt="Orvex workflow: a durable host connects shared memory, read-only child agents, and browser review." width="1280">
+See the [Configuration guide](docs/configuration.md#capabilities) for behavior, setup, and limitations.
 
 ## Differentiators
 
@@ -41,6 +30,8 @@ Sources checked 20 September 2026: [Codex CLI](https://developers.openai.com/cod
 [Claude Code subagents](https://code.claude.com/docs/en/sub-agents).
 
 ## Install
+
+Local shell commands run with your permissions. See the [Configuration guide](docs/configuration.md#agent-settings) for sandbox requirements.
 
 Requires Rust 1.97 or newer and a C toolchain. Orvek currently ships from source:
 
@@ -70,19 +61,6 @@ orvek --model terra                  # Select a model for a new session.
 orvek resume                        # Open the session picker.
 orvek --resume SESSION_ID           # Resume a known session.
 ```
-
-## Local shared memory
-
-Add this to your configuration and start a new session:
-
-```toml
-[memory]
-enabled = true
-```
-
-Leave `memory.remote` unconfigured for local-only memory. Sessions share
-`<config-dir>/memory/v1.sqlite3`; no Cloudflare service is needed. Agents read memory through
-explicit tools. Memory is separate from durable session history.
 
 ## Configure and update
 

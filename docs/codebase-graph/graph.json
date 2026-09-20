@@ -3733,6 +3733,31 @@
     },
     {
       "kind": "links_to",
+      "source": "file:docs/configuration.md",
+      "target": "file:docs/performance.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/configuration.md",
+      "target": "file:docs/sessions.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/configuration.md",
+      "target": "file:docs/sloppiness.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/configuration.md",
+      "target": "file:docs/subagents.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/configuration.md",
+      "target": "file:evals/README.md"
+    },
+    {
+      "kind": "links_to",
       "source": "file:docs/design/context-cost.md",
       "target": "file:docs/compaction.md"
     },
@@ -12379,7 +12404,7 @@
       "id": "file:README.md",
       "kind": "file",
       "label": "README.md",
-      "lines": 126,
+      "lines": 104,
       "path": "README.md"
     },
     {
@@ -14318,7 +14343,7 @@
       "id": "file:docs/configuration.md",
       "kind": "file",
       "label": "configuration.md",
-      "lines": 183,
+      "lines": 299,
       "path": "docs/configuration.md"
     },
     {
@@ -19535,7 +19560,7 @@
     ]
   },
   "statistics": {
-    "edges": 2223,
+    "edges": 2228,
     "files_by_kind": {
       "automation": 4,
       "binary-asset": 5,
