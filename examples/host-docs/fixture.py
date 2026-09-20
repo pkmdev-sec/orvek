@@ -41,7 +41,7 @@ def request(kind, **data):
     command = {"type": kind}
     if data:
         command["data"] = data
-    return {"version": 5, "id": str(uuid.uuid4()), "command": command}
+    return {"version": 6, "id": str(uuid.uuid4()), "command": command}
 
 
 def send_frame(stream, value):
@@ -169,9 +169,12 @@ class HostFixture:
                 if self.host.poll() is not None:
                     self.log.seek(0)
                     raise RuntimeError(self.log.read())
-                return self.socket.exists()
-            wait_until(ready)
-            assert self.query("info")["protocol_version"] == 5
+                try:
+                    return self.query("info")
+                except (ConnectionRefusedError, FileNotFoundError):
+                    return None
+            info = wait_until(ready)
+            assert info["protocol_version"] == 6
             return self
         except BaseException:
             self.stack.close()

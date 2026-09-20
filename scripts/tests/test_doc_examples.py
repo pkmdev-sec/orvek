@@ -85,6 +85,11 @@ class ExampleDriftTests(unittest.TestCase):
                             for error in checker.check(self.root, self.rows + self.rows[:1])))
 
 
+class HostProtocolFixtureTests(unittest.TestCase):
+    def test_requests_use_the_current_host_protocol(self):
+        self.assertEqual(fixture.request("info")["version"], 6)
+
+
 class HostContextFixtureTests(unittest.TestCase):
     def test_repeated_tool_names_have_distinct_call_ids(self):
         scan, = fixture.tool("memory", {"operation": "scan", "query": "fixture"})
