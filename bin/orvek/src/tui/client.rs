@@ -1955,6 +1955,14 @@ fn subagent_update(event: &orvek_harness::controller::SubagentEvent) -> Option<C
             id: ChildId(*agent),
             status: ChildStatus::Returned { output: *output },
         }),
+        SubagentEvent::Unsubmitted {
+            agent, diagnostic, ..
+        } => Some(ChildUpdate::Status {
+            id: ChildId(*agent),
+            status: ChildStatus::Failed {
+                error: format!("unsubmitted: {diagnostic}"),
+            },
+        }),
         SubagentEvent::Failed { agent, error, .. } => Some(ChildUpdate::Status {
             id: ChildId(*agent),
             status: ChildStatus::Failed {

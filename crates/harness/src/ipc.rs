@@ -863,6 +863,7 @@ fn subagent_event_session(event: &crate::controller::SubagentEvent) -> SessionId
     match event {
         crate::controller::SubagentEvent::Spawned { session, .. }
         | crate::controller::SubagentEvent::Returned { session, .. }
+        | crate::controller::SubagentEvent::Unsubmitted { session, .. }
         | crate::controller::SubagentEvent::Failed { session, .. }
         | crate::controller::SubagentEvent::Cancelled { session, .. } => *session,
     }

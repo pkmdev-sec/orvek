@@ -469,6 +469,7 @@ pub enum SessionEvent {
 )]
 pub enum SessionCommand {
     CompletionHook(DeliveryEvent),
+    ChildLifecycle(Box<crate::controller::subagents::lifecycle::Event>),
     TraceRecorded {
         request: Uuid,
         record: Digest,
@@ -827,7 +828,8 @@ impl SessionState {
             SessionCommand::ProviderUsage { .. }
             | SessionCommand::ProviderCost { .. }
             | SessionCommand::ContextPrepared { .. }
-            | SessionCommand::TraceRecorded { .. } => {}
+            | SessionCommand::TraceRecorded { .. }
+            | SessionCommand::ChildLifecycle(_) => {}
             SessionCommand::Feedback { message } => self
                 .history
                 .push(json!({"role":"developer","content":message})),

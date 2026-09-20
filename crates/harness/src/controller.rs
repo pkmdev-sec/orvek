@@ -451,6 +451,7 @@ impl Host {
         let mut store = Store::open(root)?;
         store.recover_interrupted()?;
         store.recover_submissions()?;
+        let subagents = subagents::Subagents::recover(&mut store)?;
         let executor = executor.map(Arc::new);
         let runtime = match executor.as_ref() {
             Some(executor) => RuntimeIdentity::Docker(executor),
@@ -480,7 +481,7 @@ impl Host {
             context_service: None,
             tools: executor.clone().map(WorkspaceTools::new),
             native_tools: executor.is_none().then(HostTools::new),
-            subagents: Arc::new(subagents::Subagents::new()),
+            subagents: Arc::new(subagents),
             executor,
             active: Mutex::new(HashMap::new()),
             runs: Arc::new(Semaphore::new(4)),
