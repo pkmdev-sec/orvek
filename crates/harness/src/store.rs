@@ -20,7 +20,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     path::Path,
-    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
@@ -100,7 +99,18 @@ impl std::fmt::Debug for VerificationLease {
 pub struct Store {
     connection: Connection,
     artifacts: ArtifactStore,
-    _owner: Arc<File>,
+    // Fields drop in declaration order: close SQLite before releasing the writer lease.
+    _owner: OwnerLock,
+}
+
+struct OwnerLock(File);
+
+impl Drop for OwnerLock {
+    fn drop(&mut self) {
+        // A concurrent fork can retain this file description until exec, even with CLOEXEC.
+        // Release our lease explicitly rather than waiting for every inherited fd to close.
+        let _ = FileExt::unlock(&self.0);
+    }
 }
 
 impl Store {
@@ -128,7 +138,7 @@ impl Store {
             .truncate(false)
             .open(root.join("owner.lock"))?;
         owner.try_lock_exclusive()?;
-        let owner = Arc::new(owner);
+        let owner = OwnerLock(owner);
         let database = root.join("v1.sqlite3");
         let mut connection = Connection::open(&database)?;
         connection.busy_timeout(Duration::from_secs(5))?;
