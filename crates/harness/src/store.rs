@@ -3145,6 +3145,68 @@ pub(crate) fn aggregate_hash(
     ))?)
 }
 
+fn legacy_context_command(bytes: &[u8]) -> Result<Option<(Uuid, Digest)>, StoreError> {
+    #[derive(serde::Deserialize)]
+    struct RawEvent<'a> {
+        #[serde(rename = "type")]
+        kind: &'a str,
+        #[serde(borrow)]
+        data: &'a serde_json::value::RawValue,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct RawCommand<'a> {
+        operation: Uuid,
+        #[serde(borrow)]
+        command: &'a serde_json::value::RawValue,
+    }
+
+    let event = serde_json::from_slice::<RawEvent<'_>>(bytes)?;
+    if event.kind != "command" {
+        return Ok(None);
+    }
+    let command = serde_json::from_str::<RawCommand<'_>>(event.data.get())?;
+    let value = serde_json::from_str::<serde_json::Value>(command.command.get())?;
+    if value["type"] != "context_projected" || !value["data"]["view"]["input"].is_array() {
+        return Ok(None);
+    }
+    Ok(Some((
+        command.operation,
+        Digest::of(command.command.get().as_bytes()),
+    )))
+}
+
+fn session_cache_matches(state: &SessionState, cached: &[u8]) -> Result<bool, StoreError> {
+    let canonical = serde_json::to_vec(state)?;
+    if canonical == cached {
+        return Ok(true);
+    }
+
+    let mut legacy = serde_json::from_slice::<serde_json::Value>(cached)?;
+    let manifest = {
+        let Some(wrapper) = legacy
+            .get_mut("context_view")
+            .and_then(serde_json::Value::as_object_mut)
+        else {
+            return Ok(false);
+        };
+        if wrapper.len() != 2
+            || !wrapper
+                .get("input")
+                .is_some_and(serde_json::Value::is_array)
+        {
+            return Ok(false);
+        }
+        let Some(manifest) = wrapper.remove("manifest") else {
+            return Ok(false);
+        };
+        manifest
+    };
+    legacy["context_view"] = manifest;
+
+    Ok(legacy == serde_json::from_slice::<serde_json::Value>(&canonical)?)
+}
+
 fn load_session_state(
     connection: &Connection,
     id: SessionId,
@@ -3238,7 +3300,20 @@ fn load_session_state(
                 SessionEvent::Command {
                     operation, command, ..
                 },
-            ) => state.apply(operation, &command)?,
+            ) => {
+                let legacy = if matches!(command, SessionCommand::ContextProjected { .. }) {
+                    legacy_context_command(&bytes)?
+                } else {
+                    None
+                };
+                state.apply(operation, &command)?;
+                if let Some((journaled_operation, command_digest)) = legacy {
+                    if journaled_operation != operation {
+                        return Err(StoreError::Integrity("session command operation"));
+                    }
+                    state.operations.insert(operation, command_digest);
+                }
+            }
             _ => return Err(StoreError::Integrity("session creation sequence")),
         }
         head = Some(hash);
@@ -3247,7 +3322,7 @@ fn load_session_state(
     let head = head.ok_or(StoreError::Integrity("session head missing"))?;
     if state.revision != last
         || (last == current_revision
-            && (head.to_string() != stored_head || serde_json::to_vec(&state)? != cached))
+            && (head.to_string() != stored_head || !session_cache_matches(&state, &cached)?))
     {
         return Err(StoreError::Integrity(
             "session projection differs from journal",
@@ -3751,5 +3826,90 @@ mod admission_store_tests {
             store.load_session(id),
             Err(StoreError::Integrity("session journal hash"))
         ));
+    }
+
+    #[test]
+    fn legacy_context_view_cache_matches_authoritative_manifest_projection() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let mut store = Store::open(root.path()).unwrap();
+        let id = SessionId::new();
+        let state = store
+            .create_session(id, config(workspace.path()), None)
+            .unwrap();
+        let view = crate::context::project(&state, 4096).unwrap();
+        let manifest = view.manifest.clone();
+        let operation = Uuid::new_v4();
+        let mut state = store
+            .session_command(
+                id,
+                state.revision,
+                operation,
+                SessionCommand::ContextProjected {
+                    source_revision: state.revision,
+                    view: Some(view),
+                    projection: vec![],
+                },
+            )
+            .unwrap();
+        let mut event = store
+            .connection
+            .query_row(
+                "SELECT event FROM events WHERE aggregate=?1 AND kind='session' AND revision=?2",
+                params![id.to_string(), state.revision as i64],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .map(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).unwrap())
+            .unwrap();
+        event["data"]["command"]["data"]["view"]["input"] =
+            serde_json::json!([{"role": "user", "content": "legacy cached projection"}]);
+        let event_bytes = serde_json::to_vec(&event).unwrap();
+        let command_bytes = serde_json::to_vec(&event["data"]["command"]).unwrap();
+        state
+            .operations
+            .insert(operation, Digest::of(&command_bytes));
+        let previous = store
+            .connection
+            .query_row(
+                "SELECT hash FROM events WHERE aggregate=?1 AND kind='session' AND revision=?2",
+                params![id.to_string(), state.revision as i64 - 1],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap()
+            .parse::<Digest>()
+            .unwrap();
+        let head = aggregate_hash(
+            "session",
+            id.0,
+            state.revision,
+            Some(previous),
+            &event_bytes,
+        )
+        .unwrap();
+        let mut legacy = serde_json::to_value(&state).unwrap();
+        legacy["context_view"] = serde_json::json!({
+            "manifest": manifest,
+            "input": [{"role": "user", "content": "legacy cached projection"}]
+        });
+        let transaction = store.connection.transaction().unwrap();
+        transaction
+            .execute(
+                "UPDATE events SET event=?3,hash=?4 WHERE aggregate=?1 AND kind='session' AND revision=?2",
+                params![id.to_string(), state.revision as i64, event_bytes, head.to_string()],
+            )
+            .unwrap();
+        transaction
+            .execute(
+                "UPDATE sessions SET state=?2,head=?3 WHERE id=?1",
+                params![
+                    id.to_string(),
+                    serde_json::to_vec(&legacy).unwrap(),
+                    head.to_string()
+                ],
+            )
+            .unwrap();
+        transaction.commit().unwrap();
+
+        assert_eq!(store.load_session(id).unwrap(), state);
     }
 }

@@ -9,7 +9,7 @@ use crate::{
     inference::ModelSettings,
     state::{Outcome, RequestKind, TaskId},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
 pub use tool_output::{ToolOutputBuffers, ToolOutputError};
@@ -379,6 +379,50 @@ mod admission_tests {
             Err("session admission target differs from its request")
         );
     }
+
+    #[test]
+    fn legacy_context_view_wrapper_deserializes_to_manifest() {
+        let workspace = tempfile::tempdir().unwrap();
+        let config = SessionConfig {
+            workspace: workspace.path().to_owned(),
+            model: ModelSettings::default(),
+            instructions: String::new(),
+            context_window_tokens: default_context_window_tokens(),
+        };
+        let state = SessionState::create(
+            SessionId::new(),
+            SessionCreation {
+                branch: SessionBranch::default(),
+                config,
+                admission: None,
+                parent: None,
+                history: vec![],
+                started_ms: 0,
+                imported: None,
+            },
+        );
+        let manifest = crate::context::Manifest {
+            version: 2,
+            source: state.cursor(),
+            original_history: Digest::of(b"history"),
+            renderer: Digest::of(b"renderer"),
+            byte_limit: 4096,
+            omitted_items: 0,
+            interrupted_calls: vec![],
+            stable_input_items: 0,
+            segments: vec![],
+            input: Digest::of(b"input"),
+        };
+        let mut serialized = serde_json::to_value(&state).unwrap();
+        serialized["context_view"] = json!({
+            "manifest": manifest,
+            "input": [{"role": "user", "content": "legacy cached projection"}]
+        });
+
+        let restored: SessionState = serde_json::from_value(serialized).unwrap();
+
+        assert_eq!(restored.context_view, Some(manifest));
+    }
 }
 
 /// A reference to journaled state, never a second serialized model machine.
@@ -433,7 +477,11 @@ pub struct SessionState {
     /// The manifest of the most recent projection, kept for representation
     /// reuse. The projected items are not retained: they are rebuilt from
     /// history, and one projection can exceed a single journal event.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_context_view",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub context_view: Option<crate::context::Manifest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context_transitions: Vec<crate::context::transitions::ContextTransition>,
@@ -450,6 +498,27 @@ pub struct SessionState {
     pub imported: Option<ImportedSource>,
     pub submissions: BTreeMap<Uuid, crate::submission::Submission>,
     pub queue_order: Vec<Uuid>,
+}
+
+fn deserialize_context_view<'de, D>(
+    deserializer: D,
+) -> Result<Option<crate::context::Manifest>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StoredContextView {
+        Manifest(crate::context::Manifest),
+        Legacy(crate::context::ContextView),
+    }
+
+    Option::<StoredContextView>::deserialize(deserializer).map(|view| {
+        view.map(|view| match view {
+            StoredContextView::Manifest(manifest) => manifest,
+            StoredContextView::Legacy(view) => view.manifest,
+        })
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
