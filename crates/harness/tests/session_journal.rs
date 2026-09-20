@@ -504,7 +504,7 @@ fn large_tool_results_replay_losslessly_with_bounded_records_and_stable_retry_id
         .unwrap();
     state = store.session_command(state.id, state.revision, Uuid::new_v4(),
         SessionCommand::Response { request, items: vec![json!({"type":"function_call","call_id":"large","name":"read_file","arguments":"{}"})] }).unwrap();
-    let output = json!({"value":"\u{1}💎".repeat(80000)}).to_string();
+    let output = json!({"value":"\u{1}💎".repeat(400000)}).to_string();
     let command = SessionCommand::ToolResult {
         request,
         call_id: "large".into(),
@@ -531,6 +531,14 @@ fn large_tool_results_replay_losslessly_with_bounded_records_and_stable_retry_id
     state = store
         .session_command(state.id, revision, operation, command.clone())
         .unwrap();
+    let journal_bytes = std::fs::metadata(state_root.join("v1.sqlite3-wal"))
+        .unwrap()
+        .len();
+    assert!(
+        journal_bytes < (output.len() * 8) as u64,
+        "framing must not rewrite the growing session for every part: {journal_bytes} WAL bytes for {} result bytes",
+        output.len()
+    );
     assert_eq!(state.history.last().unwrap()["output"], output);
     assert_eq!(
         state.tool_calls["large"].output,
@@ -542,7 +550,22 @@ fn large_tool_results_replay_losslessly_with_bounded_records_and_stable_retry_id
             .unwrap(),
         state
     );
-    let records = store.journal_page(0, 256).unwrap();
+    let mut records = Vec::new();
+    let mut after = 0;
+    loop {
+        let page = store.journal_page(after, 256).unwrap();
+        let Some(last) = page.last() else {
+            break;
+        };
+        assert!(last.sequence > after);
+        after = last.sequence;
+        records.extend(page);
+    }
+    eprintln!(
+        "framing metrics: {} result bytes, {journal_bytes} WAL bytes, {} records",
+        output.len(),
+        records.len()
+    );
     assert!(
         records
             .iter()
