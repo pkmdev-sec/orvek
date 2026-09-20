@@ -66,6 +66,9 @@ pub struct SourceRecord {
     pub disabled: bool,
     pub next_due_ms: Option<u64>,
     pub last_key: Option<String>,
+    /// Latest source-admission failure; cleared by a successful validation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

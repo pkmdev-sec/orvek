@@ -97,9 +97,12 @@ The host allows 64 enabled sources and 128 outstanding event records. Its existi
 host/session submission queue capacities still apply. A durable event waits when
 the normal queue is full. A new delivery rejected before persistence can be retried
 with the same key. Deduplication records are retained; no expiry currently exists.
-Changing host configuration can invalidate the bound session authority. No event
-can upgrade it: inspect/cancel old records and configure a new compatible session
-and source instead.
+Changing host configuration can invalidate the bound session authority. `event source`
+exposes a persisted `admission_error` when the background intake check rejects that
+binding, even before a schedule creates its first event. A successful check clears
+this diagnostic; failed checks do not advance the schedule cursor. No event can
+upgrade its authority: inspect/cancel old records and configure a new compatible
+session and source instead.
 
 ## Schedules, catch-up, and cancellation
 

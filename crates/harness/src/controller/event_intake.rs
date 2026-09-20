@@ -207,10 +207,17 @@ impl Host {
             for source in sources {
                 let event = {
                     let mut store = self.store.lock().await;
-                    if self.validate_event_source(&store, &source).is_err() {
+                    let source_id = source.config.id;
+                    let error = self
+                        .validate_event_source(&store, &source)
+                        .err()
+                        .map(|error| error.to_string());
+                    let rejected = error.is_some();
+                    store.record_event_source_admission(source, error)?;
+                    if rejected {
                         continue;
                     }
-                    match store.tick_event_source(source.config.id, crate::store::now_ms()) {
+                    match store.tick_event_source(source_id, crate::store::now_ms()) {
                         Ok(event) => event,
                         Err(StoreError::Invalid("host event intake capacity reached")) => continue,
                         Err(error) => return Err(error.into()),
@@ -469,13 +476,21 @@ mod tests {
         assert!(host.register_event_source(source.config).await.is_err());
     }
     #[tokio::test]
-    async fn changed_host_authority_rejects_delivery_without_new_admission() {
+    async fn changed_host_authority_rejects_delivery_and_reports_schedule_failure() {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         std::fs::create_dir(&workspace).unwrap();
         let root = dir.path().join("host");
         let host = open(&root);
         let source = setup(&host, &workspace).await;
+        let mut schedule = source.config.clone();
+        schedule.id = Uuid::new_v4();
+        schedule.trigger = TriggerKind::Interval {
+            first_due_ms: 1,
+            interval_ms: 1000,
+        };
+        let schedule_id = schedule.id;
+        host.register_event_source(schedule).await.unwrap();
         drop(host);
         let provider = ResponsesClient::new(
             Auth::api_key(SecretString::new("fixture-key".into())).unwrap(),
@@ -501,6 +516,36 @@ mod tests {
                 .submissions
                 .is_empty()
         );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), host.run_event_intake())
+                .await
+                .is_err()
+        );
+        let status = serde_json::to_value(host.event_source(schedule_id).await.unwrap()).unwrap();
+        assert!(
+            status["admission_error"]
+                .as_str()
+                .is_some_and(|error| !error.is_empty()),
+            "a due schedule must expose why its pinned authority prevents admission: {status}"
+        );
+        drop(host);
+        let host = open(&root);
+        assert!(
+            host.event_source(schedule_id)
+                .await
+                .unwrap()
+                .admission_error
+                .is_some()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), host.run_event_intake())
+                .await
+                .is_err()
+        );
+        let resumed = host.event_source(schedule_id).await.unwrap();
+        assert!(resumed.admission_error.is_none());
+        assert!(resumed.next_due_ms.unwrap() > 1);
+        host.queue_stop.cancel();
     }
 
     #[tokio::test]

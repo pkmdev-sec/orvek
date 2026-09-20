@@ -48,6 +48,7 @@ impl Store {
             disabled: false,
             next_due_ms,
             last_key: None,
+            admission_error: None,
         };
         self.connection.execute(
             "INSERT INTO event_sources(id,record,disabled) VALUES(?1,?2,0)",
@@ -86,6 +87,22 @@ impl Store {
             .into_iter()
             .map(|bytes| serde_json::from_slice(&bytes).map_err(Into::into))
             .collect()
+    }
+
+    pub(crate) fn record_event_source_admission(
+        &mut self,
+        mut source: SourceRecord,
+        error: Option<String>,
+    ) -> Result<(), StoreError> {
+        if source.admission_error == error {
+            return Ok(());
+        }
+        source.admission_error = error;
+        self.connection.execute(
+            "UPDATE event_sources SET record=?2 WHERE id=?1",
+            params![source.config.id.to_string(), serde_json::to_vec(&source)?],
+        )?;
+        Ok(())
     }
 
     pub(crate) fn disable_event_source(&mut self, id: Uuid) -> Result<SourceRecord, StoreError> {
