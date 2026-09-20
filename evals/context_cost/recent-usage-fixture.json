@@ -1,0 +1,135 @@
+{
+  "sessions": {
+    "fixture-long-session": {
+      "model": "sol",
+      "context_window_tokens": 1000000,
+      "serialized_history_bytes": 1817848,
+      "history_profile": {
+        "items": 539,
+        "successful_tool_results": 38,
+        "repeated_tool_names": [
+          "read_file",
+          "search",
+          "run_command"
+        ],
+        "content": "sanitized code-heavy output metadata; no source content"
+      }
+    }
+  },
+  "events": [
+    {
+      "sequence": 1,
+      "session": "fixture-long-session",
+      "type": "tool_result",
+      "data": {
+        "request": "request-build",
+        "call_id": "tool-1",
+        "name": "read_file",
+        "output_bytes": 96000
+      }
+    },
+    {
+      "sequence": 2,
+      "session": "fixture-long-session",
+      "type": "provider_usage",
+      "data": {
+        "request": "request-build",
+        "call": "call-1",
+        "usage": {
+          "input_tokens": 900000,
+          "cached_input_tokens": 800000,
+          "output_tokens": 500,
+          "reasoning_tokens": 300,
+          "total_tokens": 900500,
+          "cost_usd": "0.73000000"
+        }
+      }
+    },
+    {
+      "sequence": 3,
+      "session": "fixture-long-session",
+      "type": "provider_cost",
+      "data": {
+        "request": "request-build",
+        "call": "call-1",
+        "cost_usd": "0.73000000"
+      }
+    },
+    {
+      "sequence": 4,
+      "session": "fixture-long-session",
+      "type": "tool_result",
+      "data": {
+        "request": "request-build",
+        "call_id": "tool-2",
+        "name": "search",
+        "output_bytes": 128000
+      }
+    },
+    {
+      "sequence": 5,
+      "session": "fixture-long-session",
+      "type": "provider_usage",
+      "data": {
+        "request": "request-build",
+        "call": "call-2",
+        "usage": {
+          "input_tokens": 1000000,
+          "cached_input_tokens": 900000,
+          "output_tokens": 1000,
+          "reasoning_tokens": 650,
+          "total_tokens": 1001000,
+          "cost_usd": "0.78000000"
+        }
+      }
+    },
+    {
+      "sequence": 6,
+      "session": "fixture-long-session",
+      "type": "provider_cost",
+      "data": {
+        "request": "request-build",
+        "call": "call-2",
+        "cost_usd": "0.78000000"
+      }
+    },
+    {
+      "sequence": 7,
+      "session": "fixture-long-session",
+      "type": "tool_result",
+      "data": {
+        "request": "request-review",
+        "call_id": "tool-3",
+        "name": "run_command",
+        "output_bytes": 192000
+      }
+    },
+    {
+      "sequence": 8,
+      "session": "fixture-long-session",
+      "type": "provider_usage",
+      "data": {
+        "request": "request-review",
+        "call": "call-3",
+        "usage": {
+          "input_tokens": 1316154,
+          "cached_input_tokens": 979905,
+          "output_tokens": 529,
+          "reasoning_tokens": 220,
+          "total_tokens": 1316683,
+          "cost_usd": null
+        }
+      }
+    },
+    {
+      "sequence": 9,
+      "session": "fixture-long-session",
+      "type": "provider_cost",
+      "data": {
+        "request": "request-review",
+        "call": "call-3",
+        "cost_usd": null
+      }
+    }
+  ]
+}

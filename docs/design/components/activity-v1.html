@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Activity indicator · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:740px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.toggle{display:flex;gap:8px;align-items:center;min-height:36px}.toggle input{accent-color:#aebfcb}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--rule:#303a45;--user:#8ad0c5;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 26px 28px;overflow:auto}.canvas.light{--base:#f7f8f9;--text:#283441;--muted:#627180;--rule:#c5cdd3;--user:#007878}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:28px;gap:12px}.native{font:15px/23px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;min-height:270px}.activity{display:flex;align-items:center;gap:2ch;width:max-content;min-height:46px}.pixels{display:grid;grid-template-columns:repeat(5,1ch);grid-template-rows:repeat(4,11.5px);width:5ch;height:46px}.pixel{width:1ch;height:11.5px}.activity.compact{min-height:23px;height:23px}.compact-mark{width:1ch;line-height:23px;display:none}.activity.compact .pixels{display:none}.activity.compact .compact-mark{display:block}.activity-label{color:var(--muted);font:inherit}.context{margin-top:0;opacity:.7;max-width:80ch}.context p{margin:0 0 23px}.user{color:var(--user)}.sample-reply{color:var(--muted)}.note{font-size:11px;color:var(--muted);margin:22px 0 0}.state-note{color:var(--muted);font-size:12px;margin-top:26px;min-height:20px}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}.sr-only{position:absolute;width:1px;height:1px;clip-path:inset(50%);overflow:hidden}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:18px 14px}.explanation{grid-template-columns:1fr;gap:16px}h1{font-size:27px}}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>The activity indicator</h1>
+<p class="intro">One proposal: a small “O” above the conversation, changing shape with the session's actual state.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Session state<select id="state"><option value="idle">Ready</option><option value="thinking" selected>Thinking</option><option value="working">Working</option><option value="compacting">Compacting</option><option value="complete">Complete</option><option value="error">Error</option><option value="cancelled">Cancelled</option></select></label>
+<label>Terminal height<select id="layout"><option value="normal">Normal · two-row mark</option><option value="compact">Short · one-row fallback</option></select></label>
+<button id="replay" type="button">Replay sample states</button>
+<label class="toggle"><input id="light" type="checkbox">Light</label>
+<label class="toggle"><input id="reduce" type="checkbox">Reduce motion</label>
+</div>
+<section class="canvas" id="canvas" aria-label="Activity indicator preview">
+<div class="caption"><span>ACTIVITY / TOP-LEFT PLACEMENT</span><span id="dimensions">5 × 2 terminal cells</span></div>
+<div class="native">
+<div class="activity" id="activity"><div class="pixels" id="pixels" role="img" aria-label="Thinking indicator"></div><span class="compact-mark" id="compact-mark" aria-hidden="true"></span><span class="activity-label" id="label">Thinking</span></div>
+<div class="context" aria-hidden="true"><p class="user">┃ Check how sessions restore their state.</p><p class="sample-reply">I’ll inspect the restore path and check that the saved working directory is kept.</p></div>
+</div>
+<div class="state-note" id="state-note"></div>
+<div class="sr-only" id="announcement" role="status"></div>
+<p class="note">The conversation excerpt shows placement only. The approved chat bar and execution view are unchanged. Colors approximate existing native theme roles; no new palette is proposed.</p>
+</section>
+<div class="explanation">
+<div><h2>Small and always present</h2><p>A compact mark and one state label. The repeated “ORVEK /” caption is removed. A short terminal gets a one-row fallback.</p></div>
+<div><h2>Shape carries meaning</h2><p>Orbit for thinking, chevron for work, inward bars for compaction, check for completion, cross for error, and a dash for cancellation.</p></div>
+<div><h2>Still when the task is still</h2><p>Idle and final states stop moving. Reduced motion shows static shapes. Native rendering uses text cells and the existing scheduler.</p></div>
+</div>
+<div class="foot"><span>Review this indicator only. Approval is recorded in chat.</span><a href="../decisions.md">Review order and approvals</a></div>
+</main>
+<script>
+const activityStudy=(()=>{
+ const patterns={
+  idle:['01110','10001','10001','01110'],
+  thinking:['01110','10000','10001','01110'],
+  working:['01000','00100','00100','01000'],
+  compacting:['11011','10001','10001','11011'],
+  complete:['00001','00010','10100','01000'],
+  error:['10001','01010','01010','10001'],
+  cancelled:['00000','11111','00000','00000']
+ };
+ const states={
+  idle:{label:'Ready',role:'muted',active:false,symbol:'○',note:'Ready for input. The mark stays still.'},
+  thinking:{label:'Thinking',role:'thinking',active:true,symbol:'◌',note:'The model is working on the current turn.'},
+  working:{label:'Working',role:'accent',active:true,symbol:'›',note:'Tools, shell commands, or child agents are active.'},
+  compacting:{label:'Compacting',role:'compacting',active:true,symbol:'↔',note:'Context compaction is in progress.'},
+  complete:{label:'Complete',role:'accent',active:false,symbol:'✓',note:'The session finished. A child finishing alone does not set this state.'},
+  error:{label:'Error',role:'error',active:false,symbol:'×',note:'The current operation failed. The details remain in the conversation.'},
+  cancelled:{label:'Cancelled',role:'muted',active:false,symbol:'−',note:'The current operation was cancelled. The mark stays still.'}
+ };
+ const palettes={dark:{base:'#0b1117',muted:'#8998a5',thinking:'#8ad0c5',accent:'#76a9df',compacting:'#dfb56b',error:'#e99292'},light:{base:'#f7f8f9',muted:'#627180',thinking:'#007878',accent:'#265f99',compacting:'#9a6700',error:'#ac3c3c'}};
+ function frame(state,time=0,reduced=false){
+  const pixels=patterns[state].map(row=>[...row].map(Number));
+  if(reduced||!states[state].active)return pixels;
+  if(state==='thinking'){
+   const ring=[[1,0],[2,0],[3,0],[4,1],[4,2],[3,3],[2,3],[1,3],[0,2],[0,1]],head=(time*3)%ring.length;
+   ring.forEach(([x,y],index)=>{const distance=(index-head+ring.length)%ring.length;pixels[y][x]=distance<2?.15:distance<4?.45:.85;});
+  }
+  if(state==='working'){
+   for(let y=0;y<4;y++)for(let x=0;x<5;x++){const center=(time*1.8+(y===1||y===2?1:0))%6-1;const distance=Math.abs(x-center);pixels[y][x]=Math.max(0,1-distance*.7);}
+  }
+  if(state==='compacting'){
+   const edge=.5+.5*Math.cos(time*Math.PI/1.3),left=2-2*edge,right=2+2*edge;
+   for(let y=0;y<4;y++)for(let x=0;x<5;x++){pixels[y][x]=Math.max(0,1-Math.min(Math.abs(x-left),Math.abs(x-right)));if(y===0||y===3)pixels[y][x]*=.65;}
+  }
+  return pixels;
+ }
+ function rgb(hex){return [1,3,5].map(start=>parseInt(hex.slice(start,start+2),16));}
+ function blend(a,b,amount){const first=rgb(a),second=rgb(b);return '#'+first.map((v,i)=>Math.round(v+(second[i]-v)*amount).toString(16).padStart(2,'0')).join('');}
+ function render({state='thinking',previous=state,time=0,transition=1,reduced=false,light=false}={}){
+  const current=frame(state,time,reduced),before=frame(previous,time,reduced),palette=palettes[light?'light':'dark'];
+  const mix=reduced?1:Math.max(0,Math.min(1,transition)),tone=palette[states[state].role];
+  const levels=current.map((row,y)=>row.map((level,x)=>before[y][x]+(level-before[y][x])*mix));
+  const colors=levels.map(row=>row.map(level=>blend(palette.base,tone,level)));
+  const cells=Array.from({length:2},(_,y)=>Array.from({length:5},(_,x)=>({ch:'▀',fg:colors[y*2][x],bg:colors[y*2+1][x]})));
+  return {levels,colors,cells,state:states[state],tone,animated:!reduced&&(states[state].active||mix<1)};
+ }
+ return {states,patterns,palettes,frame,render};
+})();
+if(typeof document!=='undefined'){
+ const id=x=>document.getElementById(x),pixels=id('pixels'),cells=[];
+ for(let i=0;i<20;i++){const pixel=document.createElement('span');pixel.className='pixel';pixels.append(pixel);cells.push(pixel);}
+ let state='thinking',previous=state,entered=performance.now(),ticket=0,replayTimer=0;
+ id('reduce').checked=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ function draw(){
+  const now=performance.now(),elapsed=(now-entered)/1000;
+  const result=activityStudy.render({state,previous,time:now/1000,transition:Math.min(1,elapsed/.18),reduced:id('reduce').checked,light:id('light').checked});
+  result.colors.flat().forEach((color,index)=>{cells[index].style.backgroundColor=color;});
+  id('compact-mark').textContent=result.state.symbol;id('compact-mark').style.color=result.tone;
+  return result.animated&&!id('layout').value.includes('compact');
+ }
+ function tick(){if(document.hidden)return;if(draw())ticket=setTimeout(tick,1000/12);}
+ function arm(){clearTimeout(ticket);const moving=draw();if(moving&&!document.hidden)ticket=setTimeout(tick,1000/12);}
+ function change(value){previous=state;state=value;id('state').value=value;entered=performance.now();const definition=activityStudy.states[state];id('label').textContent=definition.label;id('state-note').textContent=definition.note;pixels.setAttribute('aria-label',definition.label+' indicator');id('announcement').textContent=definition.label;arm();}
+ id('state').addEventListener('change',()=>{clearInterval(replayTimer);replayTimer=0;id('replay').textContent='Replay sample states';change(id('state').value);});
+ id('layout').addEventListener('change',()=>{const compact=id('layout').value==='compact';id('activity').classList.toggle('compact',compact);id('dimensions').textContent=compact?'One-row fallback':'5 × 2 terminal cells';arm();});
+ id('light').addEventListener('change',()=>{id('canvas').classList.toggle('light',id('light').checked);arm();});id('reduce').addEventListener('change',arm);
+ id('replay').addEventListener('click',()=>{
+  if(replayTimer){clearInterval(replayTimer);replayTimer=0;id('replay').textContent='Replay sample states';return;}
+  const sequence=['idle','thinking','working','compacting','working','complete'];let index=0;change(sequence[index]);id('replay').textContent='Stop replay';
+  replayTimer=setInterval(()=>{index++;if(index===sequence.length){clearInterval(replayTimer);replayTimer=0;id('replay').textContent='Replay sample states';return;}change(sequence[index]);},2100);
+ });
+ document.addEventListener('visibilitychange',arm);change(state);
+}
+</script>
+</body>
+</html>

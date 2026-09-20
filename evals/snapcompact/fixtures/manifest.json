@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "fixture": "history.txt",
+  "sha256": "f05dbeedccb77e4eccba7418a63edbf9b426fbb56f0570622d327521f939f59b",
+  "models": [
+    "sol",
+    "terra",
+    "luna"
+  ],
+  "conditions": [
+    "native",
+    "bitmap"
+  ],
+  "cache_conditions": [
+    "cold",
+    "warm"
+  ],
+  "generations": 6,
+  "required_checks": [
+    "exact_identifiers",
+    "hashes",
+    "punctuation",
+    "indentation",
+    "page_boundaries",
+    "call_result_pairing",
+    "hostile_history_is_data",
+    "independent_verifier",
+    "resume",
+    "fork"
+  ]
+}

@@ -1,0 +1,74 @@
+services:
+  orvek-dev:
+    image: "${ORVEK_DEV_IMAGE:-orvek-dev:local}"
+    working_dir: /workspace
+    user: "${ORVEK_DEV_UID:?set ORVEK_DEV_UID}:${ORVEK_DEV_GID:?set ORVEK_DEV_GID}"
+    stdin_open: true
+    tty: true
+    network_mode: service:iron-proxy
+    depends_on:
+      iron-proxy:
+        condition: service_started
+    environment:
+      HOME: /home/orvek
+      XDG_CACHE_HOME: /home/orvek/.cache
+      ORVEK_HOME: /run/orvek-state
+      CODEX_HOME: /run/orvek-public/codex
+      ORVEK_AUTH: "${ORVEK_DEV_AUTH:?set ORVEK_DEV_AUTH}"
+      ORVEK_AUTH_FILE: /run/orvek-public/auth.json
+      ORVEK_CONFIG: "/run/orvek-state/${ORVEK_DEV_CONFIG_NAME:?set ORVEK_DEV_CONFIG_NAME}"
+      ORVEK_WORKSPACE: /workspace
+      OPENAI_API_KEY: orvek-dev-placeholder-api-key
+      HTTP_PROXY: http://127.0.0.1:8080
+      HTTPS_PROXY: http://127.0.0.1:8080
+      http_proxy: http://127.0.0.1:8080
+      https_proxy: http://127.0.0.1:8080
+      NO_PROXY: localhost,127.0.0.1,::1
+      no_proxy: localhost,127.0.0.1,::1
+      ORVEK_PROXY_CA_FILE: /run/orvek-public/ca.crt
+    volumes:
+      - type: bind
+        source: "${ORVEK_DEV_WORKSPACE:?set ORVEK_DEV_WORKSPACE}"
+        target: /workspace
+      - type: bind
+        source: "${ORVEK_DEV_STATE_DIR:?set ORVEK_DEV_STATE_DIR}"
+        target: /run/orvek-state
+      - type: bind
+        source: "${ORVEK_DEV_PUBLIC_DIR:?set ORVEK_DEV_PUBLIC_DIR}"
+        target: /run/orvek-public
+        read_only: true
+      - type: volume
+        source: dev-state
+        target: /home/orvek
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 4096
+    stop_grace_period: 10s
+
+  iron-proxy:
+    image: "${ORVEK_DEV_IRON_IMAGE:?set ORVEK_DEV_IRON_IMAGE}"
+    command:
+      - --config
+      - /run/orvek-auth/proxy.yaml
+    user: "${ORVEK_DEV_UID:?set ORVEK_DEV_UID}:${ORVEK_DEV_GID:?set ORVEK_DEV_GID}"
+    volumes:
+      - type: bind
+        source: "${ORVEK_DEV_PRIVATE_DIR:?set ORVEK_DEV_PRIVATE_DIR}"
+        target: /run/orvek-auth
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    stop_grace_period: 5s
+
+volumes:
+  dev-state:
+    name: orvek-dev-state
+    external: true

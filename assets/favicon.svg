@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Orvek faceted diamond">
+  <style>
+    .facet { fill: #161b22; }
+    .edge { fill: none; stroke: #161b22; }
+    @media (prefers-color-scheme: dark) {
+      .facet { fill: #e6edf3; }
+      .edge { stroke: #e6edf3; }
+    }
+  </style>
+  <path class="facet" opacity=".16" d="M32 4 4 32h14L32 4Zm0 56 14-28H18Z"/>
+  <path class="edge" stroke-width="3" stroke-linejoin="miter" d="m32 4 28 28-28 28L4 32 32 4Zm0 0L18 32l14 28 14-28L32 4ZM4 32h56"/>
+</svg>

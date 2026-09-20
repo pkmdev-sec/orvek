@@ -1,0 +1,75 @@
+use super::{Presentation, format_bytes};
+use crate::tui::{theme::Theme, transcript::ToolEntry};
+use ratatui::style::Style;
+use serde_json::Value;
+
+pub(super) fn present(tool: &ToolEntry, width: u16, theme: &Theme, expanded: bool) -> Presentation {
+    if tool.name == "wait" {
+        return wait(tool, width, theme, expanded);
+    }
+    let source = tool.arguments.as_str().unwrap_or_else(|| {
+        tool.arguments
+            .get("input")
+            .and_then(Value::as_str)
+            .unwrap_or("<source unavailable>")
+    });
+    let emitted = tool
+        .result
+        .as_ref()
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let child_count = tool.child_count;
+    let subject = if child_count == 1 {
+        "1 tool".to_owned()
+    } else if child_count > 1 {
+        format!("{child_count} tools")
+    } else if emitted == 1 {
+        "1 emitted item".to_owned()
+    } else {
+        format!("{emitted} emitted items")
+    };
+    let title = if child_count == 0 { "Code" } else { "Batch" };
+    let presentation = Presentation::new(title, subject);
+    if !expanded {
+        return presentation;
+    }
+    let details =
+        super::super::markdown::render(&format!("```javascript\n{source}\n```"), width, theme)
+            .lines;
+    let mut presentation = presentation.unselectable_details(details);
+    if let Some(result) = &tool.result {
+        if let Some(items) = result.as_array() {
+            for item in items {
+                if let Some(text) = item.get("text").and_then(Value::as_str) {
+                    presentation = presentation.selectable_plain(
+                        text,
+                        width,
+                        Style::default().fg(theme.text()),
+                    );
+                }
+            }
+        } else {
+            let (source, details) = super::selectable_result(result, width, theme);
+            presentation = presentation.selectable_details(source, details);
+        }
+    }
+    let size = tool
+        .result
+        .as_ref()
+        .map_or(0, |result| result.to_string().len());
+    presentation.footer(format!("{emitted} outputs · {}", format_bytes(size)))
+}
+
+fn wait(tool: &ToolEntry, width: u16, theme: &Theme, expanded: bool) -> Presentation {
+    let presentation = Presentation::new("Wait", "background work");
+    if !expanded {
+        return presentation;
+    }
+    let details = super::pretty_value(&tool.arguments, width, theme);
+    let mut presentation = presentation.unselectable_details(details);
+    if let Some(result) = &tool.result {
+        let (source, details) = super::selectable_result(result, width, theme);
+        presentation = presentation.selectable_details(source, details);
+    }
+    presentation.footer("wait diagnostics")
+}

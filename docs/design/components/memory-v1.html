@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Memory browser · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:740px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.toggle{display:flex;gap:8px;align-items:center;min-height:36px}.toggle input{accent-color:#aebfcb}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--border:#59646e;--accent:#76a9df;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 22px 22px;overflow:auto}.canvas.light{--base:#f7f8f9;--text:#283441;--muted:#627180;--border:#909ba5;--accent:#265f99}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:26px;gap:12px}.stage{min-height:350px;display:grid;place-items:start center}.frame{position:relative;font:15px/23px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.grid{font:inherit;white-space:pre;user-select:none;margin:0}.cell{display:inline-block;width:1ch;height:23px;vertical-align:top}.border{color:var(--border)}.muted{color:var(--muted)}.accent{color:var(--accent);font-weight:600}.title{font-weight:600}.search{position:absolute;top:23px;left:11ch;font:inherit;line-height:23px;padding:0;border:0;outline:0;background:var(--base);color:var(--text);height:23px;min-width:0;border-radius:0;caret-color:var(--text)}.hit{position:absolute;left:1ch;min-height:0;height:23px;background:transparent;border:0;border-radius:0;padding:0;margin:0;outline:none}.hit:hover{background:#7a89990b}.note{font-size:11px;color:var(--muted);margin:24px 0 0}.notice{min-height:21px;color:var(--muted);font-size:12px;margin-top:18px}.closed{font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);padding-top:120px}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:16px 8px}.explanation{grid-template-columns:1fr;gap:16px}.frame{font-size:13px}h1{font-size:27px}}
+
+.frame{font-size:13px;line-height:20px;outline:none}.cell{height:20px}.search{top:20px;left:10ch;line-height:20px;height:20px}.stage{min-height:560px}.hit{height:40px}.canvas{--warning:#e4ba6d;--error:#e99292}.canvas.light{--warning:#886125;--error:#a53737}.warning{color:var(--warning)}.error{color:var(--error)}.strong{font-weight:600}.event-controls{margin:12px 0 20px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>The memory browser</h1>
+<p class="intro">Read stored memory, see where it belongs, and remove a record only after confirming its identity.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Sample source<select id="source"><option value="local">Local shared memory</option><option value="writer">Remote · writer</option><option value="reader">Remote · reader</option></select></label>
+<label>Popup width<select id="width"><option value="88">Normal · 88 columns</option><option value="60">60 columns</option><option value="40">40 columns</option><option value="32">32 columns</option></select></label>
+<label>Popup height<select id="height"><option value="28">28 rows</option><option value="22">22 rows</option><option value="18">18 rows</option></select></label>
+<button id="sort" type="button">Cycle sort</button><button id="scope" type="button">Switch namespaces</button><button id="reopen" type="button">Reset sample</button><label class="toggle"><input id="light" type="checkbox">Light</label>
+</div>
+<div class="controls event-controls">
+<label>Load result<select id="loadResult"><option value="ready">Records loaded</option><option value="empty">Empty store</option><option value="error">Load failed</option></select></label><button id="loaded" type="button">Apply load result</button>
+<label>Delete result<select id="deleteResult"><option value="deleted">Deleted</option><option value="conflict">Record changed</option><option value="error">Delete failed</option></select></label><button id="deleted" type="button">Apply delete result</button>
+</div>
+<section class="canvas" id="canvas" aria-label="Memory browser preview">
+<div class="caption"><span>MEMORY / INTERACTIVE PREVIEW</span><span id="dimensions"></span></div>
+<div class="stage"><div class="frame" id="frame" tabindex="0" role="group" aria-label="Sample memory browser" aria-describedby="description"><pre class="grid" id="grid" aria-hidden="true"></pre><div id="hits"></div><input class="search" id="search" type="text" aria-label="Filter memory by content, ID, or namespace" autocomplete="off" spellcheck="false"><p class="sr-only" id="description"></p></div><div class="closed" id="closed" hidden>Sample browser closed.</div></div>
+<div class="notice" id="notice" role="status"></div>
+<p class="note">Type to filter; Enter/Tab inspects. Ctrl+S sorts; Ctrl+N changes remote scope; Ctrl+R refreshes. Ctrl+D or Delete requests removal; a second physical D/Delete confirms. In details, R refreshes and D requests removal. Esc goes back or closes. Use the result controls to finish a simulated operation. No real memory is read, changed, or deleted.</p>
+</section>
+<div class="explanation">
+<div><h2>Keep filtering readable</h2><p>The filter has its own row. Source, sort, and namespace scope stay separate. Each memory keeps a compact preview and a quieter identity line.</p></div>
+<div><h2>Content before metadata</h2><p>Inspect opens the complete text first. Version, timestamps, scan/use counts, and probation follow below. Browsing does not count as an agent using a memory.</p></div>
+<div><h2>Remove the exact record</h2><p>Confirmation shows the namespace, ID, and version. Remote readers cannot delete; writers can delete only their own namespace. A changed record reloads for another review.</p></div>
+</div>
+<div class="foot"><span>Local memory is shared across sessions using the same configuration. Remote examples show existing optional behavior.</span><a href="../decisions.md">Review order and approvals</a></div>
+</main>
+<script>
+const memoryStudy=(()=>{
+ const now=1789272000000,sorts=['Most useful','Newest','Oldest','Least useful'];
+ const same=(a,b)=>!!a&&!!b&&a.namespace===b.namespace&&a.id===b.id&&a.version===b.version;
+ const identity=key=>(key.namespace??'local')+'#'+key.id;
+ const clean=text=>text.replace(/\t/g,'    ').replace(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/g,'�');
+ const flat=text=>text.replace(/[\x00-\x1f\x7f-\x9f\s]/g,' ').trim().replace(/\s+/g,' ');
+ const cut=(value,width)=>width<=0?'':value.length<=width?value:value.slice(0,width-1)+'…';
+ function wrap(value,width){return value.split('\n').flatMap(line=>{let chars=[...line];const rows=[];while(chars.length>width){const endAt=chars.slice(0,width).lastIndexOf(' ')+1,end=endAt>0&&chars.slice(0,endAt).join('').trim()?endAt:width;rows.push(chars.slice(0,end).join(''));chars=chars.slice(end);}rows.push(chars.join(''));return rows;});}
+ function sample(mode){
+  const raw=[
+   [7,3,9,'Keep session restoration tied to the saved workspace.\n\nCheck the checkpoint before starting a new model request.'],
+   [12,2,6,'Keep credentials out of logs and status text.'],
+   [19,1,0,'The local notes folder is docs/notes.'],
+   [24,4,3,'Use the project checks after a code change.\n\n    cargo check --all-features\n    just check-fmt\n    just clippy\n    just test\n\nReport only checks that actually ran.'],
+   [31,1,1,'Preserve Unicode identifiers and code indentation in copied text.'],
+   [38,2,0,'Use concise technical English in release notes.'],
+   [44,1,0,'Keep draft attachments when cancelling a picker.']
+  ];
+  const records=raw.map(([id,version,use_count,content],i)=>({key:{namespace:mode==='local'?null:'studio',id,version},content,use_count,scan_count:use_count*2+3,created_at_ms:now-(i+10)*86400000,updated_at_ms:now-(i+1)*3600000,last_used_at_ms:use_count?now-(i+2)*3600000:null,last_scanned_at_ms:now-(i+1)*7200000,probation_until_ms:use_count?null:now+2*86400000}));
+  if(mode!=='local')records.splice(1,0,{...records[0],key:{namespace:'reviewers',id:7,version:5},content:'Keep review findings tied to source evidence.',use_count:8});
+  return records;
+ }
+ const access=mode=>({source:mode==='local'?'local':'remote',namespace:mode==='local'?null:'studio',role:mode==='local'?null:mode});
+ function compare(a,b,sort){const namespace=(a.key.namespace??'')<(b.key.namespace??'')?-1:(a.key.namespace??'')>(b.key.namespace??'')?1:0;const newest=b.updated_at_ms-a.updated_at_ms||namespace||b.key.id-a.key.id,oldest=a.updated_at_ms-b.updated_at_ms||namespace||a.key.id-b.key.id;return sort===0?b.use_count-a.use_count||newest:sort===1?newest:sort===2?oldest:a.use_count-b.use_count||oldest;}
+ function matches(s){const query=s.query.toLowerCase();return s.records.filter(r=>(s.scope==='all'||s.access.source==='local'||r.key.namespace===s.access.namespace)&&(!query||String(r.key.id).includes(query)||(r.key.namespace??'').toLowerCase().includes(query)||r.content.toLowerCase().includes(query))).sort((a,b)=>compare(a,b,s.sort));}
+ function rebuild(s,fallback=0){const rows=matches(s);if(!rows.some(r=>same(r.key,s.selected)))s.selected=rows[Math.min(fallback,Math.max(0,rows.length-1))]?.key??null;return rows;}
+ function create(mode='local'){const s={mode,access:access(mode),records:sample(mode),query:'',sort:0,scope:'all',selected:null,offset:0,view:{kind:'list'}};rebuild(s);return s;}
+ const chosen=s=>s.records.find(r=>same(r.key,s.selected));
+ const canDelete=(s,key)=>!!key&&(s.access.source==='local'?key.namespace===null:s.access.role==='writer'&&key.namespace===s.access.namespace);
+ function change(s,field,value){const fallback=Math.max(0,matches(s).findIndex(r=>same(r.key,s.selected)));s[field]=value;rebuild(s,fallback);}
+ function move(s,delta){const rows=matches(s),index=Math.max(0,rows.findIndex(r=>same(r.key,s.selected)));s.selected=rows[Math.max(0,Math.min(index+delta,rows.length-1))]?.key??null;}
+ function beginDelete(s){const r=chosen(s);if(!r||!canDelete(s,r.key))return null;const returnTo={...s.view};s.view={kind:'confirm',key:{...r.key},returnTo,scroll:0};return null;}
+ function sendDelete(s,key,returnTo){if(!s.records.some(r=>same(r.key,key))){s.view={kind:'list'};rebuild(s);return null;}s.view={kind:'deleting',key:{...key},returnTo};return {kind:'delete',key:{...key}};}
+ function refresh(s){s.view={kind:'loading'};return {kind:'refresh'};}
+ function load(s,result='ready'){if(s.view.kind!=='loading')return false;if(result==='error'){s.view={kind:'error',action:'load',scroll:0,message:'The sample memory store is unavailable.'};return true;}const fallback=Math.max(0,matches(s).findIndex(r=>same(r.key,s.selected)));if(result==='empty')s.records=[];else if(s.incoming)s.records=s.incoming;s.incoming=null;rebuild(s,fallback);s.view={kind:'list'};return true;}
+ function finishDelete(s,result){if(s.view.kind!=='deleting')return null;const {key,returnTo}=s.view;if(result==='conflict'){s.incoming=s.records.map(r=>same(r.key,key)?{...r,key:{...r.key,version:r.key.version+1},content:r.content+'\n\nSample: revised elsewhere.'}:r);return refresh(s);}if(result==='error'){s.view={kind:'error',action:'delete',key,returnTo,scroll:0,message:'The sample request failed. The outcome is not confirmed.'};return null;}const fallback=Math.max(0,matches(s).findIndex(r=>same(r.key,s.selected)));s.records=s.records.filter(r=>!same(r.key,key));rebuild(s,fallback);s.view={kind:'list'};return null;}
+ function key(s,key,{ctrl=false,alt=false,meta=false,kind='press'}={}){
+  if(!['press','repeat'].includes(kind))return null;const v=s.view,plain=!ctrl&&!alt&&!meta;
+  if(v.kind==='deleting'||v.kind==='closed')return null;
+  if(v.kind==='loading'){if(key==='Escape'){s.view={kind:'closed'};return {kind:'dismiss'};}return key==='r'&&plain?refresh(s):null;}
+  if(v.kind==='error'){if(key==='r'&&plain)return refresh(s);if(key==='Escape'){s.view=v.action==='load'?{kind:'closed'}:v.returnTo;return v.action==='load'?{kind:'dismiss'}:null;}if(v.action==='delete'&&['d','Delete'].includes(key)&&kind==='press')return sendDelete(s,v.key,v.returnTo);if(['ArrowUp','ArrowDown','PageUp','PageDown'].includes(key))v.scroll+=key==='ArrowUp'?-1:key==='ArrowDown'?1:key==='PageUp'?-10:10;return null;}
+  if(v.kind==='confirm'){if(key==='Escape'){s.view=v.returnTo;return null;}if(['d','Delete'].includes(key)&&kind==='press')return sendDelete(s,v.key,v.returnTo);if(['ArrowUp','ArrowDown','PageUp','PageDown'].includes(key))v.scroll+=key==='ArrowUp'?-1:key==='ArrowDown'?1:key==='PageUp'?-10:10;return null;}
+  if(v.kind==='detail'){if(key==='Escape'){s.view={kind:'list'};return null;}if(key==='r'&&plain)return refresh(s);if(['d','Delete'].includes(key)&&kind==='press')return beginDelete(s);if(['ArrowUp','ArrowDown','PageUp','PageDown'].includes(key))v.scroll+=key==='ArrowUp'?-1:key==='ArrowDown'?1:key==='PageUp'?-10:10;return null;}
+  if(key==='Escape'){s.view={kind:'closed'};return {kind:'dismiss'};}
+  if(key==='ArrowUp'||key==='ArrowDown'){move(s,key==='ArrowUp'?-1:1);return null;}
+  if(key==='Enter'||key==='Tab'){if(s.selected)s.view={kind:'detail',key:{...s.selected},scroll:0};return null;}
+  if(ctrl&&!alt&&!meta){if(key==='s')change(s,'sort',(s.sort+1)%4);if(key==='n'&&s.access.source==='remote')change(s,'scope',s.scope==='all'?'own':'all');if(key==='r')return refresh(s);if(key==='d')return beginDelete(s);return null;}
+  if(key==='Delete'&&kind==='press')return beginDelete(s);
+  if(key==='Backspace'){const parts=Array.from(new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(s.query),p=>p.segment);parts.pop();change(s,'query',parts.join(''));return null;}
+  if(plain&&[...key].length===1&&!/[\x00-\x1f\x7f-\x9f]/.test(key))change(s,'query',s.query+key);return null;
+ }
+ function age(ms){const minutes=Math.floor(Math.max(0,now-ms)/60000);return minutes<1?'now':minutes<60?minutes+'m':minutes<1440?Math.floor(minutes/60)+'h':Math.floor(minutes/1440)+'d';}
+ const stamp=ms=>ms===null?'never':new Date(ms).toISOString().replace('T',' ').replace('.000Z','Z');
+ function probation(r){if(r.probation_until_ms===null)return 'no probation';if(r.probation_until_ms<=now)return 'probation elapsed';const minutes=Math.floor((r.probation_until_ms-now)/60000);return 'probation '+(minutes===0?'<1m':minutes<60?minutes+'m':minutes<1440?Math.floor(minutes/60)+'h':Math.floor(minutes/1440)+'d');}
+ function content(r){return [
+  {text:clean(r.content),role:'text'},{text:'',role:'text'},{text:'Memory metadata',role:'accent'},
+  ...[['ID',r.key.id],['Namespace',r.key.namespace??'local'],['Version',r.key.version],['Created',stamp(r.created_at_ms)],['Updated',stamp(r.updated_at_ms)],['Last scanned',stamp(r.last_scanned_at_ms)],['Scan count',r.scan_count],['Last used',stamp(r.last_used_at_ms)],['Use count',r.use_count],['Probation until',r.probation_until_ms===null?'none':stamp(r.probation_until_ms)]].map(([label,value])=>({text:label+': '+value,role:'muted'}))
+ ];}
+ function groups(s,max=false){const v=s.view;if(v.kind==='list')return ['↑↓ move','enter inspect','ctrl+s sort',...(s.access.source==='remote'?['ctrl+n namespaces']:[]),...(max||canDelete(s,s.selected)?['ctrl+d remove']:[]),'ctrl+r refresh','esc close'];if(v.kind==='detail')return ['↑↓/pgup/pgdn scroll',...(canDelete(s,v.key)?['d delete']:[]),'r refresh','esc back'];if(v.kind==='confirm')return ['↑↓ scroll','d/delete confirm','esc cancel'];if(v.kind==='deleting')return ['Deleting…'];if(v.kind==='error')return ['↑↓ scroll',...(v.action==='delete'?['d/delete retry','r refresh','esc back']:['r retry','esc close'])];return ['r retry','esc close'];}
+ function help(groups,width){const lines=[];let line='';for(const group of groups){if(line&&line.length+3+group.length>width){lines.push(line);line='';}line+=(line?' · ':'')+group;}if(line)lines.push(line);return lines;}
+ function scene(s,{columns=88,height=28}={}){
+  if(columns<32||height<18)throw new Error('This study covers at least 32 columns and 18 rows.');
+  const v=s.view,r=chosen(s),footer=help(groups(s),columns-4),reserved=help(groups(s,v.kind==='list'),columns-4).length,footerY=height-1-reserved,grid=Array.from({length:height},()=>Array.from({length:columns},()=>({ch:' ',role:'text'}))),hits=[];
+  function put(text,x,y,role='text'){[...text].forEach((ch,i)=>{if(x+i<1||x+i>=columns-1||y<0||y>=height-1)throw new Error('Content outside frame.');grid[y][x+i]={ch,role};});}
+  for(let y=0;y<height;y++){grid[y][0]={ch:y===0?'╭':y===height-1?'╰':'│',role:'border'};grid[y][columns-1]={ch:y===0?'╮':y===height-1?'╯':'│',role:'border'};}for(let x=1;x<columns-1;x++){grid[0][x]={ch:'─',role:'border'};grid[height-1][x]={ch:'─',role:'border'};}
+  const title=v.kind==='loading'?' Memory ':s.access.source==='local'?' Local memory ':' Remote memory ';put(title,Math.floor((columns-title.length)/2),0,'accent');footer.forEach((line,i)=>put(line,Math.floor((columns-line.length)/2),footerY+i,'muted'));
+  const result={grid,hits,footerY,columns,height,listTop:0,listHeight:0,scroll:0,maxScroll:0,bodyY:0,capacity:0,lines:[]};
+  if(v.kind==='list'){
+   put('Filter:',3,1,'muted');put([...s.query].slice(-(columns-12)).join(''),10,1);
+   const context=s.access.source==='local'?'Shared across sessions':'Access: '+s.access.role+' · '+s.access.namespace;
+   const labels=[context,'Sort: '+sorts[s.sort],...(s.access.source==='remote'?['Namespaces: '+(s.scope==='all'?'All':s.access.namespace)]:[])];let y=2;labels.forEach(label=>wrap(label,columns-6).forEach(line=>put(line,3,y++,'muted')));y++;
+   const listTop=y,detailY=footerY-2,listHeight=Math.max(0,Math.floor((detailY-listTop)/2)),rows=matches(s),selected=Math.max(0,rows.findIndex(item=>same(item.key,s.selected)));let offset=Math.max(0,Math.min(s.offset,Math.max(0,rows.length-listHeight)));if(selected<offset)offset=selected;if(listHeight&&selected>=offset+listHeight)offset=selected-listHeight+1;
+   rows.slice(offset,offset+listHeight).forEach((record,i)=>{const row=listTop+i*2,active=same(record.key,s.selected);if(active)put('›',1,row,'accent');put(cut(flat(record.content).slice(0,160),columns-6),3,row,active?'accent':'strong');const metadata=identity(record.key)+' · v'+record.key.version+(columns>=60?' · used '+record.use_count+'× · updated '+age(record.updated_at_ms)+' · '+probation(record):'');put(cut(metadata,columns-6),3,row+1,'muted');hits.push({key:record.key,index:offset+i,y:row});});
+   if(!rows.length&&listHeight){const message=!s.records.length?'Memory is empty. Ctrl+R refresh.':s.query?'No matching memories.':'No memories in this namespace.';wrap(message,columns-6).slice(0,listHeight*2).forEach((line,i)=>put(line,3,listTop+i,'muted'));}
+   put(cut(r?'Selected: '+identity(r.key)+' · v'+r.key.version:rows.length+' matches',columns-6),3,detailY,'muted');
+   const permission=!r?'Loaded: '+s.records.length:canDelete(s,r.key)?'Removal needs confirmation.':s.access.role==='reader'?'Read-only access.':'Shared record · read only.';put(cut(permission,columns-6),3,detailY+1,'muted');
+   return {...result,listTop,listHeight,offset,selected,loaded:s.records.length};
+  }
+  let lines=[];
+  if(v.kind==='loading')lines=[{text:'Loading memory…',role:'muted'},{text:'',role:'text'},{text:'Source: '+s.access.source,role:'muted'}];
+  if(v.kind==='error')lines=[{text:v.action==='load'?'Could not load memories.':'Deletion was not confirmed.',role:'error'},{text:clean(v.message),role:'text'},{text:'',role:'text'},{text:'Source: '+s.access.source+(s.access.namespace?' · '+s.access.namespace:''),role:'muted'},...(v.key?[{text:'Namespace: '+(v.key.namespace??'local')+'\nID: '+v.key.id+'\nVersion: '+v.key.version,role:'muted'}]:[])];
+  if(v.kind==='detail')lines=[{text:identity(v.key)+' · v'+v.key.version,role:'accent'},...content(s.records.find(item=>same(item.key,v.key)))];
+  if(v.kind==='confirm'||v.kind==='deleting'){
+   const record=s.records.find(item=>same(item.key,v.key));lines=[{text:v.kind==='confirm'?'Delete this stored memory?':'Deletion requested…',role:'accent'},{text:'',role:'text'},{text:'Namespace: '+(v.key.namespace??'local')+'\nID: '+v.key.id+'\nVersion: '+v.key.version,role:'text'},{text:'',role:'text'},{text:record?clean(record.content):'Record unavailable.',role:'muted'}];
+  }
+  const wrapped=lines.flatMap(line=>wrap(line.text,columns-6).map(text=>({text,role:line.role}))),bodyY=2,capacity=footerY-bodyY-1,maxScroll=Math.max(0,wrapped.length-capacity),scroll=Math.max(0,Math.min(v.scroll??0,maxScroll));wrapped.slice(scroll,scroll+capacity).forEach((line,i)=>put(line.text,3,bodyY+i,line.role));
+  if(wrapped.length){const position=(scroll+1)+'–'+Math.min(scroll+capacity,wrapped.length)+' / '+wrapped.length;put(position,columns-3-position.length,footerY-1,'muted');}
+  return {...result,bodyY,capacity,lines:wrapped,scroll,maxScroll};
+ }
+ return {create,sample,same,identity,clean,flat,wrap,compare,matches,rebuild,chosen,canDelete,change,move,key,refresh,load,finishDelete,scene};
+})();
+if(typeof document!=='undefined'){
+ const id=name=>document.getElementById(name),frame=id('frame'),grid=id('grid'),search=id('search'),canvas=id('canvas');let state=memoryStudy.create(),columns=88,layout,cells=[],buttons=[];
+ const report=text=>id('notice').textContent=text;
+ function effects(effect){if(!effect)return;if(effect.kind==='refresh')report('Sample load requested. Choose a load result to continue.');if(effect.kind==='delete')report('Sample deletion requested for '+memoryStudy.identity(effect.key)+' v'+effect.key.version+'. Choose a delete result; no stored memory was changed.');if(effect.kind==='dismiss')report('Closed without submitting a prompt.');}
+ function focus(){if(state.view.kind==='list')search.focus();else frame.focus();}
+ function render(){
+  layout=memoryStudy.scene(state,{columns,height:Number(id('height').value)});if(state.view.kind==='list')state.offset=layout.offset;if(['detail','confirm','error'].includes(state.view.kind))state.view.scroll=layout.scroll;
+  frame.hidden=state.view.kind==='closed';id('closed').hidden=state.view.kind!=='closed';search.hidden=state.view.kind!=='list';if(search.value!==state.query)search.value=state.query;search.style.width=(columns-12)+'ch';frame.style.width=columns+'ch';frame.style.height=layout.height*20+'px';id('dimensions').textContent=columns+' × '+layout.height+' cells';
+  id('loaded').disabled=state.view.kind!=='loading';id('deleted').disabled=state.view.kind!=='deleting';id('sort').disabled=state.view.kind!=='list';id('scope').disabled=state.view.kind!=='list'||state.access.source==='local';
+  if(grid.dataset.size!==columns+'x'+layout.height){grid.replaceChildren();cells=[];layout.grid.forEach(row=>{row.forEach(()=>{const cell=document.createElement('span');grid.append(cell);cells.push(cell);});grid.append(document.createTextNode('\n'));});grid.dataset.size=columns+'x'+layout.height;}
+  layout.grid.flat().forEach((cell,i)=>{const span=cells[i],role='cell '+cell.role;if(span.textContent!==cell.ch)span.textContent=cell.ch;if(span.className!==role)span.className=role;});
+  while(buttons.length<12){const button=document.createElement('button');button.type='button';button.className='hit';button.tabIndex=-1;button.addEventListener('click',()=>{const h=layout.hits[Number(button.dataset.slot)];if(!h)return;state.selected={...h.key};render();focus();});button.addEventListener('dblclick',()=>{effects(memoryStudy.key(state,'Enter'));render();focus();});id('hits').append(button);buttons.push(button);}
+  buttons.forEach((button,i)=>{const h=layout.hits[i];button.hidden=!h;if(h){button.dataset.slot=i;button.setAttribute('aria-label','Inspect '+memoryStudy.identity(h.key));Object.assign(button.style,{top:h.y*20+'px',width:(columns-2)+'ch'});}});
+  id('description').textContent='State: '+state.view.kind+'. '+(memoryStudy.chosen(state)?.content??'No memory selected.');
+ }
+ function resize(){const probe=document.createElement('span');probe.className='cell';probe.textContent='M';const hidden=frame.hidden;frame.hidden=false;grid.append(probe);const unit=probe.getBoundingClientRect().width;probe.remove();frame.hidden=hidden;const style=getComputedStyle(canvas),available=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);columns=Math.max(32,Math.min(Number(id('width').value),Math.floor(available/unit)));render();}
+ frame.addEventListener('keydown',event=>{
+  if(state.view.kind==='list'&&event.target===search&&!event.ctrlKey&&!event.altKey&&!event.metaKey&&(event.key.length===1||['Backspace','ArrowLeft','ArrowRight','Home','End'].includes(event.key)))return;
+  if(event.metaKey)return;event.preventDefault();effects(memoryStudy.key(state,event.key,{ctrl:event.ctrlKey,alt:event.altKey,meta:event.metaKey,kind:event.repeat?'repeat':'press'}));render();focus();
+ });
+ search.addEventListener('input',()=>{memoryStudy.change(state,'query',search.value);render();});search.addEventListener('paste',event=>{event.preventDefault();const text=(event.clipboardData?.getData('text/plain')||'').replace(/[\x00-\x1f\x7f-\x9f]/g,'');search.setRangeText(text,search.selectionStart,search.selectionEnd,'end');memoryStudy.change(state,'query',search.value);render();});
+ frame.addEventListener('wheel',event=>{if(!event.deltaY)return;if(state.view.kind==='list'){event.preventDefault();memoryStudy.move(state,Math.sign(event.deltaY));render();}else if(['detail','confirm','error'].includes(state.view.kind)){event.preventDefault();state.view.scroll+=Math.sign(event.deltaY)*2;render();}},{passive:false});
+ id('sort').addEventListener('click',()=>{effects(memoryStudy.key(state,'s',{ctrl:true}));render();focus();});id('scope').addEventListener('click',()=>{effects(memoryStudy.key(state,'n',{ctrl:true}));render();focus();});
+ id('loaded').addEventListener('click',()=>{memoryStudy.load(state,id('loadResult').value);report('Sample load result applied. Browsing did not change use or scan counts.');render();focus();});id('deleted').addEventListener('click',()=>{effects(memoryStudy.finishDelete(state,id('deleteResult').value));if(state.view.kind!=='loading')report('Sample result applied. No real memory was deleted.');render();focus();});
+ function reset(){state=memoryStudy.create(id('source').value);report('Examples reset. No backend connection was made.');render();focus();}id('source').addEventListener('change',reset);id('reopen').addEventListener('click',reset);id('width').addEventListener('change',resize);id('height').addEventListener('change',render);id('light').addEventListener('change',()=>canvas.classList.toggle('light',id('light').checked));new ResizeObserver(resize).observe(canvas);resize();focus();
+}
+</script>
+</body>
+</html>

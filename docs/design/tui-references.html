@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek research — interactive TUI references</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:28px;background:#141519;color:#e8e8ed;font:15px/1.6 system-ui,sans-serif}main{max-width:1060px;margin:auto}h1{font-size:25px;line-height:1.25;margin:0 0 14px}h2{font-size:19px;margin:0 0 6px}p{margin:0 0 14px;color:#b9bbc6}a{color:#bbaaf2}nav{display:flex;gap:18px;flex-wrap:wrap;margin:22px 0 32px;font-size:13px}article{margin:0 0 34px;padding-top:22px;border-top:1px solid #363840}img{display:block;width:100%;height:auto;margin:20px 0 8px;border:1px solid #363840;border-radius:6px}small{display:block;color:#9c9eaa}.tag{font-size:12px;letter-spacing:.06em;color:#bbaaf2;margin-bottom:5px}.links{display:flex;gap:18px;flex-wrap:wrap;font-size:13px}.scope{padding:16px 20px;background:#202128;border-left:2px solid #a997df;margin-bottom:30px}.scope p{margin:0}a:focus-visible{outline:2px solid #c1b0f7;outline-offset:4px}@media(max-width:600px){body{padding:16px}h1{font-size:22px}}
+</style>
+</head>
+<body>
+<main>
+<h1>Interactive terminal references</h1>
+<p>Selected from Awesome TUI for their conversation views and editable inputs. These are official project visuals, not proposed Orvek screens.</p>
+<nav><a href="https://awesometui.com/ai">Awesome TUI / AI</a><a href="tui-references.md">Research notes</a><a href="tui-motion.md">Orvek plan</a><a href="tui-motion-preview.html">Approved welcome logo</a></nav>
+<div class="scope"><p>Keep Orvek's current chat bar, compact execution rows, and Actions popup as the baseline. Review individual details here: input borders, spacing, focus, and information priority.</p></div>
+<article>
+<div class="tag">INPUT AND FOCUS</div><h2>Elia</h2>
+<p>Study the message-input border, inset labels, padding, and focused options. Its many framed messages are not a proposed replacement for Orvek's execution view.</p>
+<a href="https://github.com/darrenburns/elia/assets/5740731/75f8563f-ce1a-4c9c-98c0-1bd1f7010814"><img loading="lazy" src="https://github.com/darrenburns/elia/assets/5740731/75f8563f-ce1a-4c9c-98c0-1bd1f7010814" alt="Official Elia collage showing a bordered chat input, model options, and conversation windows"></a>
+<small>Official screenshot collage; published version. Click to inspect at full size.</small>
+<div class="links"><a href="https://github.com/darrenburns/elia">Project and documentation</a></div>
+</article>
+<article>
+<div class="tag">CONVERSATION AND EXECUTION</div><h2>OpenCode</h2>
+<p>Study short tool summaries between replies, clear text hierarchy, and restrained separators. Keep Orvek's own command format and input window.</p>
+<a href="https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/assets/lander/screenshot.png"><img loading="lazy" src="https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/assets/lander/screenshot.png" alt="Official OpenCode screenshot showing a conversation, compact tool calls, active status, and prompt input"></a>
+<small>Official project screenshot; current documentation may describe a newer release.</small>
+<div class="links"><a href="https://opencode.ai/docs/tui/">TUI interactions</a><a href="https://github.com/anomalyco/opencode">Project</a></div>
+</article>
+<article>
+<div class="tag">DENSE CHAT WITH A STABLE INPUT WINDOW</div><h2>Gurk</h2>
+<p>Study the separation between scrollable messages and editable input. Its channel list and older visual style are not the target; the useful reference is bounded, predictable layout.</p>
+<a href="https://raw.githubusercontent.com/boxdot/gurk-rs/main/screenshot.png"><img loading="lazy" src="https://raw.githubusercontent.com/boxdot/gurk-rs/main/screenshot.png" alt="Official Gurk screenshot showing a dense message pane and a separate input box beneath it"></a>
+<small>Official layout example. No local interaction or speed test was run.</small>
+<div class="links"><a href="https://github.com/boxdot/gurk-rs">Project and input controls</a></div>
+</article>
+<article>
+<div class="tag">LONG CONVERSATIONS</div><h2>oterm</h2>
+<p>Study an expanding prompt, collapsible thinking, and usage information. Preserve Orvek's animated thinking text and bordered composer.</p>
+<div class="links"><a href="https://raw.githubusercontent.com/ggozad/oterm/main/docs/img/splash.gif">View official animated demo</a><a href="https://github.com/ggozad/oterm">Project and documentation</a></div>
+</article>
+<article>
+<div class="tag">RUST CHAT INPUT</div><h2>Oatmeal</h2>
+<p>Study chat-input proportions, multiline editing, and slash commands. Its message bubbles make it a secondary reference for the compact interface we want.</p>
+<div class="links"><a href="https://github.com/dustinblackman/oatmeal/assets/5246169/9ee5e910-4eff-4deb-8065-aeab8bfe6b00">View official animated demo</a><a href="https://github.com/dustinblackman/oatmeal#overview">Project and documentation</a></div>
+</article>
+<small>Images load from their original project hosts. Animated demos open only when selected. None of these assets or runtimes is part of the native Orvek binary.</small>
+</main>
+</body>
+</html>

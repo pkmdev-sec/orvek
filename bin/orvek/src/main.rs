@@ -1,0 +1,30 @@
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/pkmdev-sec/orvek/main/assets/favicon.svg"
+)]
+
+//! Binary entry point and top-level diagnostic reporting.
+
+mod app;
+mod core;
+mod review;
+mod tui;
+
+use app::Cli;
+use clap::Parser;
+use miette::{Report, Result};
+
+pub(crate) fn install_tls_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
+#[tokio::main]
+async fn main() -> Result<std::process::ExitCode> {
+    install_tls_provider();
+    match Cli::parse().run().await {
+        Ok(()) => Ok(std::process::ExitCode::SUCCESS),
+        Err(app::error::Error::TaskOutcome { outcome }) => {
+            Ok(std::process::ExitCode::from(outcome.exit_code()))
+        }
+        Err(error) => Err(Report::new(error)),
+    }
+}

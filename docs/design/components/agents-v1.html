@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Child-agent view · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:740px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.toggle{display:flex;gap:8px;align-items:center;min-height:36px}.toggle input{accent-color:#aebfcb}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--border:#59646e;--accent:#76a9df;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 22px 22px;overflow:auto}.canvas.light{--base:#f7f8f9;--text:#283441;--muted:#627180;--border:#909ba5;--accent:#265f99}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:26px;gap:12px}.stage{min-height:455px;display:grid;place-items:start center}.frame{position:relative;outline:none;font:13px/18px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.grid{font:inherit;white-space:pre;user-select:none;margin:0}.cell{display:inline-block;width:1ch;height:18px;vertical-align:top}.border{color:var(--border)}.muted{color:var(--muted)}.accent{color:var(--accent);font-weight:600}.title{font-weight:600}.search{position:absolute;top:23px;left:11ch;font:inherit;line-height:23px;padding:0;border:0;outline:0;background:var(--base);color:var(--text);height:23px;min-width:0;border-radius:0;caret-color:var(--text)}.hit{position:absolute;min-height:0;background:transparent;border:0;border-radius:0;padding:0;margin:0;outline:none}.hit:hover{background:#7a89990b}.note{font-size:11px;color:var(--muted);margin:24px 0 0}.notice{min-height:21px;color:var(--muted);font-size:12px;margin-top:18px}.closed{font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);padding-top:120px}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:16px 8px}.explanation{grid-template-columns:1fr;gap:16px}.frame{font-size:13px}h1{font-size:27px}}
+.green{color:#89c789}.yellow{color:#e4ba6d}.red{color:#e99292}.blue{color:#76a9df}.cyan{color:#8ad0c5}.Luna{color:#e8e8e8}.Terra{color:#89c789}.Sol{color:#e4ba6d}.strong{font-weight:600}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>The child-agent view</h1>
+<p class="intro">One proposal: preserve the tree and transcript inspector, with clearer tasks, real parent relationships, and a compact fallback.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Sample team<select id="scenario"><option value="working">Working team</option><option value="parentDone">Parent completed</option><option value="finished">All work finished</option><option value="empty">No agents</option></select></label>
+<label>Terminal width<select id="width"><option value="100">Normal · 100 columns</option><option value="120">Wide · 120 columns</option><option value="76">Compact · 76 columns</option><option value="40">Narrow · 40 columns</option><option value="32">Small · 32 columns</option></select></label>
+<button id="reopen" type="button">Reopen tree</button><button id="back" type="button">Close sample view</button><label class="toggle"><input id="reduce" type="checkbox">Reduce motion</label>
+</div>
+<section class="canvas" id="canvas" aria-label="Child-agent view preview">
+<div class="caption"><span>CHILD AGENTS / INTERACTIVE PREVIEW</span><span id="dimensions"></span></div>
+<div class="stage"><div class="frame" id="frame" tabindex="0" aria-label="Child-agent hierarchy"><pre class="grid" id="grid" aria-hidden="true"></pre><div id="hits"></div></div><div class="closed" id="closed" hidden>Sample view closed</div></div>
+<div class="notice" id="notice" role="status"></div>
+<p class="note">Click focuses an agent. Arrows navigate its hierarchy; Enter inspects its transcript; F switches active/all; +/- changes the sample limit. Esc returns or closes. All agents, histories, and limits here are fictional. Native colors stay unchanged.</p>
+</section>
+<div class="explanation">
+<div><h2>Keep the existing tree</h2><p>Rounded nodes and the green focus border stay. A tree that fits remains in view; larger trees pan to the focused agent. Narrow terminals use the same hierarchy as a list.</p></div>
+<div><h2>Ownership stays accurate</h2><p>The task gets two lines. A filtered-out parent is identified as hidden, not relabelled as the root. Active and total child counts are distinguished.</p></div>
+<div><h2>Inspect without controlling the agent</h2><p>Enter opens a read-only transcript in the established style. Closing the view does not stop agents. No new send, stop, or restart controls are added.</p></div>
+</div>
+<div class="foot"><span>Review this view only. Previously approved components remain unchanged.</span><a href="../decisions.md">Review order and approvals</a></div>
+</main>
+<script>
+const agentsStudy=(()=>{
+ const states={pending:{symbol:'○',color:'yellow',active:true},running:{symbol:'◐',color:'yellow',active:true},completed:{symbol:'●',color:'green',active:false},interrupted:{symbol:'■',color:'blue',active:false},failed:{symbol:'×',color:'red',active:false},closing:{symbol:'◑',color:'yellow',active:true},closed:{symbol:'■',color:'muted',active:false}};
+ const initial=[
+  {id:1,parent:null,role:'coordinator',model:'Sol',state:'running',task:'Review session restoration and coordinate the source and test checks.'},
+  {id:2,parent:1,role:'source-scout',model:'Terra',state:'running',task:'Trace the saved working directory through checkpoint loading and session restoration.'},
+  {id:3,parent:1,role:'test-review',model:'Luna',state:'running',task:'Review coverage for restoring sessions and identify missing failure cases.'},
+  {id:4,parent:null,role:'docs-review',model:'Terra',state:'completed',task:'Check the documentation against the current session behavior.'},
+  {id:5,parent:3,role:'edge-cases',model:'Terra',state:'failed',error:'Could not open the sample fixture.',task:'Inspect the missing-checkpoint case and report the evidence.'},
+  {id:6,parent:null,role:'cleanup',model:'Luna',state:'closed',task:'Review unused session fixtures.'}
+ ].map(node=>({...node,session_id:'sample-child-session-'+node.id}));
+ function sample(kind='working'){const nodes=initial.map(node=>({...node}));if(kind==='empty')return [];if(kind==='parentDone')nodes[0].state='completed';if(kind==='finished')nodes.forEach(node=>{if(states[node.state].active)node.state='completed';});return nodes;}
+ function tree(nodes,filter='active'){
+  const visible=nodes.filter(node=>filter==='all'||states[node.state].active).sort((a,b)=>a.id-b.id),ids=new Set(visible.map(n=>n.id));
+  const parents=new Map(),children=new Map(visible.map(n=>[n.id,[]]));visible.forEach(n=>{const parent=ids.has(n.parent)?n.parent:null;parents.set(n.id,parent);if(parent!==null)children.get(parent).push(n.id);});
+  const roots=visible.filter(n=>parents.get(n.id)===null).map(n=>n.id),widths=new Map(),positions=new Map();
+  function measure(id){const kids=children.get(id),width=kids.length?Math.max(24,kids.reduce((sum,k)=>sum+measure(k),0)+(kids.length-1)*6):24;widths.set(id,width);return width;}
+  const total=roots.reduce((sum,id)=>sum+measure(id),0)+Math.max(0,roots.length-1)*6;
+  function place(id,left,depth){const width=widths.get(id);positions.set(id,{x:left+width/2,y:depth*9,depth});const kids=children.get(id);const childWidth=kids.reduce((sum,k)=>sum+widths.get(k),0)+Math.max(0,kids.length-1)*6;let next=left+(width-childWidth)/2;kids.forEach(k=>{place(k,next,depth+1);next+=widths.get(k)+6;});}
+  let left=-total/2;roots.forEach(id=>{place(id,left,0);left+=widths.get(id)+6;});
+  return {visible,parents,children,roots,positions};
+ }
+ function navigate(t,focused,direction,remembered={}){
+  if(!t.positions.has(focused))return t.visible[0]?.id??null;let next=null;
+  if(direction==='parent'){next=t.parents.get(focused);if(next!==null)remembered[next]=focused;}
+  if(direction==='child'){const kids=t.children.get(focused);next=kids.includes(remembered[focused])?remembered[focused]:[...kids].sort((a,b)=>Math.abs(t.positions.get(a).x-t.positions.get(focused).x)-Math.abs(t.positions.get(b).x-t.positions.get(focused).x)||a-b)[0];}
+  if(direction==='root')next=t.roots[0];
+  if(direction==='left'||direction==='right'){const level=t.visible.filter(n=>t.positions.get(n.id).depth===t.positions.get(focused).depth).sort((a,b)=>t.positions.get(a.id).x-t.positions.get(b.id).x);const index=level.findIndex(n=>n.id===focused);next=level[index+(direction==='right'?1:-1)]?.id;}
+  if(next!==undefined&&next!==null){const parent=t.parents.get(next);if(parent!==null)remembered[parent]=next;return next;}return focused;
+ }
+ const cut=(value,width)=>width<=0?'':value.length<=width?value:value.slice(0,width-1)+'…';
+ function wrap(value,width){const rows=[];let rest=value;while(rest.length>width){let end=rest.lastIndexOf(' ',width);if(end<1)end=width;rows.push(rest.slice(0,end));rest=rest.slice(end).replace(/^ /,'');}rows.push(rest);return rows;}
+ function helpRows(groups,width){const rows=[];let line='';for(const group of groups){if(line&&line.length+3+group.length>width){rows.push(line);line='';}line+=(line?' · ':'')+group;}if(line)rows.push(line);return rows;}
+ function metrics(columns,rows,filter){const help=helpRows(['←/→ row','↑ parent','↓ child','enter inspect','-/+ limit','f '+filter,'esc close'],columns-4),inspectorY=rows-1-help.length-6;return {help,inspectorY,canvas:{x:2,y:3,width:columns-4,height:inspectorY-4}};}
+ function target(t,focused,columns,rows,filter){if(!t.positions.size)return {x:0,y:0};const area=metrics(columns,rows,filter).canvas;const ps=[...t.positions.values()],minX=Math.min(...ps.map(p=>p.x-12)),maxX=Math.max(...ps.map(p=>p.x+12)),minY=0,maxY=Math.max(...ps.map(p=>p.y+4));if(maxX-minX<=area.width&&maxY<=area.height)return {x:(minX+maxX)/2,y:maxY/2};const p=t.positions.get(focused)||ps[0];return {x:p.x,y:p.y+2};}
+ function scene({nodes=sample(),filter='active',focused=1,limit=4,columns=100,rows=34,camera=null}={}){
+  if(columns<32||rows<22)throw new Error('Preview requires at least 32 columns and 22 rows.');
+  const t=tree(nodes,filter);if(!t.positions.has(focused))focused=t.visible[0]?.id??null;
+  const {help,inspectorY,canvas}=metrics(columns,rows,filter),grid=Array.from({length:rows},()=>Array.from({length:columns},()=>({ch:' ',role:'text'}))),hits=[];
+  function write(value,x,y,role='text',clip=null){[...value].forEach((ch,i)=>{const px=x+i;if(px<0||px>=columns||y<0||y>=rows)return;if(clip&&(px<clip.x||px>=clip.x+clip.width||y<clip.y||y>=clip.y+clip.height))return;grid[y][px]={ch,role};});}
+  function box(x,y,w,h,title,role='border'){write('╭'+'─'.repeat(w-2)+'╮',x,y,role);write('╰'+'─'.repeat(w-2)+'╯',x,y+h-1,role);for(let j=1;j<h-1;j++){write('│',x,y+j,role);write('│',x+w-1,y+j,role);}if(title)write(' '+cut(title,w-4)+' ',x+2,y,role);}
+  box(0,0,columns,rows,'Sub-agent tree');const active=nodes.filter(n=>states[n.state].active).length;write(cut(`Active: ${active}   Limit: ${limit}   View: ${filter} (${t.visible.length}/${nodes.length})`,columns-4),2,1,'muted');
+  help.forEach((line,i)=>write(line,Math.floor((columns-line.length)/2),rows-1-help.length+i,'muted'));
+  const chosen=nodes.find(n=>n.id===focused),compact=columns<80;
+  if(!chosen){wrap(nodes.length?'No active agents. Press f to show all.':'No child agents have been delegated.',columns-6).forEach((line,i)=>write(line,3,5+i,'muted'));return {grid,hits,focused,tree:t,active,compact,camera:{x:0,y:0}};}
+  if(compact){
+   const order=[];function walk(id){order.push(id);t.children.get(id).forEach(walk);}t.roots.forEach(walk);
+   const focusIndex=order.indexOf(focused),capacity=Math.max(1,Math.floor(canvas.height/2)),offset=Math.max(0,Math.min(focusIndex-capacity+1,order.length-capacity));
+   order.slice(offset,offset+capacity).forEach((id,index)=>{const node=nodes.find(n=>n.id===id),depth=t.positions.get(id).depth,indent=Math.min(depth*2,6),x=canvas.x+indent,y=canvas.y+index*2,status=states[node.state];write((id===focused?'› ':'  ')+cut(`#${id} ${node.role}`,canvas.width-indent-2),x,y,id===focused?'green strong':'text',canvas);write(`${status.symbol} ${node.state}`,x+2,y+1,status.color,canvas);hits.push({id,x,y,width:canvas.width-indent,height:2});});
+  }else{
+   camera=camera||target(t,focused,columns,rows,filter);const px=x=>Math.round(canvas.x+canvas.width/2+x-camera.x),py=y=>Math.round(canvas.y+canvas.height/2+y-camera.y);
+   for(const node of t.visible){const parent=t.parents.get(node.id);if(parent===null)continue;const a=t.positions.get(parent),b=t.positions.get(node.id),top=a.y+3,bottom=b.y,mid=top+2;for(let y=top+1;y<=mid;y++)write('│',px(a.x),py(y),'border',canvas);for(let x=Math.min(a.x,b.x);x<=Math.max(a.x,b.x);x++)write('─',px(x),py(mid),'border',canvas);for(let y=mid;y<bottom;y++)write('│',px(b.x),py(y),'border',canvas);write('┴',px(a.x),py(mid),'border',canvas);write(a.x===b.x?'│':b.x<a.x?'╭':'╮',px(b.x),py(mid),'border',canvas);}
+   for(const node of t.visible){const p=t.positions.get(node.id),x=px(p.x-12),y=py(p.y),status=states[node.state],role=node.id===focused?'green strong':'border',width=24;
+    write('╭'+'─'.repeat(22)+'╮',x,y,role,canvas);write('╰'+'─'.repeat(22)+'╯',x,y+3,role,canvas);
+    const labels=[`${status.symbol} #${node.id} ${node.role}`,`${node.state} · ${t.children.get(node.id).length} children`];
+    labels.forEach((label,i)=>{write('│'+' '.repeat(22)+'│',x,y+i+1,role,canvas);const clipped=cut(label,22);write(clipped,x+1+Math.floor((22-clipped.length)/2),y+i+1,i?status.color:'text',canvas);});
+    const hx=Math.max(x,canvas.x),hy=Math.max(y,canvas.y),right=Math.min(x+width,canvas.x+canvas.width),bottom=Math.min(y+4,canvas.y+canvas.height);if(right>hx&&bottom>hy)hits.push({id:node.id,x:hx,y:hy,width:right-hx,height:bottom-hy});
+   }
+  }
+  const status=states[chosen.state];box(1,inspectorY,columns-2,6,`${status.symbol} #${chosen.id} ${chosen.role} · ${chosen.state}`,status.color);
+  const task=wrap('Task: '+chosen.task,columns-6).slice(0,2);if(wrap('Task: '+chosen.task,columns-6).length>2)task[1]=task[1].slice(0,columns-7).trimEnd()+'…';task.forEach((line,i)=>write(line,3,inspectorY+1+i));if(chosen.state==='failed'&&chosen.error)write(cut('Error: '+chosen.error,columns-6).padEnd(columns-6),3,inspectorY+2,'red');
+  const parent=chosen.parent===null?'root':`#${chosen.parent}`+(t.parents.get(chosen.id)===null?' (hidden)':'');
+  const visibleChildren=t.children.get(chosen.id).length,totalChildren=nodes.filter(n=>n.parent===chosen.id).length;
+  const info=compact?`${chosen.model} · parent ${parent}`:`Parent: ${parent} · ${visibleChildren}/${totalChildren} children shown · Model: ${chosen.model}`;
+  write(cut(info,columns-6),3,inspectorY+3,'muted');const modelAt=info.indexOf(chosen.model);if(modelAt>=0&&modelAt+chosen.model.length<=columns-6)write(chosen.model,3+modelAt,inspectorY+3,chosen.model);write(cut('Session: '+chosen.session_id,columns-6),3,inspectorY+4,'muted');
+  return {grid,hits,focused,tree:t,active,compact,camera:camera||target(t,focused,columns,rows,filter)};
+ }
+ function transcript(node,{columns=100,rows=34,expanded=false,scroll=0,entryFocused=false}={}){
+  const content=[];const add=(text,role='text',prefix='')=>wrap(text,columns-6-prefix.length).forEach(line=>content.push({text:prefix+line,role}));
+  add(node.task,'cyan','┃ ');add('');add('I’m checking the assigned source and its nearby tests.');add('');
+  content.push({text:(expanded?'▼ ':'▶ ')+'✓ Shell  $ rg -n session src/ · exit 0 · 0.2s',role:'text',tool:true});
+  if(expanded){add('$ rg -n session src/','yellow','    │ ');for(let n=1;n<=24;n++)add(`sample evidence line ${n}`,'muted','    │ ');add('24 sample lines','muted','    └ ');}
+  add('');if(node.state==='failed')add('× Could not open the sample fixture.','red');else if(node.state==='completed')add('The assigned review is complete.');else if(node.state==='interrupted')add('The turn was interrupted.','blue');else if(node.state==='closed')add('This child session is closed.','muted');else add('Review in progress.','muted');
+  const groups=entryFocused?['↑↓ item','enter toggle','esc blur, then back']:['pgup/pgdn scroll','ctrl+o expand all','esc back'],help=helpRows(groups,columns-4),capacity=rows-3-help.length;scroll=Math.max(0,Math.min(scroll,Math.max(0,content.length-capacity)));
+  const grid=Array.from({length:rows},()=>Array.from({length:columns},()=>({ch:' ',role:'text'})));const put=(s,x,y,role='text')=>[...cut(s,columns-x-1)].forEach((ch,i)=>{grid[y][x+i]={ch,role};});
+  put('╭'+'─'.repeat(columns-2),0,0,'border');grid[0][columns-1]={ch:'╮',role:'border'};put('╰'+'─'.repeat(columns-2),0,rows-1,'border');grid[rows-1][columns-1]={ch:'╯',role:'border'};for(let y=1;y<rows-1;y++){put('│',0,y,'border');grid[y][columns-1]={ch:'│',role:'border'};}
+  put(` #${node.id} ${node.role} · ${node.model} `,2,0,node.model);const hits=[];content.slice(scroll,scroll+capacity).forEach((line,i)=>{put(line.text,3,i+1,line.role);if(line.tool)hits.push({x:2,y:i+1,width:columns-4,height:1});});help.forEach((line,i)=>put(line,Math.floor((columns-line.length)/2),rows-1-help.length+i,'muted'));
+  return {grid,hits,scroll,capacity,total:content.length};
+ }
+ return {states,sample,tree,navigate,target,scene,transcript};
+})();
+if(typeof document!=='undefined'){
+ const id=x=>document.getElementById(x),frame=id('frame'),grid=id('grid'),canvas=id('canvas'),hits=id('hits');
+ let nodes=agentsStudy.sample(),filter='active',focused=1,limit=4,columns=100,rows=34,view='tree',expanded=false,entryFocused=false,scroll=0,remembered={},camera=null,animation=null,ticket=0,cells=[],gridSize='',current;
+ id('reduce').checked=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ function paint(){
+  current=view==='tree'?agentsStudy.scene({nodes,filter,focused,limit,columns,rows,camera}):agentsStudy.transcript(nodes.find(n=>n.id===focused),{columns,rows,expanded,scroll,entryFocused});
+  if(view==='tree')focused=current.focused;else scroll=current.scroll;const size=`${columns}:${rows}`;if(size!==gridSize){gridSize=size;grid.replaceChildren();cells=[];for(let y=0;y<rows;y++){for(let x=0;x<columns;x++){const span=document.createElement('span');grid.append(span);cells.push(span);}if(y<rows-1)grid.append(document.createTextNode('\n'));}}
+  current.grid.flat().forEach((cell,i)=>{const span=cells[i],role=`cell ${cell.role}`;if(span.textContent!==cell.ch)span.textContent=cell.ch;if(span.className!==role)span.className=role;});frame.style.width=`${columns}ch`;
+  hits.replaceChildren();current.hits.forEach(hit=>{const button=document.createElement('button');button.type='button';button.className='hit';button.tabIndex=-1;button.style.left=`${hit.x}ch`;button.style.top=`${hit.y*18}px`;button.style.width=`${hit.width}ch`;button.style.height=`${hit.height*18}px`;button.setAttribute('aria-label',view==='tree'?'Focus child agent '+hit.id:'Toggle tool details');button.addEventListener('click',()=>{if(view==='tree')select(hit.id);else{expanded=!expanded;entryFocused=true;paint();}frame.focus();});hits.append(button);});
+  id('dimensions').textContent=`${columns} × ${rows} cells`;id('back').textContent=view==='tree'?'Close sample view':'Back to tree';
+ }
+ function advance(now){if(!animation)return;const t=Math.min(1,(now-animation.start)/180),ease=1-Math.pow(1-t,3);camera={x:animation.from.x+(animation.to.x-animation.from.x)*ease,y:animation.from.y+(animation.to.y-animation.from.y)*ease};if(t===1)animation=null;}
+ function tick(now){advance(now);paint();if(animation&&view==='tree'&&!document.hidden)ticket=requestAnimationFrame(tick);}
+ function select(target){if(target===null||target===focused)return;advance(performance.now());const t=agentsStudy.tree(nodes,filter),next=agentsStudy.target(t,target,columns,rows,filter);const from=camera||agentsStudy.target(t,focused,columns,rows,filter);focused=target;cancelAnimationFrame(ticket);if(id('reduce').checked||columns<80||(next.x===from.x&&next.y===from.y)){camera=next;animation=null;}else{camera=from;animation={from,to:next,start:performance.now()};ticket=requestAnimationFrame(tick);}paint();}
+ function reset(){cancelAnimationFrame(ticket);animation=null;nodes=agentsStudy.sample(id('scenario').value);filter='active';focused=agentsStudy.tree(nodes,filter).visible[0]?.id??null;view='tree';camera=null;expanded=false;entryFocused=false;scroll=0;remembered={};frame.hidden=false;id('closed').hidden=true;paint();}
+ function inspect(){if(focused===null)return;cancelAnimationFrame(ticket);animation=null;view='transcript';expanded=false;entryFocused=false;scroll=0;paint();}
+ function back(){if(view==='transcript'){view='tree';camera=null;entryFocused=false;paint();frame.focus();}else{cancelAnimationFrame(ticket);animation=null;frame.hidden=true;id('closed').hidden=false;id('notice').textContent='Sample view closed. Child agents would keep running.';id('reopen').focus();}}
+ function resize(){const probe=document.createElement('span');probe.className='cell';probe.textContent='M';const hidden=frame.hidden;frame.hidden=false;grid.append(probe);const width=probe.getBoundingClientRect().width;probe.remove();frame.hidden=hidden;const style=getComputedStyle(canvas),available=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);columns=Math.max(32,Math.min(Number(id('width').value),Math.floor(available/width)));camera=null;animation=null;cancelAnimationFrame(ticket);paint();}
+ frame.addEventListener('keydown',event=>{
+  if(event.metaKey||event.altKey)return;
+  if(view==='transcript'){if(entryFocused&&['ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();return;}if(event.key==='Escape'){event.preventDefault();if(entryFocused){entryFocused=false;paint();}else back();}else if(event.key==='Enter'&&entryFocused){event.preventDefault();expanded=!expanded;paint();}else if(event.ctrlKey&&event.key.toLowerCase()==='o'){event.preventDefault();expanded=!expanded;paint();}else if(['PageUp','PageDown'].includes(event.key)){event.preventDefault();scroll+=event.key==='PageDown'?current.capacity:-current.capacity;paint();}else if(event.ctrlKey&&['Home','End'].includes(event.key)){event.preventDefault();scroll=event.key==='Home'?0:current.total;paint();}return;}
+  const directions={ArrowUp:'parent',k:'parent',ArrowDown:'child',j:'child',ArrowLeft:'left',h:'left',ArrowRight:'right',l:'right',Home:'root'};
+  if(directions[event.key]){event.preventDefault();select(agentsStudy.navigate(agentsStudy.tree(nodes,filter),focused,directions[event.key],remembered));}
+  else if(event.key==='Enter'){event.preventDefault();inspect();}else if(event.key==='Escape'){event.preventDefault();back();}
+  else if(event.key==='f'&&!event.ctrlKey&&!event.altKey){event.preventDefault();filter=filter==='active'?'all':'active';focused=agentsStudy.tree(nodes,filter).visible[0]?.id??null;camera=null;animation=null;cancelAnimationFrame(ticket);paint();}
+  else if(['-','+','='].includes(event.key)){event.preventDefault();limit=event.key==='-'?Math.max(0,limit-1):Math.min(Number.MAX_SAFE_INTEGER,limit+1);id('notice').textContent=`Sample limit: ${limit}. Existing agents are unchanged.`;paint();}
+ });
+ frame.addEventListener('wheel',event=>{if(view!=='transcript')return;event.preventDefault();scroll+=event.deltaY>0?3:-3;paint();},{passive:false});
+ id('scenario').addEventListener('change',()=>{reset();frame.focus();});id('width').addEventListener('change',resize);id('back').addEventListener('click',back);id('reopen').addEventListener('click',()=>{reset();frame.focus();});
+ id('reduce').addEventListener('change',()=>{if(id('reduce').checked){camera=null;animation=null;cancelAnimationFrame(ticket);}paint();});document.addEventListener('visibilitychange',()=>{cancelAnimationFrame(ticket);if(!document.hidden){advance(performance.now());paint();if(animation)ticket=requestAnimationFrame(tick);}});
+ new ResizeObserver(resize).observe(canvas);resize();frame.focus();
+}
+</script>
+</body>
+</html>

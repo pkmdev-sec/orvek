@@ -1,0 +1,279 @@
+use std::{fmt, sync::Arc};
+
+pub mod compaction;
+use crate::{
+    NanocodexError, Result,
+    model::{context::ContextBaseline, run::ModelCheckpoint},
+};
+use compaction::ContextCheckpoint;
+pub use nanocodex_oai_api::session::SessionId;
+use nanocodex_oai_api::{
+    Model,
+    responses::{MessageRole, ResponseItem},
+};
+
+const SESSION_SNAPSHOT_VERSION: u32 = 1;
+
+/// One immutable model boundary shared by forks, durable snapshots, and rollout projection.
+#[derive(Clone)]
+pub(crate) struct CommittedSession {
+    lineage_id: Arc<str>,
+    selected_model: Model,
+    model: ModelCheckpoint,
+}
+
+impl CommittedSession {
+    pub(crate) const fn new(
+        lineage_id: Arc<str>,
+        selected_model: Model,
+        model: ModelCheckpoint,
+    ) -> Self {
+        Self {
+            lineage_id,
+            selected_model,
+            model,
+        }
+    }
+
+    pub(crate) fn lineage_id(&self) -> &str {
+        &self.lineage_id
+    }
+
+    pub(crate) const fn model(&self) -> &ModelCheckpoint {
+        &self.model
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) const fn selected_model(&self) -> Model {
+        self.selected_model
+    }
+
+    #[allow(dead_code, reason = "consumed by the native durability boundary only")]
+    pub(crate) fn rollout_history(&self) -> nanocodex_oai_api::responses::ResponseHistory {
+        self.model.history()
+    }
+
+    #[allow(dead_code, reason = "consumed by the native durability boundary only")]
+    pub(crate) const fn history_revision(&self) -> u64 {
+        self.model.history_revision()
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) const fn context_baseline(&self) -> &ContextBaseline {
+        self.model.context_baseline()
+    }
+
+    pub(crate) fn snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            version: if self.model.context_checkpoint().is_some() {
+                2
+            } else {
+                SESSION_SNAPSHOT_VERSION
+            },
+            model: self.selected_model.as_str().to_owned(),
+            lineage_id: self.lineage_id.to_string(),
+            prompt_cache_key: self.model.prompt_cache_key().to_owned(),
+            workspace: self.model.workspace().to_owned(),
+            base_instructions: None,
+            request_prefix: Some(self.model.request_prefix().to_vec()),
+            canonical_context: self.model.canonical_context().clone(),
+            history: self.model.snapshot_history(),
+            context_snapshot: Some(self.model.context_baseline().clone()),
+            context_archive: self.model.context_checkpoint().cloned(),
+        }
+    }
+}
+
+/// Versioned, serializable state for resuming a completed session boundary.
+///
+/// Its fields are intentionally private: callers may persist or transfer the
+/// value, but Nanocodex remains responsible for interpreting model history and
+/// cache state. Provider response IDs are deliberately excluded: the first
+/// resumed request replays the authoritative typed history, then subsequent
+/// requests follow the configured history policy. Resuming requires the same
+/// model instructions and tool definitions used to create the snapshot.
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct SessionSnapshot {
+    version: u32,
+    model: String,
+    lineage_id: String,
+    prompt_cache_key: String,
+    workspace: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    base_instructions: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    request_prefix: Option<Vec<ResponseItem>>,
+    canonical_context: ResponseItem,
+    history: Vec<ResponseItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_snapshot: Option<ContextBaseline>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_archive: Option<ContextCheckpoint>,
+}
+
+impl fmt::Debug for SessionSnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SessionSnapshot")
+            .field("version", &self.version)
+            .field("model", &self.model)
+            .field("history_items", &self.history.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl SessionSnapshot {
+    /// Returns the archive identity associated with this exact saved boundary.
+    #[must_use]
+    pub const fn context_checkpoint(&self) -> Option<&ContextCheckpoint> {
+        self.context_archive.as_ref()
+    }
+
+    /// Borrows the complete unredacted model-visible history for archive validation.
+    #[must_use]
+    pub fn history(&self) -> &[ResponseItem] {
+        &self.history
+    }
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn from_rollout(
+        model: Model,
+        thread_id: String,
+        workspace: String,
+        base_instructions: Option<String>,
+        history: Vec<ResponseItem>,
+        context_snapshot: Option<ContextBaseline>,
+    ) -> Result<Self> {
+        let canonical_context = history
+            .iter()
+            .find(|item| item.is_user_message())
+            .cloned()
+            .ok_or_else(|| {
+                NanocodexError::InvalidSessionSnapshot(
+                    "rollout does not contain a user message".to_owned(),
+                )
+            })?;
+        Ok(Self {
+            version: SESSION_SNAPSHOT_VERSION,
+            model: model.as_str().to_owned(),
+            lineage_id: thread_id.clone(),
+            prompt_cache_key: thread_id,
+            workspace,
+            base_instructions,
+            request_prefix: None,
+            canonical_context,
+            history,
+            context_snapshot,
+            context_archive: None,
+        })
+    }
+
+    /// Snapshot format version understood by this Nanocodex release.
+    #[must_use]
+    pub const fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// Returns the absolute workspace retained by this session boundary.
+    #[must_use]
+    pub fn workspace(&self) -> &str {
+        &self.workspace
+    }
+
+    pub(crate) fn into_resume(self) -> Result<SessionResume> {
+        if self.version != SESSION_SNAPSHOT_VERSION && self.version != 2 {
+            return Err(NanocodexError::InvalidSessionSnapshot(format!(
+                "unsupported format version {}; expected {SESSION_SNAPSHOT_VERSION} or 2",
+                self.version
+            )));
+        }
+        if self.version == 2 && (self.context_archive.is_none() || self.request_prefix.is_none()) {
+            return Err(NanocodexError::InvalidSessionSnapshot(
+                "archived snapshots require archive metadata and a request prefix".to_owned(),
+            ));
+        }
+        if self.version == 1 && self.context_archive.is_some() {
+            return Err(NanocodexError::InvalidSessionSnapshot(
+                "legacy snapshot cannot carry archive metadata".to_owned(),
+            ));
+        }
+        let model = self.model.parse::<Model>().map_err(|error| {
+            NanocodexError::InvalidSessionSnapshot(format!(
+                "snapshot model is unsupported: {error}"
+            ))
+        })?;
+        if self.lineage_id.trim().is_empty() {
+            return Err(NanocodexError::InvalidSessionSnapshot(
+                "cache lineage must not be empty".to_owned(),
+            ));
+        }
+        if self.prompt_cache_key.trim().is_empty() {
+            return Err(NanocodexError::InvalidSessionSnapshot(
+                "prompt cache key must not be empty".to_owned(),
+            ));
+        }
+        if self.workspace.trim().is_empty() {
+            return Err(NanocodexError::InvalidSessionSnapshot(
+                "workspace must not be empty".to_owned(),
+            ));
+        }
+        if let Some(request_prefix) = self.request_prefix.as_ref()
+            && !matches!(
+                request_prefix.as_slice(),
+                [
+                    ResponseItem::AdditionalTools {
+                        role: MessageRole::Developer,
+                        ..
+                    },
+                    ResponseItem::Message {
+                        role: MessageRole::Developer,
+                        ..
+                    }
+                ]
+            )
+        {
+            return Err(NanocodexError::InvalidSessionSnapshot(
+                "request prefix does not match the supported model contract".to_owned(),
+            ));
+        }
+        let lineage_id = Arc::<str>::from(self.lineage_id);
+        let prompt_cache_key = Arc::<str>::from(self.prompt_cache_key);
+        let checkpoint = self
+            .request_prefix
+            .map(|request_prefix| {
+                ModelCheckpoint::resume(
+                    self.workspace.clone(),
+                    request_prefix,
+                    Arc::clone(&prompt_cache_key),
+                    self.canonical_context.clone(),
+                    self.history.clone(),
+                    None,
+                    self.context_snapshot.clone(),
+                    self.context_archive.clone(),
+                )
+            })
+            .transpose()?;
+        Ok(SessionResume {
+            model,
+            lineage_id,
+            prompt_cache_key,
+            workspace: self.workspace,
+            base_instructions: self.base_instructions,
+            canonical_context: self.canonical_context,
+            history: self.history,
+            context_baseline: self.context_snapshot,
+            checkpoint,
+        })
+    }
+}
+
+pub(crate) struct SessionResume {
+    pub(crate) model: Model,
+    pub(crate) lineage_id: Arc<str>,
+    pub(crate) prompt_cache_key: Arc<str>,
+    pub(crate) workspace: String,
+    pub(crate) base_instructions: Option<String>,
+    pub(crate) canonical_context: ResponseItem,
+    pub(crate) history: Vec<ResponseItem>,
+    pub(crate) context_baseline: Option<ContextBaseline>,
+    pub(crate) checkpoint: Option<ModelCheckpoint>,
+}

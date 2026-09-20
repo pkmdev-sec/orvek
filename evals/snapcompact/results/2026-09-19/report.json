@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "pair_count": 21,
+  "models": {
+    "luna": {
+      "bitmap": {
+        "runs": 7,
+        "task_pass_rate": 1.0,
+        "task_pass_rate_95ci": [
+          0.6456695649333126,
+          1.0
+        ],
+        "exact_match_rate": 1.0,
+        "exact_match_rate_95ci": [
+          0.6456695649333126,
+          1.0
+        ],
+        "tokens": {
+          "input_tokens": 535760,
+          "cached_input_tokens": 302873,
+          "output_tokens": 9054,
+          "reasoning_tokens": 3024
+        },
+        "provider_receipt_usd": 0.06349966,
+        "catalog_estimate_usd": 0.06349966,
+        "cost_per_completed_task_usd": 0.00907138,
+        "retrieval_count": 0,
+        "retrieval_failures": 0,
+        "render_ms": null,
+        "request_bytes": null,
+        "latency_p95_ms": 40049.89999999997,
+        "peak_memory_bytes": null,
+        "retries": 0
+      },
+      "native": {
+        "runs": 7,
+        "task_pass_rate": 1.0,
+        "task_pass_rate_95ci": [
+          0.6456695649333126,
+          1.0
+        ],
+        "exact_match_rate": 1.0,
+        "exact_match_rate_95ci": [
+          0.6456695649333126,
+          1.0
+        ],
+        "tokens": {
+          "input_tokens": 754419,
+          "cached_input_tokens": 497906,
+          "output_tokens": 7379,
+          "reasoning_tokens": 2901
+        },
+        "provider_receipt_usd": 0.07011552,
+        "catalog_estimate_usd": 0.07011552,
+        "cost_per_completed_task_usd": 0.010016502857142857,
+        "retrieval_count": 0,
+        "retrieval_failures": 0,
+        "render_ms": null,
+        "request_bytes": null,
+        "latency_p95_ms": 38365.49999999997,
+        "peak_memory_bytes": null,
+        "retries": 0
+      },
+      "paired_deltas_bitmap_minus_native": {
+        "task_pass_rate": {
+          "mean": 0.0,
+          "95ci": [
+            0.0,
+            0.0
+          ]
+        },
+        "latency_ms": {
+          "mean": 711.2857142857143,
+          "95ci": [
+            -611.826489183731,
+            2034.3979177551596
+          ]
+        },
+        "provider_cost_usd": {
+          "mean": -0.0009451228571428563,
+          "95ci": [
+            -0.0021525864408008903,
+            0.0002623407265151777
+          ]
+        }
+      }
+    },
+    "sol": {
+      "bitmap": {
+        "runs": 7,
+        "task_pass_rate": 1.0,
+        "task_pass_rate_95ci": [
+          0.6456695649333126,
+          1.0
+        ],
+        "exact_match_rate": 1.0,
+        "exact_match_rate_95ci": [
+          0.6456695649333126,
+          1.0
+        ],
+        "tokens": {
+          "input_tokens": 475298,
+          "cached_input_tokens": 288598,
+          "output_tokens": 6055,
+          "reasoning_tokens": 1026
+        },
+        "provider_receipt_usd": 0.9833392,
+        "catalog_estimate_usd": 0.9833392,
+        "cost_per_completed_task_usd": 0.14047702857142857,
+        "retrieval_count": 0,
+        "retrieval_failures": 0,
+        "render_ms": null,
+        "request_bytes": null,
+        "latency_p95_ms": 36088.09999999998,
+        "peak_memory_bytes": null,
+        "retries": 0
+      },
+      "native": {
+        "runs": 7,
+        "task_pass_rate": 1.0,
+        "task_pass_rate_95ci": [
+          0.6456695649333126,
+          1.0
+        ],
+        "exact_match_rate": 1.0,
+        "exact_match_rate_95ci": [
+          0.6456695649333126,
+          1.0
+        ],
+        "tokens": {
+          "input_tokens": 740422,
+          "cached_input_tokens": 488800,
+          "output_tokens": 5603,
+          "reasoning_tokens": 886
+        },
+        "provider_receipt_usd": 1.314068,
+        "catalog_estimate_usd": 1.314068,
+        "cost_per_completed_task_usd": 0.187724,
+        "retrieval_count": 0,
+        "retrieval_failures": 0,
+        "render_ms": null,
+        "request_bytes": null,
+        "latency_p95_ms": 30287.999999999978,
+        "peak_memory_bytes": null,
+        "retries": 0
+      },
+      "paired_deltas_bitmap_minus_native": {
+        "task_pass_rate": {
+          "mean": 0.0,
+          "95ci": [
+            0.0,
+            0.0
+          ]
+        },
+        "latency_ms": {
+          "mean": 2894.5714285714284,
+          "95ci": [
+            1030.3536430249098,
+            4758.789214117947
+          ]
+        },
+        "provider_cost_usd": {
+          "mean": -0.04724697142857143,
+          "95ci": [
+            -0.08649661888011073,
+            -0.007997323977032116
+          ]
+        }
+      }
+    },
+    "terra": {
+      "bitmap": {
+        "runs": 7,
+        "task_pass_rate": 1.0,
+        "task_pass_rate_95ci": [
+          0.6456695649333126,
+          1.0
+        ],
+        "exact_match_rate": 1.0,
+        "exact_match_rate_95ci": [
+          0.6456695649333126,
+          1.0
+        ],
+        "tokens": {
+          "input_tokens": 476496,
+          "cached_input_tokens": 288776,
+          "output_tokens": 6775,
+          "reasoning_tokens": 2095
+        },
+        "provider_receipt_usd": 0.5144952,
+        "catalog_estimate_usd": 0.5144952,
+        "cost_per_completed_task_usd": 0.0734993142857143,
+        "retrieval_count": 0,
+        "retrieval_failures": 0,
+        "render_ms": null,
+        "request_bytes": null,
+        "latency_p95_ms": 34685.99999999998,
+        "peak_memory_bytes": null,
+        "retries": 0
+      },
+      "native": {
+        "runs": 7,
+        "task_pass_rate": 1.0,
+        "task_pass_rate_95ci": [
+          0.6456695649333126,
+          1.0
+        ],
+        "exact_match_rate": 1.0,
+        "exact_match_rate_95ci": [
+          0.6456695649333126,
+          1.0
+        ],
+        "tokens": {
+          "input_tokens": 959254,
+          "cached_input_tokens": 672544,
+          "output_tokens": 9124,
+          "reasoning_tokens": 2866
+        },
+        "provider_receipt_usd": 0.8174167999999999,
+        "catalog_estimate_usd": 0.8174167999999999,
+        "cost_per_completed_task_usd": 0.11677382857142857,
+        "retrieval_count": 0,
+        "retrieval_failures": 0,
+        "render_ms": null,
+        "request_bytes": null,
+        "latency_p95_ms": 51668.79999999996,
+        "peak_memory_bytes": null,
+        "retries": 0
+      },
+      "paired_deltas_bitmap_minus_native": {
+        "task_pass_rate": {
+          "mean": 0.0,
+          "95ci": [
+            0.0,
+            0.0
+          ]
+        },
+        "latency_ms": {
+          "mean": -3918.4285714285716,
+          "95ci": [
+            -10509.268707282008,
+            2672.411564424865
+          ]
+        },
+        "provider_cost_usd": {
+          "mean": -0.04327451428571428,
+          "95ci": [
+            -0.09987129627943947,
+            0.013322267708010906
+          ]
+        }
+      }
+    }
+  }
+}

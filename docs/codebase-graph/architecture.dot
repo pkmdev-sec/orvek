@@ -1,0 +1,37 @@
+digraph orvek_architecture {
+  graph [label="Orvek architectural responsibility map", labelloc="t", rankdir="LR"];
+  node [shape=box, style="rounded", fontname="Helvetica"];
+  edge [fontname="Helvetica"];
+  component_cli [label="CLI and configuration boundary"];
+  component_session_assembly [label="Session assembly"];
+  component_host_client [label="Detached host client"];
+  component_host_server [label="Detached host server"];
+  component_harness [label="Authoritative harness"];
+  component_runtime [label="Inference and execution runtime"];
+  component_executor [label="Sandbox executor"];
+  component_tui [label="Terminal presentation"];
+  component_headless [label="Headless JSONL projection"];
+  component_review [label="Browser review"];
+  component_memory [label="Shared memory"];
+  component_subagents [label="Isolated subagents"];
+  component_delivery [label="Verification and delivery"];
+  component_operations [label="Build, release and evaluation automation"];
+  component_cli -> component_session_assembly [label="creates"];
+  component_cli -> component_tui [label="starts"];
+  component_cli -> component_headless [label="starts"];
+  component_cli -> component_review [label="starts"];
+  component_session_assembly -> component_host_client [label="admits_through"];
+  component_tui -> component_host_client [label="queries"];
+  component_headless -> component_host_client [label="queries"];
+  component_review -> component_host_client [label="queries"];
+  component_host_client -> component_host_server [label="connects_to"];
+  component_host_server -> component_harness [label="serves"];
+  component_harness -> component_runtime [label="orchestrates"];
+  component_harness -> component_subagents [label="orchestrates"];
+  component_harness -> component_delivery [label="certifies_with"];
+  component_runtime -> component_executor [label="executes_through"];
+  component_session_assembly -> component_memory [label="validates_configuration_of"];
+  component_cli -> component_memory [label="manages"];
+  component_tui -> component_memory [label="uses"];
+  component_operations -> component_executor [label="packages_and_evaluates"];
+}

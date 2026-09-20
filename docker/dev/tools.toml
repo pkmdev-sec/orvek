@@ -1,0 +1,131 @@
+[images]
+iron_proxy = "ironsh/iron-proxy:0.49.0@sha256:c4628019c24f4cc8d77564a26b7c9cedb00accee6f93d06270e85fb8f9c6a7da"
+
+[debian]
+llvm_major = "21"
+llvm_repository = "https://apt.llvm.org/bookworm/"
+llvm_suite = "llvm-toolchain-bookworm-21"
+llvm_signing_key = "https://apt.llvm.org/llvm-snapshot.gpg.key"
+llvm_signing_key_sha256 = "8b2a587ffd672c4687e7581dad4b2f6c1bb2ad6b480cd9771ba2ff48e0b8c75d"
+
+[python]
+version = "3.13.14"
+
+[uv]
+version = "0.12.1"
+amd64_target = "x86_64-unknown-linux-gnu"
+amd64_sha256 = "90b2f223fb69d19db49e117da601f64978593417988530aa733d456141b4bcbb"
+arm64_target = "aarch64-unknown-linux-gnu"
+arm64_sha256 = "769d373e146692c639b5fbaae33b331c297a32e03d30448772051902df52bbf4"
+
+[node]
+version = "24.18.1"
+amd64_target = "x64"
+amd64_sha256 = "d6c664df3f3f61458e8c277585571328522d705166723a7c7823a9253a4d15a0"
+arm64_target = "arm64"
+arm64_sha256 = "7201e3a09dc825bac57867c81913e2b8f0ef87d04cb9082af4cda82f6ff3d88c"
+
+[bun]
+version = "1.3.14"
+amd64_target = "x64"
+amd64_sha256 = "951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f"
+arm64_target = "aarch64"
+arm64_sha256 = "a27ffb63a8310375836e0d6f668ae17fa8d8d18b88c37c821c65331973a19a3b"
+
+[rust]
+stable = "1.97.1"
+nightly = "nightly-2026-07-31"
+
+[rustup]
+version = "1.29.0"
+amd64_target = "x86_64-unknown-linux-gnu"
+amd64_sha256 = "4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10"
+arm64_target = "aarch64-unknown-linux-gnu"
+arm64_sha256 = "9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792"
+
+[cargo_binstall]
+version = "1.21.1"
+amd64_target = "x86_64-unknown-linux-musl"
+amd64_sha256 = "630c8f8803a686aa6779497f0f0fb51d49822fb5fc3c514d8ced33b34e338e6e"
+arm64_target = "aarch64-unknown-linux-musl"
+arm64_sha256 = "1dc2979f3c83aade9a1b4344589d14fafa63459b759222528d11419f5cca9cc2"
+
+[tools.just]
+package = "just"
+version = "1.57.0"
+executable = "just"
+
+[tools.ripgrep]
+package = "ripgrep"
+version = "15.2.0"
+executable = "rg"
+
+[tools.fd]
+package = "fd-find"
+version = "10.4.2"
+executable = "fd"
+
+[tools.samply]
+package = "samply"
+version = "0.13.1"
+executable = "samply"
+
+[tools.cargo_samply]
+package = "cargo-samply"
+version = "0.4.2"
+executable = "cargo-samply"
+
+[tools.jj]
+package = "jj-cli"
+version = "0.43.0"
+executable = "jj"
+
+[tools.cargo_expand]
+package = "cargo-expand"
+version = "1.0.124"
+executable = "cargo-expand"
+
+[tools.cargo_show_asm]
+package = "cargo-show-asm"
+version = "0.2.62"
+executable = "cargo-asm"
+
+[tools.cargo_hack]
+package = "cargo-hack"
+version = "0.6.45"
+executable = "cargo-hack"
+
+[tools.cargo_udeps]
+package = "cargo-udeps"
+version = "0.1.61"
+executable = "cargo-udeps"
+
+[tools.cargo_nextest]
+package = "cargo-nextest"
+version = "0.9.140"
+executable = "cargo-nextest"
+
+[tools.cargo_llvm_cov]
+package = "cargo-llvm-cov"
+version = "0.8.7"
+executable = "cargo-llvm-cov"
+
+[tools.cargo_fuzz]
+package = "cargo-fuzz"
+version = "0.13.2"
+executable = "cargo-fuzz"
+
+[tools.zepter]
+package = "zepter"
+version = "1.88.1"
+executable = "zepter"
+
+[tools.mergiraf]
+package = "mergiraf"
+version = "0.18.0"
+executable = "mergiraf"
+
+[tools.hyperfine]
+package = "hyperfine"
+version = "1.20.0"
+executable = "hyperfine"

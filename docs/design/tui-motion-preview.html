@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek welcome logo</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:28px;background:#131219;color:#eeeaf4;font:14px/1.5 system-ui,sans-serif}main{max-width:900px;margin:auto}h1{font-size:22px;font-weight:600;margin:0 0 8px}p{color:#b7b0c2;margin:0 0 20px;max-width:720px}.controls{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0}button{background:#24212e;color:#f1ecf6;border:1px solid #494254;border-radius:6px;padding:9px 12px;font:inherit;cursor:pointer;min-height:40px}button:focus-visible{outline:2px solid #c4acf8;outline-offset:3px}.stage{min-height:240px;display:grid;place-items:center;overflow:auto;background:#121118;border:1px solid #3b3546;border-radius:8px;padding:32px}.stage.light{background:#f6f4f8;border-color:#d9d2e0}pre{font:13px/18px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre;margin:0}.cell{display:inline-block;width:1ch;height:18px;vertical-align:top}a{color:#c4acf8}.links{display:flex;flex-wrap:wrap;gap:20px;font-size:13px}.note{margin-top:20px;font-size:13px}@media(max-width:520px){body{padding:12px}.stage{padding:12px}}
+</style>
+</head>
+<body>
+<main>
+<h1>Orvek / welcome logo</h1>
+<p>Approved visual direction: this logo. The native chat bar, execution view, and actions palette remain the baseline for further design.</p>
+<div class="controls">
+<button id="replay">Replay entrance</button>
+<button id="theme" aria-pressed="false">Light theme</button>
+<button id="ascii" aria-pressed="false">ASCII fallback</button>
+<button id="motion" aria-pressed="false">Reduce motion</button>
+</div>
+<div id="stage" class="stage"><pre id="logo" role="img" aria-label="Orvek"></pre></div>
+<p class="note">Logo study only. Placement and entrance timing remain proposed. Input will never wait for this effect. Other component designs will be reviewed against native terminal captures.</p>
+<div class="links"><a href="tui-motion.md">Revised plan</a><a href="tui-references.md">TUI research and examples</a></div>
+</main>
+<script>
+const welcomeStudy=(()=>{
+  const glyphs={O:['01110','11011','11011','11011','01110'],R:['11110','11011','11110','11010','11011'],V:['11011','11011','11011','01010','00100'],E:['11111','11000','11110','11000','11111'],K:['11011','11010','11100','11010','11011']};
+  function frame({elapsed=1,ascii=false,light=false,reduced=false}={}){
+    const rows=Array.from({length:5},()=>Array.from({length:29},()=>({ch:' ',color:light?'#6b41a8':'#b6a0f7',opacity:1})));
+    [...'ORVEK'].forEach((letter,index)=>glyphs[letter].forEach((line,y)=>[...line].forEach((bit,x)=>{
+      const column=index*6+x;
+      if(bit==='1')rows[y][column]={ch:ascii?'#':'█',color:light?(index<3?'#6b41a8':'#226c76'):(index<3?'#b6a0f7':'#78c9d0'),opacity:!reduced&&elapsed<.8?.4+.6*Math.max(0,1-Math.abs(column-elapsed*45)/10):1};
+    })));
+    return rows;
+  }
+  return {frame};
+})();
+if(typeof document!=='undefined'){
+  const byId=id=>document.getElementById(id),logo=byId('logo');
+  let light=false,ascii=false,reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let started=performance.now(),request=0,last=0;
+  const cells=[];
+  for(let y=0;y<5;y++){for(let x=0;x<29;x++){const cell=document.createElement('span');cell.className='cell';logo.append(cell);cells.push(cell);}if(y<4)logo.append(document.createTextNode('\n'));}
+  function draw(now){welcomeStudy.frame({elapsed:(now-started)/1000,light,ascii,reduced}).flat().forEach((cell,i)=>{cells[i].textContent=cell.ch;cells[i].style.color=cell.color;cells[i].style.opacity=cell.opacity;});}
+  function tick(now){if(now-last>=50){draw(now);last=now;}if(!reduced&&!document.hidden&&now-started<850)request=requestAnimationFrame(tick);else draw(now);}
+  function arm(){cancelAnimationFrame(request);draw(performance.now());if(!reduced&&!document.hidden&&performance.now()-started<850)request=requestAnimationFrame(tick);}
+  byId('replay').addEventListener('click',()=>{started=performance.now();arm();});
+  byId('theme').addEventListener('click',()=>{light=!light;byId('stage').classList.toggle('light',light);byId('theme').textContent=light?'Dark theme':'Light theme';byId('theme').setAttribute('aria-pressed',String(light));draw(performance.now());});
+  byId('ascii').addEventListener('click',()=>{ascii=!ascii;byId('ascii').textContent=ascii?'Unicode logo':'ASCII fallback';byId('ascii').setAttribute('aria-pressed',String(ascii));draw(performance.now());});
+  byId('motion').addEventListener('click',()=>{reduced=!reduced;byId('motion').textContent=reduced?'Enable entrance motion':'Reduce motion';byId('motion').setAttribute('aria-pressed',String(reduced));arm();});
+  if(reduced){byId('motion').textContent='Enable entrance motion';byId('motion').setAttribute('aria-pressed','true');}
+  document.addEventListener('visibilitychange',arm);arm();
+}
+</script>
+</body>
+</html>

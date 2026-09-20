@@ -1,0 +1,273 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  merge_group:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  source-hygiene:
+    runs-on: ubuntu-latest
+    name: Source hygiene
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Reject local state and generated files
+        run: python3 scripts/check-source-tree.py
+      - name: Check documentation links and examples
+        run: python3 scripts/check-docs.py
+      - name: Test codebase graph generator
+        run: python3 -m unittest discover -s scripts/tests -p "test_*.py"
+      - name: Reject stale codebase graph
+        run: python3 scripts/generate-codebase-graph.py --check
+
+  evaluation-contracts:
+    runs-on: ubuntu-latest
+    name: Evaluation contracts
+    timeout-minutes: 10
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        run: pipx install uv==0.8.22
+      - name: Install locked evaluation dependencies
+        run: uv sync --project evals --locked
+      - name: Test Harbor adapter contracts
+        run: uv run --project evals --frozen python -m unittest harbor_adapter.test_agent -v
+      - name: Test SnapCompact accounting
+        run: python3 -B -m unittest discover -s evals/snapcompact -p 'test_*.py' -v
+
+  cache:
+    uses: ./.github/workflows/cache.yaml
+
+  review-web:
+    runs-on: ubuntu-latest
+    name: Review Web
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web/review
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Test review app
+        run: bun test
+      - name: Build review assets
+        run: bun run build
+      - name: Typecheck review app
+        run: bun run typecheck
+
+  cargo-tests:
+    needs: cache
+    runs-on: ${{ matrix.os }}
+    name: Tests (${{ matrix.os }})
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: build
+          save-if: false
+      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@nextest
+      - name: cargo test
+        run: just test --locked
+
+  docker-security:
+    needs: cache
+    runs-on: ubuntu-latest
+    name: Docker security integration
+    timeout-minutes: 45
+    env:
+      ORVEK_EXECUTOR_HELPER: target/debug/orvek-executor
+      ORVEK_WORKSPACE_TEST_IMAGE: debian:bookworm-slim
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: build
+          save-if: false
+      - name: Pull the isolated runtime image
+        run: docker pull debian:bookworm-slim
+      - name: Build the Linux executor helper
+        run: cargo build --locked --package orvek-executor --bin orvek-executor
+      - name: Test controller isolation
+        run: cargo test --locked --package orvek-harness --test controller_execution -- --ignored --test-threads=1
+      - name: Test Docker runtime boundaries
+        run: cargo test --locked --package orvek-harness --test docker_execution -- --ignored --test-threads=1
+      - name: Test native import isolation
+        run: cargo test --locked --package orvek-harness --test native_import -- --ignored --test-threads=1
+      - name: Test operator socket recovery
+        run: cargo test --locked --package orvek-harness --test operator_protocol -- --ignored --test-threads=1
+      - name: Test protected verification
+        run: cargo test --locked --package orvek-harness --test protected_verification -- --ignored --test-threads=1
+      - name: Test workspace command isolation
+        run: cargo test --locked --package orvek-harness --test workspace_tools -- --ignored --test-threads=1
+
+  cargo-build:
+    needs: cache
+    runs-on: ubuntu-latest
+    name: Build (${{ matrix.toolchain }})
+    timeout-minutes: 20
+    continue-on-error: ${{ matrix.toolchain != '1.97.0' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: ["1.97.0", stable, nightly]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Install Rust ${{ matrix.toolchain }} toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: build
+          save-if: false
+      - uses: taiki-e/install-action@just
+      - name: Check standalone orvek package
+        run: cargo check --package orvek --locked
+      - name: build
+        run: just build --locked --all-features
+
+  cargo-portability:
+    needs: cache
+    runs-on: ubuntu-latest
+    name: Features + WebAssembly
+    timeout-minutes: 20
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: build
+          save-if: false
+      - uses: taiki-e/install-action@cargo-hack
+      - uses: taiki-e/install-action@just
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - name: Install Worker build tool
+        uses: taiki-e/install-action@v2
+        with:
+          tool: worker-build@0.8.5
+      - name: Check orvek-memory feature powerset
+        run: just check-features
+      - name: Check Cloudflare Worker WebAssembly target
+        run: just check-wasm --locked
+      - name: Install Cloudflare Worker dependencies
+        run: npm ci --prefix examples/orvek-memory-cloudflare
+      - name: Test Cloudflare credential tooling
+        run: npm test --prefix examples/orvek-memory-cloudflare
+      - name: Bundle Cloudflare Worker
+        run: npm run deploy:check --prefix examples/orvek-memory-cloudflare
+
+  cargo-lint:
+    needs: cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: Clippy
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: taiki-e/install-action@just
+      - name: Install Rust stable Clippy toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: build
+          save-if: false
+      - name: Install Rust nightly formatting toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - name: fmt + lint
+        run: just lint
+
+  cargo-doc:
+    needs: cache
+    runs-on: ubuntu-latest
+    name: Docs (lint + test)
+    timeout-minutes: 20
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: taiki-e/install-action@just
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: build
+          save-if: false
+      - name: doclint
+        run: just check-docs
+      - name: doctest
+        run: just test-docs
+
+  cargo-build-benches:
+    needs: cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: Build Benchmarks
+    continue-on-error: true
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: taiki-e/install-action@just
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: build
+          save-if: false
+      - name: build benches
+        run: cargo bench --no-run --all
+
+  benchmarks:
+    if: ${{ vars.ORVEK_ENABLE_CODSPEED == 'true' }}
+    needs: cache
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/codspeed.yml

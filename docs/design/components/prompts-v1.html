@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvek · Recent prompt picker · Proposal 1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#12151a;color:#e4e8ed;font:14px/1.55 system-ui,sans-serif;padding:40px 28px}main{max-width:1120px;margin:auto}.eyebrow{color:#9eabb9;letter-spacing:.14em;font-size:11px;font-weight:600;margin-bottom:13px}h1{font-size:32px;letter-spacing:-.025em;font-weight:550;line-height:1.2;margin:0 0 12px}.intro{color:#a9b3bf;margin:0;max-width:740px}.review-state{display:inline-block;color:#c4b38e;font-size:12px;margin-top:14px}.controls{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0 16px}label{display:grid;gap:5px;font-size:12px;color:#a9b3bf}select,button{font:inherit;border:1px solid #39424d;background:#1c222b;color:#dbe2eb;border-radius:5px;padding:8px 11px;min-height:36px}button{cursor:pointer}.toggle{display:flex;gap:8px;align-items:center;min-height:36px}.toggle input{accent-color:#aebfcb}.canvas{--base:#0b1117;--text:#dce3ea;--muted:#8998a5;--border:#59646e;--accent:#76a9df;background:var(--base);color:var(--text);border:1px solid #303a45;border-radius:8px;padding:26px 22px 22px;overflow:auto}.canvas.light{--base:#f7f8f9;--text:#283441;--muted:#627180;--border:#909ba5;--accent:#265f99}.caption{display:flex;justify-content:space-between;color:var(--muted);font:11px/1.4 system-ui,sans-serif;margin-bottom:26px;gap:12px}.stage{min-height:350px;display:grid;place-items:start center}.frame{position:relative;font:15px/23px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.grid{font:inherit;white-space:pre;user-select:none;margin:0}.cell{display:inline-block;width:1ch;height:23px;vertical-align:top}.border{color:var(--border)}.muted{color:var(--muted)}.accent{color:var(--accent);font-weight:600}.title{font-weight:600}.search{position:absolute;top:23px;left:11ch;font:inherit;line-height:23px;padding:0;border:0;outline:0;background:var(--base);color:var(--text);height:23px;min-width:0;border-radius:0;caret-color:var(--text)}.hit{position:absolute;left:1ch;min-height:0;height:23px;background:transparent;border:0;border-radius:0;padding:0;margin:0;outline:none}.hit:hover{background:#7a89990b}.note{font-size:11px;color:var(--muted);margin:24px 0 0}.notice{min-height:21px;color:var(--muted);font-size:12px;margin-top:18px}.closed{font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);padding-top:120px}.explanation{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:24px 0;margin-top:7px;border-bottom:1px solid #303843}.explanation h2{font-size:13px;font-weight:550;color:#d4dee7;margin:0 0 7px}.explanation p{font-size:13px;color:#9aa8b6;margin:0}.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:22px 0 0;font-size:12px;color:#9aa8b6}a{color:#bccbd8}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #a8becd;outline-offset:4px}@media(max-width:650px){body{padding:24px 12px}.canvas{padding:16px 8px}.explanation{grid-template-columns:1fr;gap:16px}.frame{font-size:13px}h1{font-size:27px}}
+.stage{min-height:510px}.frame{font-size:14px}.closed{padding-top:70px;width:100%}.result{white-space:pre-wrap;overflow:auto;max-height:260px;font:13px/1.6 ui-monospace,monospace}.scope{cursor:pointer}.preview-hit{position:absolute;pointer-events:none}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">ORVEK / COMPONENT REVIEW</div>
+<h1>Recent prompts</h1>
+<p class="intro">Find an earlier prompt, read it in full, and use it as your draft. Keep the list clear and the original text intact.</p>
+<div class="review-state">Proposal 1 · awaiting your approval</div>
+<div class="controls">
+<label>Sample history<select id="source"><option value="all">All examples</option><option value="other">Other sessions only</option><option value="empty">No prompts</option></select></label>
+<label>Popup width<select id="width"><option value="82">Normal · 82 columns</option><option value="60">60 columns</option><option value="40">40 columns</option><option value="32">32 columns</option></select></label>
+<label>Popup height<select id="height"><option value="22">22 rows</option><option value="18">18 rows</option><option value="16">16 rows</option></select></label>
+<button id="scope" type="button">Switch scope · Ctrl+F</button><button id="reopen" type="button">Reopen picker</button><label class="toggle"><input id="images" type="checkbox">Draft has images</label><label class="toggle"><input id="light" type="checkbox">Light</label>
+</div>
+<section class="canvas" id="canvas" aria-label="Recent prompt picker preview">
+<div class="caption"><span>RECENT PROMPTS / INTERACTIVE PREVIEW</span><span id="dimensions"></span></div>
+<div class="stage"><div class="frame" id="frame"><pre class="grid" id="grid" aria-hidden="true"></pre><div id="hits"></div><input class="search" id="search" type="text" aria-label="Search prompt text" autocomplete="off" spellcheck="false"></div><div class="closed" id="closed" hidden><p id="outcome"></p><pre class="result" id="result"></pre></div></div>
+<div class="notice" id="notice" role="status"></div>
+<p class="note">Type to search prompt text. ↑/↓ select; Page Up/Down scroll the preview one row; Ctrl+F changes scope; Enter/Tab uses the prompt; Esc closes. Click selects, double-click uses. Wheel over the list selects; wheel over the preview scrolls. History stores text only: selection replaces the sample draft and its images, without sending. All history is fictional.</p>
+</section>
+<div class="explanation">
+<div><h2>Prompt text first</h2><p>Keep the numbered list and selection marker. Sent age helps distinguish similar prompts. Workspace and session details move out of the list.</p></div>
+<div><h2>Read before using</h2><p>The preview preserves indentation and blank lines. Full source details follow the prompt. Scrolling stops at the last line instead of leaving an empty preview.</p></div>
+<div><h2>Keep the current behavior clear</h2><p>All sessions includes other workspaces. Current session filters by its exact ID. Use replaces the whole draft; closing the picker leaves it alone.</p></div>
+</div>
+<div class="foot"><span>Review this picker only. Existing theme colors and storage stay unchanged.</span><a href="../decisions.md">Review order and approvals</a></div>
+</main>
+<script>
+const promptsStudy=(()=>{
+ const current='019ce701-8101-7001-8a01-000000000001',other='019ce701-8101-7001-8a01-000000000002',now=1789272000000;
+ const examples=[
+  ['Review the session restore path.\nKeep the saved workspace and user instructions.\nStart with the relevant tests.',current,'/work/orvek',2],
+  ['Summarize the changes to the parser.',other,'/work/parser',8],
+  ['Check the recovery behavior.\n\nRequirements:\n    Keep the original text.\n    Preserve user constraints.\n    Do not resubmit completed work.\n\nCases:\n    1. Resume a saved session.\n    2. Restore a missing image.\n    3. Interrupt compaction.\n    4. Repeat compaction.\n    5. Switch to a text-only model.\n\nReport the evidence and remaining limits.',current,'/work/orvek',14],
+  ['  exact\n\n    prompt  ',current,'/work/orvek',23],
+  ['Summarize the changes to the parser.',current,'/work/orvek',47],
+  ['Inspect the local memory settings.',other,'/work/another-project',95],
+  ['Explain the command without running it.\n\n    cargo check --all-features',current,'/work/orvek',180],
+  ['Keep the source path /work/deeply/nested/project/source/components/session_restore.rs exact.',other,'/work/deeply/nested/project',1440],
+  ['Write a concise release note.',current,'/work/orvek',2880]
+ ].map(([text,session_id,workspace,minutes],index)=>({id:index,text,session_id,workspace,recorded_at_unix_ms:now-minutes*60000}));
+ const lower=s=>s.replace(/[A-Z]/g,c=>c.toLowerCase());
+ function score(text,query){if(!query)return 0;const needle=[...lower(query)],characters=[...lower(text)];let q=0,total=0,previousMatch=null,previousChar=null;for(let index=0;index<characters.length;index++){const char=characters[index];if(char!==needle[q]){previousChar=char;continue;}total+=10;if(previousMatch!==null&&previousMatch+1===index)total+=15;if(previousChar===null||previousChar==='/')total+=8;previousMatch=index;q++;if(q===needle.length)return Math.max(0,total-index);previousChar=char;}return null;}
+ const source=kind=>kind==='empty'?[]:kind==='other'?examples.filter(p=>p.session_id!==current):examples;
+ function matches(query='',scope='global',kind='all'){return source(kind).map((prompt,index)=>({prompt,index,score:score(prompt.text,query)})).filter(row=>(scope==='global'||row.prompt.session_id===current)&&row.score!==null).sort((a,b)=>b.score-a.score||a.index-b.index).map(row=>row.prompt);}
+ const cut=(value,width)=>width<=0?'':value.length<=width?value:value.slice(0,width-1)+'…';
+ const oneLine=text=>text.trim().split(/\s+/).join(' ');
+ function age(timestamp){const minutes=Math.floor(Math.max(0,now-timestamp)/60000);return minutes<60?minutes+'m':minutes<1440?Math.floor(minutes/60)+'h':Math.floor(minutes/1440)+'d';}
+ function wrapExact(text,width){return text.split('\n').flatMap(line=>{let chars=[...line];const rows=[];while(chars.length>width){const space=chars.slice(0,width).lastIndexOf(' ')+1,end=space>0&&chars.slice(0,space).join('').trim()?space:width;rows.push(chars.slice(0,end).join(''));chars=chars.slice(end);}rows.push(chars.join(''));return rows;});}
+ function helpRows(width){const rows=[];let line='';for(const group of ['↑↓ move','pgup/pgdn preview','enter/tab use','ctrl+f scope','esc close']){if(line&&line.length+3+group.length>width){rows.push(line);line='';}line+=(line?' · ':'')+group;}if(line)rows.push(line);return rows;}
+ function choose({query='',scope='global',kind='all',selected=0}={}){const p=matches(query,scope,kind)[selected];return p?{kind:'ReplaceDraft',text:p.text}:null;}
+ function scene({columns=82,height=22,query='',scope='global',kind='all',selected=0,offset=0,scroll=0,hasImages=false}={}){
+  if(columns<32||height<16)throw new Error('This study requires 32 columns and 16 rows.');
+  const results=matches(query,scope,kind);selected=results.length?Math.max(0,Math.min(selected,results.length-1)):0;const chosen=results[selected],help=helpRows(columns-4),helpY=height-1-help.length,actionY=helpY-1,listTop=4,listHeight=Math.max(1,Math.min(7,actionY-listTop-6)),previewTop=listTop+listHeight,previewY=previewTop+2,capacity=actionY-previewY;
+  offset=Math.max(0,Math.min(offset,Math.max(0,results.length-listHeight)));if(selected<offset)offset=selected;if(selected>=offset+listHeight)offset=selected-listHeight+1;
+  const grid=Array.from({length:height},()=>Array.from({length:columns},()=>({ch:' ',role:'text'}))),hits=[];
+  function put(value,x,y,role='text'){[...value].forEach((ch,i)=>{if(x+i>=columns-1||x+i<0||y<0||y>=height-1)throw new Error('Text outside content bounds.');grid[y][x+i]={ch,role};});}
+  for(let y=0;y<height;y++){grid[y][0]={ch:y===0?'╭':y===height-1?'╰':'│',role:'border'};grid[y][columns-1]={ch:y===0?'╮':y===height-1?'╯':'│',role:'border'};}
+  for(let x=1;x<columns-1;x++){grid[0][x]={ch:'─',role:'border'};grid[height-1][x]={ch:'─',role:'border'};}
+  const title=' Recent prompts ';put(title,Math.floor((columns-title.length)/2),0,'accent');put('Search:',3,1,'muted');put([...query].slice(-(columns-13)).join(''),11,1);
+  put('Scope: '+(scope==='global'?'All sessions':'Current session'),3,2,'muted');if(columns>=60)put(results.length+' found',columns-4-(results.length+' found').length,2,'muted');
+  put('Prompt',3,3,'muted');if(columns>=60)put('Sent',columns-9,3,'muted');
+  results.slice(offset,offset+listHeight).forEach((p,i)=>{const position=offset+i,active=position===selected,y=listTop+i;if(active)put('›',1,y,'accent');const label=(position+1)+'. '+oneLine(p.text);put(cut(label,columns-(columns>=60?14:6)),3,y,active?'accent':'text');if(columns>=60)put(age(p.recorded_at_unix_ms),columns-5-age(p.recorded_at_unix_ms).length,y,'muted');hits.push({index:position,id:p.id,y});});
+  if(!results.length)put(cut(query?'No matching prompts':'No prompts in this scope',columns-6),3,listTop,'muted');
+  put('─'.repeat(columns-2),1,previewTop,'border');put(' Preview ',3,previewTop,'muted');
+  const content=chosen?[...wrapExact(chosen.text,columns-6).map(text=>({text,role:'text'})),{text:'',role:'text'},...wrapExact('Source\nWorkspace: '+chosen.workspace+'\nSession: '+chosen.session_id+'\nSent: '+age(chosen.recorded_at_unix_ms)+' ago',columns-6).map(text=>({text,role:'muted'}))]:[];
+  const maxScroll=Math.max(0,content.length-capacity);scroll=Math.max(0,Math.min(scroll,maxScroll));
+  if(chosen){const sourceLabel='From: '+(chosen.session_id===current?'current session':chosen.workspace);put(cut(sourceLabel,columns-6),3,previewTop+1,'muted');const position=(scroll+1)+'–'+Math.min(scroll+capacity,content.length)+'/'+content.length;put(position,columns-3-position.length,previewTop,'muted');content.slice(scroll,scroll+capacity).forEach((row,i)=>put(row.text,3,previewY+i,row.role));}
+  put(hasImages?'Replaces draft + images.':'Use replaces your draft.',3,actionY,'muted');help.forEach((line,i)=>put(line,Math.floor((columns-line.length)/2),helpY+i,'muted'));
+  return {grid,results,chosen,selected,offset,scroll,maxScroll,content,hits,listTop,listHeight,previewTop,previewY,capacity,height,columns};
+ }
+ return {examples,current,source,score,matches,oneLine,wrapExact,choose,scene};
+})();
+if(typeof document!=='undefined'){
+ const id=name=>document.getElementById(name),frame=id('frame'),grid=id('grid'),search=id('search'),canvas=id('canvas');
+ let scope='global',selected=0,offset=0,scroll=0,columns=82,opened=true,layout,cells=[],buttons=[];
+ function options(){return {columns,height:Number(id('height').value),query:search.value,scope,kind:id('source').value,selected,offset,scroll,hasImages:id('images').checked};}
+ function render(){
+  layout=promptsStudy.scene(options());selected=layout.selected;offset=layout.offset;scroll=layout.scroll;frame.hidden=!opened;id('closed').hidden=opened;
+  frame.style.width=columns+'ch';frame.style.height=layout.height*23+'px';search.style.width=(columns-13)+'ch';id('dimensions').textContent=columns+' × '+layout.height+' cells';
+  if(grid.dataset.size!==columns+'x'+layout.height){grid.replaceChildren();cells=[];layout.grid.forEach(row=>{row.forEach(()=>{const cell=document.createElement('span');grid.append(cell);cells.push(cell);});grid.append(document.createTextNode('\n'));});grid.dataset.size=columns+'x'+layout.height;}
+  layout.grid.flat().forEach((next,i)=>{const cell=cells[i],role='cell '+next.role;if(cell.textContent!==next.ch)cell.textContent=next.ch;if(cell.className!==role)cell.className=role;});
+  while(buttons.length<7){const button=document.createElement('button');button.type='button';button.className='hit';button.tabIndex=-1;button.addEventListener('click',()=>{selected=Number(button.dataset.index);scroll=0;render();search.focus();});button.addEventListener('dblclick',()=>{selected=Number(button.dataset.index);use();});id('hits').append(button);buttons.push(button);}
+  buttons.forEach((button,i)=>{const h=layout.hits[i];button.hidden=!h;if(h){button.dataset.index=h.index;button.setAttribute('aria-label',promptsStudy.oneLine(layout.results[h.index].text));Object.assign(button.style,{top:h.y*23+'px',width:(columns-2)+'ch'});}});
+ }
+ function resetSelection(){selected=0;offset=0;scroll=0;render();}
+ function toggle(){scope=scope==='global'?'current':'global';resetSelection();id('notice').textContent=scope==='global'?'All sessions includes other workspaces.':'Showing the current session only.';if(opened)search.focus();}
+ function close(text,result=''){opened=false;id('outcome').textContent=text;id('result').textContent=result;render();id('reopen').focus();}
+ function use(){const choice=promptsStudy.choose(options());if(choice)close('Sample draft replaced. Nothing was sent.',choice.text);}
+ function resize(){const probe=document.createElement('span');probe.className='cell';probe.textContent='M';const hidden=frame.hidden;frame.hidden=false;grid.append(probe);const unit=probe.getBoundingClientRect().width;probe.remove();frame.hidden=hidden;const style=getComputedStyle(canvas),available=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);columns=Math.max(32,Math.min(Number(id('width').value),Math.floor(available/unit)));render();}
+ search.addEventListener('input',resetSelection);
+ search.addEventListener('keydown',event=>{if(!opened)return;if(event.ctrlKey&&event.key==='f'&&!event.altKey&&!event.metaKey){event.preventDefault();toggle();return;}if(event.key==='Escape'||(event.key==='Backspace'&&!search.value)){event.preventDefault();close('Picker closed. The sample draft is unchanged.');return;}if(event.key==='Enter'||event.key==='Tab'){event.preventDefault();use();return;}if(['ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();selected=Math.max(0,Math.min(selected+(event.key==='ArrowUp'?-1:1),layout.results.length-1));scroll=0;render();return;}if(['PageUp','PageDown'].includes(event.key)){event.preventDefault();scroll+=event.key==='PageUp'?-1:1;render();}});
+ search.addEventListener('paste',event=>{event.preventDefault();const pasted=(event.clipboardData?.getData('text/plain')||'').replace(/[\x00-\x1f\x7f-\x9f]/g,'');search.setRangeText(pasted,search.selectionStart,search.selectionEnd,'end');resetSelection();});
+ frame.addEventListener('wheel',event=>{if(!opened||!event.deltaY)return;const row=Math.floor((event.clientY-frame.getBoundingClientRect().top)/23);if(row>=layout.previewY&&row<layout.previewY+layout.capacity){event.preventDefault();scroll+=Math.sign(event.deltaY);render();}else if(row>=layout.listTop&&row<layout.listTop+layout.listHeight){event.preventDefault();selected=Math.max(0,Math.min(selected+Math.sign(event.deltaY),layout.results.length-1));scroll=0;render();}},{passive:false});
+ id('scope').addEventListener('click',toggle);id('source').addEventListener('change',resetSelection);id('width').addEventListener('change',resize);id('height').addEventListener('change',render);id('images').addEventListener('change',render);id('light').addEventListener('change',()=>canvas.classList.toggle('light',id('light').checked));
+ id('reopen').addEventListener('click',()=>{opened=true;scope='global';search.value='';selected=0;offset=0;scroll=0;id('notice').textContent='';render();search.focus();});
+ new ResizeObserver(resize).observe(canvas);resize();search.focus();
+}
+</script>
+</body>
+</html>
