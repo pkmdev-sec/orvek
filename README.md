@@ -77,6 +77,7 @@ and saved-data handling.
 
 - [Configuration, authentication, skills, and MCP](docs/configuration.md)
 - [Sessions, review, and reflection](docs/sessions.md)
+- [Executable host examples and coverage limits](docs/executable-examples.md)
 - [Local and remote memory](docs/memory.md)
 - [Context projection and legacy compaction data](docs/compaction.md)
 - [Subagents](docs/subagents.md)

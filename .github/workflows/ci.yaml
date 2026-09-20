@@ -19,7 +19,9 @@ jobs:
         run: python3 scripts/check-source-tree.py
       - name: Check documentation links and examples
         run: python3 scripts/check-docs.py
-      - name: Test codebase graph generator
+      - name: Reject stale executable documentation
+        run: python3 scripts/check-doc-examples.py --check
+      - name: Test documentation checks and codebase graph generator
         run: python3 -m unittest discover -s scripts/tests -p "test_*.py"
       - name: Reject stale codebase graph
         run: python3 scripts/generate-codebase-graph.py --check
@@ -114,6 +116,14 @@ jobs:
         run: docker pull debian:bookworm-slim
       - name: Build the Linux executor helper
         run: cargo build --locked --package orvek-executor --bin orvek-executor
+      - name: Build the CLI for executable documentation
+        run: cargo build --locked --package orvek --bin orvek
+      - name: Run isolated host documentation examples
+        run: |
+          python3 -B examples/host-docs/native.py target/debug/orvek
+          python3 -B examples/host-docs/reconnect.py target/debug/orvek
+          python3 -B examples/host-docs/completion_hook.py target/debug/orvek
+          python3 -B examples/host-docs/sandbox.py target/debug/orvek
       - name: Test controller isolation
         run: cargo test --locked --package orvek-harness --test controller_execution -- --ignored --test-threads=1
       - name: Test Docker runtime boundaries

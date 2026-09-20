@@ -1,0 +1,212 @@
+[
+  {
+    "guide": "README.md",
+    "block": 1,
+    "sha256": "fc445e1ddb4627462d4e8ae0fcea9556cb138566485da7ec2ca2b6a408a99d0c",
+    "kind": "external-service",
+    "reason": "Downloads repository and crates; not isolated host behavior."
+  },
+  {
+    "guide": "README.md",
+    "block": 2,
+    "sha256": "a3448e162e0bfadeb1db11a5f46be00b2a7556262643055e2d03d27dc8d3bb06",
+    "kind": "external-service",
+    "reason": "Requires real authentication and an interactive terminal."
+  },
+  {
+    "guide": "README.md",
+    "block": 3,
+    "sha256": "29c2c5d8e92214652400fac6c45406645cb2393bc5aa439df8afd87856cc2843",
+    "kind": "external-service",
+    "reason": "Uses a live provider and existing user sessions."
+  },
+  {
+    "guide": "README.md",
+    "block": 4,
+    "sha256": "df71e2e62ee0b3d89a824139098062343f8e2ece576d69273f352ddf83c94eba",
+    "kind": "external-service",
+    "reason": "Downloads and installs a binary into the user environment."
+  },
+  {
+    "guide": "README.md",
+    "block": 5,
+    "sha256": "4939f6ea3d5fea43d4ca93f5d78018c5404e9fa3cdc80931164160d826fc0d9b",
+    "kind": "illustrative",
+    "reason": "Contributor checks; not an isolated capability scenario."
+  },
+  {
+    "guide": "docs/compaction.md",
+    "block": 1,
+    "sha256": "c9203ffa42f0c5d72d134c1acf350365ae352cdab1016afcae7877f9a7927805",
+    "kind": "illustrative",
+    "reason": "Configuration fragment only; does not exercise context projection."
+  },
+  {
+    "guide": "docs/configuration.md",
+    "block": 1,
+    "sha256": "a5d032cfdb67ec5cec63100e9a73c8f1b556edaf71ac095e1cd1364d520bce1d",
+    "kind": "illustrative",
+    "reason": "Memory host example pending T01; TOML parsing is not wiring proof."
+  },
+  {
+    "guide": "docs/configuration.md",
+    "block": 2,
+    "sha256": "e2073560f46f80f6821af149a976f37f0475366cdb2b70d33c392018a8493b56",
+    "kind": "external-service",
+    "reason": "Needs user credentials and authentication service."
+  },
+  {
+    "guide": "docs/configuration.md",
+    "block": 3,
+    "sha256": "33a827ecb8a5ec6df851262cb6c6c487de55727f6a7130b3cd76ab8f9bb8f25f",
+    "kind": "illustrative",
+    "reason": "Token-helper placeholder must be replaced by the operator."
+  },
+  {
+    "guide": "docs/configuration.md",
+    "block": 4,
+    "sha256": "4102b2d8b6c40bd9d93a874e2667b7212a2692c2bd5b062c568efdbdb638b527",
+    "kind": "illustrative",
+    "reason": "Configuration reference; not a behavior test."
+  },
+  {
+    "guide": "docs/configuration.md",
+    "block": 5,
+    "sha256": "a31743e09a654e51c3ab365fcd0aa5d171f2f70ff829eff1871e3e5d3c5a3299",
+    "kind": "illustrative",
+    "reason": "Handler path is a placeholder; runnable hook coverage is below."
+  },
+  {
+    "guide": "docs/configuration.md",
+    "block": 6,
+    "sha256": "0846f51ab1b09bca02db9fe9eaff869e9f27e5673f00a1cd5ad9d44be1287a0d",
+    "kind": "illustrative",
+    "reason": "Visual settings require an interactive terminal."
+  },
+  {
+    "guide": "docs/configuration.md",
+    "block": 7,
+    "sha256": "540d794eb351b41df5b87bb7ab1a4480f7168cd8692600261609b3ff10fe34da",
+    "kind": "illustrative",
+    "reason": "Paths are placeholders; host skill discovery example pending T01."
+  },
+  {
+    "guide": "docs/configuration.md",
+    "block": 8,
+    "sha256": "15293de48a98548a039a78f69adf717fb6046137d4742a38061a9eec4f8b0bc6",
+    "kind": "external-service",
+    "reason": "Downloads an MCP server and needs a real workspace path."
+  },
+  {
+    "guide": "docs/configuration.md",
+    "block": 9,
+    "sha256": "96fbe7453ce9bd5c4440064ec1528a3cd87ee7ec0a2494b6b34a3a9e9c150656",
+    "kind": "external-service",
+    "reason": "Needs an external MCP service and credentials."
+  },
+  {
+    "guide": "docs/harness-host.md",
+    "block": 1,
+    "sha256": "4af6194ae60134473d588eeb369a60c8a6057884f4aa3b6f12ea256abef085a3",
+    "kind": "illustrative",
+    "reason": "Partial Rust call flow with caller-owned variables; reconnect coverage is below."
+  },
+  {
+    "guide": "docs/harness-integration.md",
+    "block": 1,
+    "sha256": "13cb583b6703033ce7fbe3c3ee056339817630f4df11b02968c865842abf7a02",
+    "kind": "illustrative",
+    "reason": "Contributor checks, not a self-contained host task."
+  },
+  {
+    "guide": "docs/memory.md",
+    "block": 1,
+    "sha256": "a5d032cfdb67ec5cec63100e9a73c8f1b556edaf71ac095e1cd1364d520bce1d",
+    "kind": "illustrative",
+    "reason": "Memory host example pending T01."
+  },
+  {
+    "guide": "docs/memory.md",
+    "block": 2,
+    "sha256": "52abd47367a2a768d0b057b56fd9f03e873cb1fb8d9b03bea922526f935074c5",
+    "kind": "illustrative",
+    "reason": "Read shape assumes an existing namespace/key/version; pending T01 wiring example."
+  },
+  {
+    "guide": "docs/memory.md",
+    "block": 3,
+    "sha256": "ab97422a55ef9cea16ac1e7198427a75c4512f8b3c2f077880202b035c7c45ce",
+    "kind": "illustrative",
+    "reason": "Write shape assumes an existing remote record and writer permission."
+  },
+  {
+    "guide": "docs/memory.md",
+    "block": 4,
+    "sha256": "1d823d55f26914c476cf4137730e3e17d5a4f362e79236bbcb73f422703eee1f",
+    "kind": "illustrative",
+    "reason": "Delete shape assumes an existing remote record and writer permission."
+  },
+  {
+    "guide": "docs/memory.md",
+    "block": 5,
+    "sha256": "7be5598204c346916d194bb754ae67e8c6e7901ea8bd77cbd8b0f39589813cfa",
+    "kind": "external-service",
+    "reason": "Remote endpoint, workspace and credential are placeholders."
+  },
+  {
+    "guide": "docs/memory.md",
+    "block": 6,
+    "sha256": "470e4ac1617b2f7c915992d108d9b7d2ef04fa4bf828bed3700f38954566c3fe",
+    "kind": "external-service",
+    "reason": "Mutates remote/local memory and requires a configured service."
+  },
+  {
+    "guide": "docs/performance.md",
+    "block": 1,
+    "sha256": "6975b7ce36b41f4ff6ae5855aba44c5df250b879504ba2a6c999f3c60892e3ae",
+    "kind": "illustrative",
+    "reason": "Benchmark command; measures performance rather than host capability."
+  },
+  {
+    "guide": "docs/sessions.md",
+    "block": 1,
+    "sha256": "7776a93764f080c0e9df74b89554cdde93c0d9a75ac1a30de2b01cbae1d6e36c",
+    "kind": "illustrative",
+    "reason": "Interactive selector and SESSION_ID need existing user state."
+  },
+  {
+    "guide": "docs/sessions.md",
+    "block": 2,
+    "sha256": "c4806e87bce3ab0542d4557e7131f8aa562134df6ae37a7698eaf301776bc2c2",
+    "kind": "external-service",
+    "reason": "Downloads browser dependencies and installs development assets."
+  },
+  {
+    "guide": "docs/subagents.md",
+    "block": 1,
+    "sha256": "5678be40b8dae2c070d392ddaf07ce578a0577d559ed551a7b038442eaa85010",
+    "kind": "illustrative",
+    "reason": "Configuration fragment; does not drive child admission or outcomes."
+  },
+  {
+    "guide": "docs/tui-scrolling.md",
+    "block": 1,
+    "sha256": "298c5e0a0f791cf1c5256288e73966510d1adb8df3d6565421a988abfdc0c8dc",
+    "kind": "illustrative",
+    "reason": "Contributor test commands; no terminal interaction is driven here."
+  },
+  {
+    "guide": "docs/workspace-execution.md",
+    "block": 1,
+    "sha256": "510dd0a549e94d70c7d900642f09eccc4fff8e771b9b65e05aa22e81dbd4ca67",
+    "kind": "illustrative",
+    "reason": "Workspace placeholder and interactive session; native coverage is below."
+  },
+  {
+    "guide": "docs/workspace-execution.md",
+    "block": 2,
+    "sha256": "f52cb23aa6b953a22a5b72cefcc524dc133f1e55575c241676f2584601f58b28",
+    "kind": "illustrative",
+    "reason": "Platform-specific manual sandbox setup; executable sandbox coverage is below."
+  }
+]
