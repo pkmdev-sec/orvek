@@ -14235,7 +14235,7 @@
       "id": "file:bin/orvek/src/app/host.rs",
       "kind": "file",
       "label": "host.rs",
-      "lines": 844,
+      "lines": 839,
       "path": "bin/orvek/src/app/host.rs"
     },
     {
@@ -15099,7 +15099,7 @@
       "id": "file:crates/executor/src/supervisor.rs",
       "kind": "file",
       "label": "supervisor.rs",
-      "lines": 627,
+      "lines": 668,
       "path": "crates/executor/src/supervisor.rs"
     },
     {

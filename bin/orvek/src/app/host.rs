@@ -616,14 +616,14 @@ mod tests {
         listener
     }
 
-    fn fixture_config(root: &Path, agent: &str) -> Config {
+    fn fixture_config(root: &Path, contents: &str) -> Config {
         let command = root.join("fixture-auth");
         fs::write(&command, "#!/bin/sh\nprintf fixture-provider-token\n").unwrap();
         fs::set_permissions(&command, fs::Permissions::from_mode(0o700)).unwrap();
         let path = root.join("config.toml");
         fs::write(
             &path,
-            format!("[auth]\nmode = \"api-key\"\ncommand = {command:?}\n[agent]\n{agent}"),
+            format!("[auth]\nmode = \"api-key\"\ncommand = {command:?}\n{contents}"),
         )
         .unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
@@ -669,21 +669,13 @@ mod tests {
     #[test]
     fn configured_model_route_fails_closed_when_its_key_is_missing() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("config.toml");
-        fs::write(
-            &path,
+        let config = fixture_config(
+            directory.path(),
             r#"[models.spark]
 api_base_url = "http://127.0.0.1:11436/v1"
 api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
 "#,
-        )
-        .unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-        let config = crate::app::config::Config::load(crate::app::config::ConfigOverrides {
-            path: Some(path),
-            ..crate::app::config::ConfigOverrides::default()
-        })
-        .unwrap();
+        );
 
         let error = configuration_identity_material(&config).unwrap_err();
         assert!(
@@ -697,7 +689,7 @@ api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
     #[test]
     fn trace_recording_has_a_versioned_host_identity() {
         let directory = tempfile::tempdir().unwrap();
-        let config = fixture_config(directory.path(), "");
+        let config = fixture_config(directory.path(), "[agent]\n");
         let material = configuration_identity_material(&config).unwrap();
         assert_eq!(
             material["trace_recording_version"], 1,
@@ -712,7 +704,10 @@ api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
     #[test]
     fn configured_completion_hook_has_a_versioned_delivery_identity() {
         let directory = tempfile::tempdir().unwrap();
-        let config = fixture_config(directory.path(), "completion_hook = \"notify-local\"\n");
+        let config = fixture_config(
+            directory.path(),
+            "[agent]\ncompletion_hook = \"notify-local\"\n",
+        );
         assert_eq!(
             configuration_identity_material(&config).unwrap()["completion_hook"],
             json!({"version":1,"command":"notify-local"})
@@ -722,7 +717,7 @@ api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
     #[test]
     fn client_build_metadata_is_not_host_configuration() {
         let directory = tempfile::tempdir().unwrap();
-        let config = fixture_config(directory.path(), "model = \"glm-5.3\"\n");
+        let config = fixture_config(directory.path(), "[agent]\nmodel = \"glm-5.3\"\n");
 
         let material = configuration_identity_material(&config).unwrap();
 

@@ -445,9 +445,33 @@ fn verify_readonly(path: &Path) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     if unsafe { stat.assume_init() }.f_flag & libc::ST_RDONLY == 0 {
-        return Err(io::Error::other("source mount is writable"));
+        let mountinfo = fs::read_to_string("/proc/self/mountinfo")?;
+        if !mountinfo_readonly(&mountinfo, path) {
+            return Err(io::Error::other("source mount is writable"));
+        }
     }
     Ok(())
+}
+
+fn mountinfo_readonly(contents: &str, path: &Path) -> bool {
+    let Some(path) = path.to_str() else {
+        return false;
+    };
+    let mut found = false;
+    for line in contents.lines() {
+        let mut fields = line.split_ascii_whitespace();
+        let Some((mount_point, options)) = fields.nth(4).zip(fields.next()) else {
+            continue;
+        };
+        if mount_point != path {
+            continue;
+        }
+        found = true;
+        if !options.split(',').any(|option| option == "ro") {
+            return false;
+        }
+    }
+    found
 }
 fn safe(path: &str) -> bool {
     !path.is_empty()
@@ -624,4 +648,21 @@ fn copy_source(request: &Request, started: Instant, uid: u32) -> io::Result<()> 
     )?;
     chown(Path::new("/workspace"), uid)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mountinfo_readonly;
+    use std::path::Path;
+
+    #[test]
+    fn recognizes_readonly_bind_mount_options() {
+        let readonly = "42 31 0:52 /source /workspace ro,relatime - ext4 /dev/root rw
+";
+        let writable = "42 31 0:52 /source /workspace rw,relatime - ext4 /dev/root rw
+";
+
+        assert!(mountinfo_readonly(readonly, Path::new("/workspace")));
+        assert!(!mountinfo_readonly(writable, Path::new("/workspace")));
+    }
 }
