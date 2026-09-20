@@ -15003,7 +15003,7 @@
       "id": "file:bin/orvek/tests/completion_hook.rs",
       "kind": "file",
       "label": "completion_hook.rs",
-      "lines": 866,
+      "lines": 865,
       "path": "bin/orvek/tests/completion_hook.rs"
     },
     {
@@ -16562,7 +16562,7 @@
       "id": "file:docs/executable-examples.md",
       "kind": "file",
       "label": "executable-examples.md",
-      "lines": 433,
+      "lines": 436,
       "path": "docs/executable-examples.md"
     },
     {
@@ -16994,7 +16994,7 @@
       "id": "file:examples/host-docs/sandbox.py",
       "kind": "file",
       "label": "sandbox.py",
-      "lines": 59,
+      "lines": 62,
       "path": "examples/host-docs/sandbox.py"
     },
     {

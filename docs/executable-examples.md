@@ -116,7 +116,7 @@ def main(binary, *, export=None):
     with HostFixture(binary, outputs, sandbox=True) as host:
         (host.workspace / "add").write_text(BEFORE)
         (host.workspace / "add").chmod(0o755)
-        program = {"version": 1, "probes": [{"kind": "command", "id": "sum", "command": "sh ./add 2 2",
+        program = {"version": 1, "probes": [{"kind": "command", "id": "sum", "command": "/bin/sh ./add 2 2",
                    "exit_code": 0, "stdout": {"kind": "equals", "text": "4\n"}, "stderr": None}],
                    "control_failure": {"probe": "sum", "stdout": {"kind": "equals", "text": "3\n"}, "stderr": None}}
         verifier = host.query("register_program", program=program)["digest"]
@@ -131,7 +131,10 @@ def main(binary, *, export=None):
                     "delivery": "source", "limits": LIMITS}
         run = host.query("execute_contract", session=host.session(), input="Fix addition", contract=contract)
         task = run["task"]
-        assert task["outcome"] == "complete", task
+        if task["outcome"] != "complete":
+            reports = [json.loads(host.artifact(item["observation"]["report"]))
+                       for item in task["evidence"]]
+            raise AssertionError({"task": task, "reports": reports})
         certificate, = task["certificates"]
         assert certificate["source"] == task["candidate"]["source"]
         assert certificate["source"] != task["baseline"]["source"]

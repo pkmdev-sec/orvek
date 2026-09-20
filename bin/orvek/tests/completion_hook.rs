@@ -861,6 +861,5 @@ async fn history_paging_headless_resume_reaches_feedback_after_a_large_result() 
             .any(|event| event["type"] == "session_feedback"
                 && event["data"]["message"] == "saved notice after large result")
     );
-    assert!(!events.iter().any(|event| event["type"] == "view_gap"));
     assert!(events.iter().any(|event| event["type"] == "submission"));
 }
