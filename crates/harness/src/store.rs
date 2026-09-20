@@ -1056,6 +1056,9 @@ impl Store {
             _ => {}
         }
         match &command {
+            SessionCommand::AdmissionPinned { profile, .. } => {
+                profile.validate().map_err(StoreError::Invalid)?
+            }
             SessionCommand::WorkspaceSaved { request, seed } => {
                 let id = state
                     .tasks_by_request
@@ -2973,7 +2976,7 @@ fn event_hash(
     aggregate_hash("task", task.0, revision, previous, bytes)
 }
 
-fn aggregate_hash(
+pub(crate) fn aggregate_hash(
     kind: &str,
     id: Uuid,
     revision: u64,

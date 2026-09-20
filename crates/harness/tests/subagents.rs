@@ -312,6 +312,62 @@ async fn child_reads_the_workspace_records_a_job_and_submits_a_valid_result() {
         "Luna subagents are disabled by configuration"
     );
 
+    let bundle = orvek_harness::trace::TraceBundle::export(
+        &root.path().join("state"),
+        None,
+        Default::default(),
+        &Default::default(),
+        None,
+    )
+    .unwrap();
+    let replay = bundle.replay().unwrap();
+    assert!(replay.exact, "{:?}", replay.unresolved);
+    let dispatches = replay
+        .spans
+        .iter()
+        .filter(|span| span["span"]["kind"] == "model_dispatch")
+        .collect::<Vec<_>>();
+    assert_eq!(dispatches.len(), 2);
+    assert!(dispatches.iter().all(|span| span["span"]["child"] == agent));
+    let tool = replay
+        .spans
+        .iter()
+        .find(|span| span["span"]["kind"] == "tool_dispatch")
+        .unwrap();
+    assert_eq!(tool["span"]["tool_call"], "call-1");
+    assert_eq!(tool["span"]["call"], dispatches[0]["span"]["call"]);
+    assert_eq!(replay.cost.calls, 2);
+    assert!(replay.cost.complete);
+    assert_eq!(replay.cost.total_tokens, Some(20));
+    assert!(dispatches[0]["span"]["source_revision"].is_string());
+    let prefixes = bundle
+        .prefixes()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(prefixes.len(), 2);
+    for prefix in prefixes {
+        assert_eq!(prefix.prefix.through + 1, prefix.before_sequence);
+        assert!(prefix.decision["request_payload"]["input"].is_array());
+        let replay = prefix.prefix.replay().unwrap();
+        assert!(
+            replay
+                .spans
+                .iter()
+                .all(|span| span["span"]["kind"] != "child_terminal")
+        );
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        for payload in prefix.prefix.artifacts.values() {
+            if let orvek_harness::trace::Payload::Present(encoded) = payload {
+                let bytes = STANDARD.decode(encoded).unwrap();
+                assert!(
+                    !String::from_utf8_lossy(&bytes).contains(r#""call_id":"call-2""#),
+                    "future response leaked into an N-1 prefix"
+                );
+            }
+        }
+    }
+
     // The child's read was journaled as a read-only task job.
     let store = run.store.lock().await;
     let state = store.load(task.id).unwrap();

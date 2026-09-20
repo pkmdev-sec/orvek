@@ -107,7 +107,7 @@ fn harbor_context_contains_every_workspace_member() {
     );
     assert_contains(
         JUSTFILE,
-        "cp crates/harness/Cargo.toml \"$build_context/crates/harness/\"",
+        "cp crates/harness/Cargo.toml crates/harness/build.rs \"$build_context/crates/harness/\"",
     );
     assert_contains(
         JUSTFILE,

@@ -126,7 +126,7 @@ build-harbor-agent platform='':
     cp crates/executor/Cargo.toml crates/executor/README.md "$build_context/crates/executor/"
     cp -R crates/executor/src "$build_context/crates/executor/src"
     mkdir -p "$build_context/crates/harness"
-    cp crates/harness/Cargo.toml "$build_context/crates/harness/"
+    cp crates/harness/Cargo.toml crates/harness/build.rs "$build_context/crates/harness/"
     cp -R crates/harness/src "$build_context/crates/harness/src"
     mkdir -p "$build_context/crates/memory"
     cp crates/memory/Cargo.toml crates/memory/README.md "$build_context/crates/memory/"

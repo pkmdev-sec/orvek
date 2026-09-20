@@ -14,6 +14,7 @@ pub(crate) mod installation;
 pub(crate) mod secret;
 mod shutdown;
 pub(crate) mod submission;
+mod trace;
 pub(crate) mod update;
 
 pub(crate) use cli::Cli;

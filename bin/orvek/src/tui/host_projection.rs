@@ -311,6 +311,7 @@ impl HostProjection {
             } => {
                 self.recorded_ms = at_ms;
                 match command {
+                    SessionCommand::TraceRecorded { .. } => Vec::new(),
                     SessionCommand::AdmissionPinned { .. }
                     | SessionCommand::LegacyImportBound { .. }
                     | SessionCommand::CompletionHook(_) => Vec::new(),

@@ -198,10 +198,17 @@ impl SessionAdmissionProfile {
     }
 
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if !self.request.workspace.is_dir() {
+            return Err("session workspace must be an absolute directory");
+        }
+        self.validate_recorded()
+    }
+
+    pub(crate) fn validate_recorded(&self) -> Result<(), &'static str> {
         if self.version != 1 {
             return Err("unsupported session admission profile");
         }
-        if !self.request.workspace.is_absolute() || !self.request.workspace.is_dir() {
+        if !self.request.workspace.is_absolute() {
             return Err("session workspace must be an absolute directory");
         }
         if self.request.context_window_tokens == 0 {
@@ -284,6 +291,45 @@ mod admission_tests {
             &revision,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn recorded_admission_validation_does_not_require_the_original_workspace() {
+        let workspace = tempfile::tempdir().unwrap();
+        let profile = profile(workspace.path().to_owned());
+        let config = SessionConfig {
+            workspace: workspace.path().to_owned(),
+            model: ModelSettings::default(),
+            instructions: String::new(),
+            context_window_tokens: default_context_window_tokens(),
+        };
+        let mut state = SessionState::create(
+            SessionId::new(),
+            SessionCreation {
+                branch: SessionBranch::default(),
+                config: config.clone(),
+                admission: None,
+                parent: None,
+                history: vec![],
+                started_ms: 0,
+                imported: None,
+            },
+        );
+        drop(workspace);
+        assert!(
+            profile.validate().is_err(),
+            "live admission still checks its boundary"
+        );
+        state
+            .apply(
+                Uuid::new_v4(),
+                &SessionCommand::AdmissionPinned {
+                    profile: Box::new(profile),
+                    legacy_config_digest: Digest::of_value(&config).unwrap(),
+                },
+            )
+            .unwrap();
+        assert!(state.admission.is_some());
     }
 
     #[test]
@@ -423,6 +469,10 @@ pub enum SessionEvent {
 )]
 pub enum SessionCommand {
     CompletionHook(DeliveryEvent),
+    TraceRecorded {
+        request: Uuid,
+        record: Digest,
+    },
     AdmissionPinned {
         profile: Box<SessionAdmissionProfile>,
         legacy_config_digest: Digest,
@@ -630,7 +680,7 @@ impl SessionState {
             } => {
                 if self.admission.is_some()
                     || Digest::of_value(&self.config)? != *legacy_config_digest
-                    || profile.validate().is_err()
+                    || profile.validate_recorded().is_err()
                 {
                     return Err(serde_json::Error::io(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -776,7 +826,8 @@ impl SessionState {
             }
             SessionCommand::ProviderUsage { .. }
             | SessionCommand::ProviderCost { .. }
-            | SessionCommand::ContextPrepared { .. } => {}
+            | SessionCommand::ContextPrepared { .. }
+            | SessionCommand::TraceRecorded { .. } => {}
             SessionCommand::Feedback { message } => self
                 .history
                 .push(json!({"role":"developer","content":message})),

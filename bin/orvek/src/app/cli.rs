@@ -182,6 +182,11 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Export, inspect, and replay local trace bundles.
+    Trace {
+        #[command(subcommand)]
+        command: super::trace::TraceCommand,
+    },
     /// Run the durable local host independently of terminal clients.
     #[command(hide = true)]
     Host,
@@ -467,9 +472,13 @@ fn resume_command(session_id: &str) -> String {
 impl Command {
     const fn requires_config(&self) -> bool {
         !matches!(self, Self::Update)
+            && !matches!(self, Self::Trace { command } if command.offline())
     }
 
     async fn run_without_config(self) -> Result<()> {
+        if let Self::Trace { command } = self {
+            return command.run_offline();
+        }
         let Self::Update = self else {
             unreachable!("only update is config-independent");
         };
@@ -495,6 +504,7 @@ impl Command {
     async fn run_with_config(self, config: &Config) -> Result<()> {
         match self {
             Self::Host => crate::app::host::serve(config).await,
+            Self::Trace { command } => command.reexecute(config).await,
             Self::Auth { command } => command.run(config).await.map_err(Into::into),
             Self::Config { command } => command.run(config),
             Self::Mcp { command } => command.run(config),

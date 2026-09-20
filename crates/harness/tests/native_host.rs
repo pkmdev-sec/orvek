@@ -455,6 +455,39 @@ async fn native_task_retries_a_pre_generation_authentication_rejection() {
     assert!(run.task.model_receipts.values().any(|receipt| {
         receipt.status == orvek_harness::state::ModelCallStatus::Failed && receipt.tokens == Some(0)
     }));
+    let bundle = orvek_harness::trace::TraceBundle::export(
+        host.state_directory(),
+        None,
+        Default::default(),
+        &Default::default(),
+        None,
+    )
+    .unwrap();
+    let replay = bundle.replay().unwrap();
+    assert!(replay.exact, "{:?}", replay.unresolved);
+    assert_eq!(replay.tasks[&run.task.id], run.task);
+    assert_eq!(
+        replay.tasks[&run.task.id].outcome,
+        Some(Outcome::FinishedUnverified)
+    );
+    assert!(replay.tasks[&run.task.id].certificates.is_empty());
+    assert_eq!(
+        bundle
+            .prefixes()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        replay
+            .spans
+            .iter()
+            .filter(|span| span["span"]["kind"] == "model_dispatch")
+            .count(),
+        2
+    );
     assert_eq!(server.await.unwrap().len(), 2);
 }
 
@@ -978,4 +1011,65 @@ async fn native_host_rejects_sandbox_only_shell_input() {
         .await
         .expect_err("sandbox shell must be refused on a native host");
     assert!(error.to_string().contains("no sandbox shell"), "{error}");
+}
+
+#[tokio::test]
+async fn trace_reexecution_uses_only_intent_and_fresh_admitted_identities() {
+    let original = Fixture::new();
+    let (endpoint, server) = provider(vec![vec![final_message("original")]]).await;
+    let host = original.open_host(&endpoint).await;
+    let session = original.admit_session(&host).await;
+    let request = Uuid::new_v4();
+    host.submit(
+        session,
+        request,
+        vec![json!({"type":"input_text","text":"Describe the empty workspace"})],
+        new_task_intent(),
+    )
+    .await
+    .unwrap();
+    let first = wait_submission(&host, session, request).await;
+    server.await.unwrap();
+    let bundle = orvek_harness::trace::TraceBundle::export(
+        host.state_directory(),
+        None,
+        Default::default(),
+        &Default::default(),
+        None,
+    )
+    .unwrap();
+    let intent = bundle.reexecution_intent(first.task.id).unwrap();
+    let fresh = Fixture::new();
+    let (endpoint, server) = provider(vec![vec![final_message("fresh")]]).await;
+    let host = fresh.open_host(&endpoint).await;
+    let new_session = fresh.admit_session(&host).await;
+    let new_request = Uuid::new_v4();
+    host.submit(
+        new_session,
+        new_request,
+        vec![json!({"type":"input_text","text":intent})],
+        new_task_intent(),
+    )
+    .await
+    .unwrap();
+    let second = wait_submission(&host, new_session, new_request).await;
+    let requests = server.await.unwrap();
+    assert_ne!(session, new_session);
+    assert_ne!(request, new_request);
+    assert_ne!(first.task.id, second.task.id);
+    assert!(
+        first
+            .task
+            .model_receipts
+            .keys()
+            .all(|id| !second.task.model_receipts.contains_key(id))
+    );
+    assert_eq!(second.task.request, first.task.request);
+    assert_eq!(second.task.outcome, Some(Outcome::FinishedUnverified));
+    assert!(second.task.evidence.is_empty());
+    assert!(
+        requests
+            .iter()
+            .all(|request| !request.to_string().contains(&first.task.id.to_string()))
+    );
 }

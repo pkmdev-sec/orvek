@@ -1769,6 +1769,12 @@ impl Host {
                     Err(error) => return Err(error.into()),
                 }
             }
+            {
+                let mut store = self.store.lock().await;
+                crate::trace::record_dispatch(
+                    &mut store, session_id, request, task.id, None, call, &inference,
+                )?;
+            }
             let streaming = emit.clone();
             let response = self
                 .provider

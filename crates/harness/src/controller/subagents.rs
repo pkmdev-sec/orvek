@@ -756,7 +756,20 @@ impl ChildLoop {
     ) {
         let session = self.session;
         let agent = self.id;
-        let result = self.run(&registry, &token).await;
+        let mut result = self.run(&registry, &token).await;
+        {
+            let mut store = self.store.lock().await;
+            if let Err(error) = crate::trace::record_span(
+                &mut store,
+                self.session,
+                self.request,
+                json!({"version":1,"kind":"child_terminal","session":self.session,"request":self.request,"task":self.task,"child":self.id,"result":result.as_ref().ok(),"error":result.as_ref().err(),"cancelled":token.is_cancelled()}),
+            ) {
+                result = Err(format!(
+                    "child terminal receipt was not recordable: {error}"
+                ));
+            }
+        }
         let event = {
             let mut children = registry.lock().await;
             let Some(child) = children.get_mut(&agent) else {
@@ -850,8 +863,21 @@ Rules:
             )
             .map_err(|error| format!("subagent request is invalid: {error:?}"))?;
             let mut recoverable_retries = 0;
-            let outcome = loop {
+            let (call, outcome) = loop {
                 let call = Uuid::new_v4();
+                {
+                    let mut store = self.store.lock().await;
+                    crate::trace::record_dispatch(
+                        &mut store,
+                        self.session,
+                        self.request,
+                        self.task,
+                        Some(self.id),
+                        call,
+                        &request,
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
                 let outcome = self.provider.respond(&request, token, |_| {}).await;
                 super::record_provider_cost(
                     &self.store,
@@ -862,13 +888,17 @@ Rules:
                 )
                 .await
                 .map_err(|error| error.to_string())?;
+                {
+                    let mut store = self.store.lock().await;
+                    crate::trace::record_span(&mut store, self.session, self.request, json!({"version":1,"kind":"model_response","session":self.session,"request":self.request,"task":self.task,"child":self.id,"call":call,"outcome":outcome})).map_err(|error|error.to_string())?;
+                }
                 if recoverable_retries < super::MAX_RECOVERABLE_PROVIDER_RETRIES
                     && outcome.retryable_pre_generation_rejection()
                 {
                     recoverable_retries += 1;
                     continue;
                 }
-                break outcome;
+                break (call, outcome);
             };
             let failure = outcome
                 .failure
@@ -893,7 +923,12 @@ Rules:
                     break;
                 }
                 let output = self
-                    .run_tool(&proposal.name, &proposal.arguments, token)
+                    .run_tool_linked(
+                        &proposal.name,
+                        &proposal.arguments,
+                        Some((call, &proposal.call_id)),
+                        token,
+                    )
                     .await;
                 let encoded = serde_json::to_string(&output)
                     .map_err(|error| format!("tool output is not representable: {error}"))?;
@@ -952,7 +987,18 @@ Rules:
     /// Executes one read-only child tool as a recorded task job: the
     /// invocation, environment, output, and status are journaled exactly like
     /// parent workspace tools, minus candidate invalidation.
+    #[cfg(test)]
     async fn run_tool(&self, name: &str, arguments: &str, token: &CancellationToken) -> Value {
+        self.run_tool_linked(name, arguments, None, token).await
+    }
+
+    async fn run_tool_linked(
+        &self,
+        name: &str,
+        arguments: &str,
+        causal: Option<(Uuid, &str)>,
+        token: &CancellationToken,
+    ) -> Value {
         let arguments: Value = match serde_json::from_str(arguments) {
             Ok(value) => value,
             Err(error) => return json!({"error": format!("tool arguments are invalid: {error}")}),
@@ -1007,6 +1053,17 @@ Rules:
                 Err(error) => return json!({"error": format!("job is not admissible: {error}")}),
             }
         };
+        {
+            let mut store = self.store.lock().await;
+            if let Err(error) = crate::trace::record_span(
+                &mut store,
+                self.session,
+                self.request,
+                json!({"version":1,"kind":"tool_dispatch","session":self.session,"request":self.request,"task":self.task,"child":self.id,"call":causal.map(|(call,_)|call),"tool_call":causal.map(|(_,id)|id),"job":job,"generation":generation,"name":name}),
+            ) {
+                return json!({"error":format!("child attribution was not recordable: {error}"),"job_id":job,"outcome":"unknown"});
+            }
+        }
         let context = ToolContext {
             workspace: self.working.clone(),
             task_id: self.task.0,
@@ -1059,6 +1116,8 @@ Rules:
                 "session": self.session,
                 "request": self.request,
                 "subagent": self.id,
+                "call": causal.map(|(call,_)|call),
+                "tool_call": causal.map(|(_,id)|id),
                 "backend": "docker",
                 "environment": environment,
                 "status": status,
@@ -1360,6 +1419,36 @@ mod execution_tests {
             .unwrap();
             (job, receipt)
         }
+    }
+
+    #[tokio::test]
+    async fn failed_child_model_attempt_keeps_causal_dispatch_receipt() {
+        let fixture = Fixture::new();
+        let result = fixture
+            .child
+            .run(
+                &Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+                &CancellationToken::new(),
+            )
+            .await;
+        assert!(result.is_err());
+        let store = fixture.child.store.lock().await;
+        let records = store.journal_page(0, 256).unwrap();
+        let dispatch = records
+            .iter()
+            .find(|record| {
+                record.event.pointer("/data/command/type") == Some(&json!("trace_recorded"))
+            })
+            .expect("even a failed child call must have a durable causal dispatch");
+        let digest =
+            serde_json::from_value(dispatch.event["data"]["command"]["data"]["record"].clone())
+                .unwrap();
+        let receipt: Value =
+            serde_json::from_slice(&store.artifacts().read(digest).unwrap()).unwrap();
+        assert_eq!(receipt["child"], json!(fixture.child.id));
+        assert_eq!(receipt["task"], json!(fixture.child.task));
+        assert_eq!(receipt["request"], json!(fixture.child.request));
+        assert!(receipt["call"].is_string());
     }
 
     #[tokio::test]
@@ -1938,6 +2027,21 @@ mod execution_tests {
         };
         let mut store = store.lock().await;
         let state = store.load(task).unwrap();
+        let root = match backend {
+            Backend::Child => fixture.root.path().join("state"),
+            Backend::Native | Backend::Sandbox => fixture.root.path().join("parent-state"),
+        };
+        let trace = crate::trace::TraceBundle::export(
+            &root,
+            None,
+            Default::default(),
+            &Default::default(),
+            None,
+        )
+        .unwrap();
+        let replay = trace.replay().unwrap();
+        assert!(replay.exact, "{backend:?}: {:?}", replay.unresolved);
+        assert_eq!(replay.tasks[&task], state);
         assert_eq!(state.jobs.len(), 1, "{backend:?}: {}", scenario.name);
         let job = state.jobs.values().next().unwrap();
         assert_eq!(

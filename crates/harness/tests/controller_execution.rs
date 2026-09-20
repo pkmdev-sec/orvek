@@ -1720,6 +1720,51 @@ async fn exercise(delivery: DeliveryKind, mode: Mode) {
         .await
         .unwrap()
     };
+    let trace = orvek_harness::trace::TraceBundle::export(
+        &state_root,
+        None,
+        Default::default(),
+        &Default::default(),
+        None,
+    )
+    .unwrap();
+    let replayed = trace.replay().unwrap();
+    assert!(replayed.exact, "{:?}", replayed.unresolved);
+    assert_eq!(replayed.tasks[&result.task.id], result.task);
+    assert_eq!(
+        replayed.tasks[&result.task.id].certificates,
+        result.task.certificates
+    );
+    let review = trace.review().unwrap();
+    assert_eq!(review["tasks"][0]["intent"], "Fix addition");
+    if let Some(delivered) = result
+        .task
+        .delivery
+        .as_ref()
+        .filter(|delivery| delivery.kind == DeliveryKind::Patch)
+    {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        assert_eq!(
+            review["tasks"][0]["patch"]["digest"],
+            json!(delivered.artifact)
+        );
+        let patch = STANDARD
+            .decode(
+                review["tasks"][0]["patch"]["payload"]["data"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(patch, artifact_bytes(&host, delivered.artifact).await);
+    }
+    assert!(
+        !trace
+            .prefixes()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .is_empty()
+    );
     if rate_limit_exhaustion {
         assert_eq!(result.task.outcome, Some(Outcome::Failed), "{result:?}");
         assert_eq!(result.task.usage.model_calls, 3);

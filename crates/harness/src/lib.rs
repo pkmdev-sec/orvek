@@ -28,6 +28,7 @@ pub mod sloppiness;
 pub mod state;
 pub mod store;
 pub mod submission;
+pub mod trace;
 pub mod verification;
 pub mod workspace;
 
