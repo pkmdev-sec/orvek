@@ -175,7 +175,7 @@ impl ContextView {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TextPage {
     pub item: usize,
     pub content_index: usize,

@@ -14,6 +14,7 @@ use crate::{
         ArgumentValidity, CallOutcome, Delta, InferenceRequest, OutputItem, PromptInput,
         ResponseStatus, ResponsesClient, ToolProposal,
     },
+    ipc::{HISTORY_PAGE_BYTES, HistoryEntry, HistoryPage},
     runtime::{DockerExecutor, ExecutionPolicy, RuntimeError},
     services::{ContextAccess, ContextService, ContextSession},
     session::{
@@ -184,6 +185,8 @@ pub enum HostError {
     Delivery(#[from] DeliveryError),
     #[error(transparent)]
     Context(#[from] crate::context::ContextError),
+    #[error(transparent)]
+    HistoryText(#[from] crate::context::TextReadError),
     #[error("host I/O: {0}")]
     Io(#[from] std::io::Error),
     #[error("host protocol: {0}")]
@@ -836,7 +839,7 @@ impl Host {
         cursor: SessionCursor,
         start: usize,
         limit: usize,
-    ) -> Result<Value, HostError> {
+    ) -> Result<HistoryPage, HostError> {
         if limit == 0 || limit > 64 {
             return Err(HostError::Invalid("history page limit must be 1..64"));
         }
@@ -844,18 +847,63 @@ impl Host {
         let mut items = Vec::new();
         let mut bytes = 0;
         for item in state.history.iter().skip(start).take(limit) {
-            let size = serde_json::to_vec(item)?.len();
-            if bytes + size > 768 * 1024 {
+            let mut entry = HistoryEntry::Inline(item.clone());
+            let mut size = serde_json::to_vec(&entry)?.len();
+            if size > HISTORY_PAGE_BYTES {
+                // Tool results are the only history items assembled across journal records.
+                // Keep the source in history; paging must not require a second durable copy.
+                let (Some("function_call_output"), Some(call_id), Some(output)) = (
+                    item["type"].as_str(),
+                    item["call_id"].as_str(),
+                    item["output"].as_str(),
+                ) else {
+                    return Err(HostError::Invalid(
+                        "oversized history item is not a tool result",
+                    ));
+                };
+                entry = HistoryEntry::ToolOutput {
+                    call_id: call_id.to_owned(),
+                    bytes: output.len(),
+                    digest: crate::Digest::of(output.as_bytes()),
+                };
+                size = serde_json::to_vec(&entry)?.len();
+            }
+            if bytes + size > HISTORY_PAGE_BYTES {
                 break;
             }
             bytes += size;
-            items.push(item.clone());
+            items.push(entry);
         }
         let next = start.saturating_add(items.len());
-        Ok(
-            json!({"cursor":cursor,"start":start,"items":items,"next":(next < state.history.len()).then_some(next),"total":state.history.len()}),
-        )
+        Ok(HistoryPage {
+            cursor,
+            start,
+            items,
+            next: (next < state.history.len()).then_some(next),
+            total: state.history.len(),
+        })
     }
+
+    /// Exact text from an immutable history cursor, using the same byte semantics as read_context.
+    pub async fn history_text(
+        &self,
+        cursor: &SessionCursor,
+        item: usize,
+        content_index: usize,
+        offset: usize,
+        limit: usize,
+    ) -> Result<crate::context::TextPage, HostError> {
+        let state = self.store.lock().await.load_session_cursor(cursor)?;
+        Ok(crate::context::read_text_page(
+            &state.history,
+            item,
+            content_index,
+            offset,
+            limit,
+            None,
+        )?)
+    }
+
     pub async fn task(&self, id: TaskId) -> Result<TaskState, HostError> {
         Ok(self.store.lock().await.audit_evidence(id)?)
     }

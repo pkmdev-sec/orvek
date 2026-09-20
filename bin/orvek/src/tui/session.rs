@@ -7,12 +7,13 @@ use crate::{
     },
     tui::host_projection::{ViewChange, history_items},
 };
+use base64::{Engine, engine::general_purpose::STANDARD};
 use orvek_harness::{
-    ipc::{Command, Response, SessionView},
+    Digest,
+    ipc::{Command, HistoryEntry, Response, SessionView},
     session::{SessionCursor, SessionId},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -242,29 +243,98 @@ pub(crate) async fn history_page(
     else {
         return Err(SessionError::Protocol("expected history page"));
     };
-    #[derive(Deserialize)]
-    struct Page {
-        cursor: SessionCursor,
-        start: usize,
-        items: Vec<Value>,
-        next: Option<usize>,
-        total: usize,
-    }
-    let page: Page =
-        serde_json::from_value(page).map_err(|_| SessionError::Protocol("invalid history page"))?;
+    let end = start.saturating_add(page.items.len());
     if page.cursor != cursor
         || page.start != start
         || page.items.len() > 64
-        || page
-            .next
-            .is_some_and(|next| next <= start || next > page.total)
+        || page.items.len() > page.total.saturating_sub(start)
+        || (start < page.total && page.items.is_empty())
+        || page.next != (end < page.total).then_some(end)
     {
         return Err(SessionError::Protocol("history cursor mismatch"));
     }
+    let mut changes = Vec::new();
+    for (offset, entry) in page.items.into_iter().enumerate() {
+        match entry {
+            HistoryEntry::Inline(item) => changes.extend(history_items(None, &[item])),
+            HistoryEntry::ToolOutput {
+                call_id,
+                bytes,
+                digest,
+            } => {
+                let output = history_output(client, &cursor, start + offset, bytes, digest).await?;
+                changes.push(ViewChange::ToolResult {
+                    request: None,
+                    call_id,
+                    output,
+                });
+            }
+        }
+    }
     Ok(HistoryPage {
-        changes: history_items(None, &page.items),
+        changes,
         next: page.next,
     })
+}
+
+async fn history_output(
+    client: &HostClient,
+    cursor: &SessionCursor,
+    item: usize,
+    total: usize,
+    digest: Digest,
+) -> Result<String, SessionError> {
+    let mut output = Vec::new();
+    loop {
+        let Response::HistoryText {
+            cursor: source,
+            page,
+        } = client
+            .query(Command::HistoryText {
+                cursor: cursor.clone(),
+                item,
+                content_index: 0,
+                offset: output.len(),
+                limit: 24 * 1024,
+            })
+            .await
+            .map_err(host_error)?
+        else {
+            return Err(SessionError::Protocol("expected history text page"));
+        };
+        if source != *cursor
+            || page.item != item
+            || page.content_index != 0
+            || page.offset != output.len()
+            || page.total != total
+            || page.digest != digest
+            || page.bytes_base64.len() > 32 * 1024
+        {
+            return Err(SessionError::Protocol(
+                "history text identity or size mismatch",
+            ));
+        }
+        let bytes = STANDARD
+            .decode(page.bytes_base64)
+            .map_err(|_| SessionError::Protocol("invalid history text encoding"))?;
+        let end = output.len().saturating_add(bytes.len());
+        if bytes.len() > 24 * 1024
+            || end > total
+            || page.end != end
+            || (bytes.is_empty() && end < total)
+            || page.next != (end < total).then_some(end)
+        {
+            return Err(SessionError::Protocol("history text cursor mismatch"));
+        }
+        output.extend(bytes);
+        if page.next.is_none() {
+            break;
+        }
+    }
+    if Digest::of(&output) != digest {
+        return Err(SessionError::Protocol("history text digest mismatch"));
+    }
+    String::from_utf8(output).map_err(|_| SessionError::Protocol("invalid history text UTF-8"))
 }
 
 pub(crate) async fn history(
@@ -347,10 +417,7 @@ pub(crate) async fn load_recent_prompts_async(
             else {
                 return Err(SessionError::Protocol("expected original input history"));
             };
-            let total = first["total"]
-                .as_u64()
-                .and_then(|value| usize::try_from(value).ok())
-                .ok_or(SessionError::Protocol("missing original input extent"))?;
+            let total = first.total;
             let page = history_page(&client, cursor, total.saturating_sub(1)).await?;
             page.changes
                 .into_iter()
@@ -451,4 +518,135 @@ pub(crate) async fn queued(
         }
     }
     Err(SessionError::Protocol("queue changed during paging; retry"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use orvek_harness::{
+        Channel, Store,
+        controller::Host,
+        inference::{
+            Limits, ModelSettings, ResponsesClient, Route, Transport,
+            auth::{Auth, SecretString},
+        },
+        ipc,
+        session::{SessionAdmissionRequest, SessionCommand},
+        state::RequestKind,
+    };
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+    use uuid::Uuid;
+
+    fn host(root: &Path) -> Host {
+        let provider = ResponsesClient::new(
+            Auth::api_key(SecretString::new("fixture".into())).unwrap(),
+            Route::new(Transport::Http, "http://127.0.0.1:1/v1/responses").unwrap(),
+            Limits {
+                max_attempts: 1,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        Host::open_native(root, provider, Digest::of(b"history-fixture")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn saved_large_tool_output_reopens_with_exact_tui_text_and_following_feedback() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("state");
+        let native = host(&root);
+        let state = native
+            .create_session(SessionAdmissionRequest::new(
+                directory.path().into(),
+                ModelSettings::default(),
+                orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+                Channel::Stable,
+            ))
+            .await
+            .unwrap();
+        drop(native);
+        let mut store = Store::open(&root).unwrap();
+        let request = Uuid::new_v4();
+        let mut state = store
+            .session_command(
+                state.id,
+                state.revision,
+                request,
+                SessionCommand::Input {
+                    kind: RequestKind::Conversation,
+                    content: vec![json!({"role":"user","content":"inspect"})],
+                },
+            )
+            .unwrap();
+        state = store.session_command(state.id, state.revision, Uuid::new_v4(), SessionCommand::Response {
+            request,
+            items: vec![json!({"type":"function_call","call_id":"large","name":"read_file","arguments":"{}"})],
+        }).unwrap();
+        let output = "\0雪🦀\\\"".repeat(120000);
+        let operation = Uuid::new_v4();
+        let result = SessionCommand::ToolResult {
+            request,
+            call_id: "large".into(),
+            output: output.clone(),
+        };
+        state = store
+            .session_command(state.id, state.revision, operation, result.clone())
+            .unwrap();
+        assert_eq!(
+            store
+                .session_command(state.id, state.revision, operation, result)
+                .unwrap(),
+            state
+        );
+        state = store
+            .session_command(
+                state.id,
+                state.revision,
+                Uuid::new_v4(),
+                SessionCommand::TurnSettled {
+                    request,
+                    outcome: None,
+                    error: None,
+                },
+            )
+            .unwrap();
+        store
+            .session_command(
+                state.id,
+                state.revision,
+                Uuid::new_v4(),
+                SessionCommand::Feedback {
+                    message: "saved feedback after large output".into(),
+                },
+            )
+            .unwrap();
+        drop(store);
+
+        let native = Arc::new(host(&root));
+        let stop = CancellationToken::new();
+        let server = tokio::spawn(ipc::serve(native.clone(), stop.clone()));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !root.join("host.sock").exists() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let client = HostClient::fixture(&root);
+        let view = view(&client, state.id).await.unwrap();
+        let restored = history(&client, &view).await;
+        stop.cancel();
+        server.await.unwrap().unwrap();
+        let restored = restored.expect("large results must not prevent opening a session");
+        assert!(restored.iter().any(|change| matches!(change,
+            ViewChange::ToolResult { call_id, output: actual, .. } if call_id == "large" && actual == &output)));
+        assert!(restored.iter().any(|change| matches!(change,
+            ViewChange::Status(message) if message == "Feedback: saved feedback after large output")));
+        assert_eq!(
+            native.session(state.id).await.unwrap().tool_calls["large"].output,
+            Some(Digest::of(output.as_bytes()))
+        );
+    }
 }

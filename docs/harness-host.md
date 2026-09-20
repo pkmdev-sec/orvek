@@ -54,6 +54,24 @@ The state root is `<config-directory>/host/v1`. Its directory is owner-only, the
 owned by the effective user with no group or other permissions, and peer credentials are checked
 after connection. Startup diagnostics are capped and written to an owner-only, no-follow log file.
 
+## History paging
+
+Protocol 6 `History` pages contain at most 64 entries and 768 KiB of encoded entries,
+plus a small cursor envelope. Each entry is either `inline` history or a `tool_output`
+reference with the original call ID, byte length, and output digest. Both advance the
+item cursor. References do not replace or shorten stored results.
+
+To read a reference, send `HistoryText` with the same session cursor, its item index,
+`content_index: 0`, a byte offset, and a limit of 1..24576 bytes. This uses the same
+exact text reader as `read_context`; `bytes_base64` remains lossless across split UTF-8.
+Verify the extent and digest before displaying an assembled output. No artifact copy
+or interpreter is required. The TUI retrieves the full text. The optional headless
+feedback scan skips tool-output references and keeps scanning inline notices.
+
+A single oversized page is not safe: a valid 4 MiB serialized interpreter value can
+exceed the 8 MiB IPC frame after result and history JSON escaping. Bounded text pages
+remain below 181 KiB even with worst-case text escaping and base64 together.
+
 ## Tradeoffs
 
 The detached host requires a local Unix socket and Docker executor. Orvek therefore reports an

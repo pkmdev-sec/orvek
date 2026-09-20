@@ -771,3 +771,96 @@ async fn diagnostic_headless_resume_emits_feedback_before_its_watch_cursor() {
         "Warning: saved diagnostic 64"
     );
 }
+
+#[tokio::test]
+async fn history_paging_headless_resume_reaches_feedback_after_a_large_result() {
+    use orvek_harness::{Store, session::SessionCommand, state::RequestKind};
+    let endpoint = provider(done()).await;
+    let mut fixture = Fixture::new(&endpoint, "true", false);
+    fixture.start().await;
+    let Response::Session(view) = fixture
+        .query(Command::CreateSession {
+            id: SessionId::new(),
+            request: SessionAdmissionRequest::new(
+                fixture.workspace.clone(),
+                ModelSettings::default(),
+                orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+                Channel::Stable,
+            ),
+        })
+        .await
+    else {
+        panic!("expected admitted session")
+    };
+    let session = view.id;
+    fixture.stop().await;
+    {
+        let mut store = Store::open(fixture.socket.parent().unwrap()).unwrap();
+        let mut state = store.load_session(session).unwrap();
+        let request = Uuid::new_v4();
+        for command in [
+            SessionCommand::Input {
+                kind: RequestKind::Conversation,
+                content: vec![json!({"role":"user","content":"inspect"})],
+            },
+            SessionCommand::Response {
+                request,
+                items: vec![json!({
+                    "type":"function_call","call_id":"large","name":"read_file","arguments":"{}",
+                })],
+            },
+            SessionCommand::ToolResult {
+                request,
+                call_id: "large".into(),
+                output: "x".repeat(900000),
+            },
+            SessionCommand::TurnSettled {
+                request,
+                outcome: None,
+                error: None,
+            },
+            SessionCommand::Feedback {
+                message: "saved notice after large result".into(),
+            },
+        ] {
+            let operation = if matches!(command, SessionCommand::Input { .. }) {
+                request
+            } else {
+                Uuid::new_v4()
+            };
+            state = store
+                .session_command(session, state.revision, operation, command)
+                .unwrap();
+        }
+    }
+    fixture.start().await;
+    let output = timeout(
+        Duration::from_secs(40),
+        fixture
+            .command()
+            .args(["--resume", &session.to_string(), "run", "Finish the task"])
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    fixture.stop().await;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let events = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert!(
+        events
+            .iter()
+            .any(|event| event["type"] == "session_feedback"
+                && event["data"]["message"] == "saved notice after large result")
+    );
+    assert!(!events.iter().any(|event| event["type"] == "view_gap"));
+    assert!(events.iter().any(|event| event["type"] == "submission"));
+}

@@ -11,13 +11,13 @@ use crate::{
 use orvek_harness::{
     contract::Limits,
     inference::Model,
-    ipc::{Command, Request, Response, SessionView, WatchFrame},
+    ipc::{Command, HistoryEntry, Request, Response, SessionView, WatchFrame},
     session::{SessionCommand, SessionCursor, SessionEvent, SessionId},
     state::{Outcome, TaskId},
     submission::{SubmissionStatus, SubmitIntent},
 };
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::json;
 use std::{collections::BTreeSet, io::Write, time::Duration};
 use tokio_util::sync::CancellationToken;
 
@@ -34,11 +34,6 @@ impl Output {
     }
 
     async fn session_feedback(&mut self, client: &HostClient, view: &SessionView) -> Result<()> {
-        #[derive(Deserialize)]
-        struct Page {
-            items: Vec<Value>,
-            next: Option<usize>,
-        }
         let cursor = SessionCursor {
             version: 1,
             session: view.id,
@@ -56,10 +51,10 @@ impl Output {
             else {
                 return Err(Error::HostRequest("expected session history page".into()));
             };
-            let page: Page = serde_json::from_value(page)
-                .map_err(|_| Error::HostRequest("invalid session history page".into()))?;
-            for item in page.items {
-                if item["role"] == "developer"
+            for entry in page.items {
+                // Feedback is inline. Do not fetch tool outputs for this optional notice scan.
+                if let HistoryEntry::Inline(item) = entry
+                    && item["role"] == "developer"
                     && let Some(message) = item["content"].as_str()
                 {
                     self.emit(

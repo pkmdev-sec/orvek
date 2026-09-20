@@ -32,6 +32,7 @@ use uuid::Uuid;
 pub const PROTOCOL_VERSION: u32 = 6;
 pub const UNSUPPORTED_PROTOCOL_VERSION: &str = "unsupported operator protocol version";
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+pub const HISTORY_PAGE_BYTES: usize = 768 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -226,6 +227,13 @@ pub enum Command {
         start: usize,
         limit: usize,
     },
+    HistoryText {
+        cursor: SessionCursor,
+        item: usize,
+        content_index: usize,
+        offset: usize,
+        limit: usize,
+    },
     CreateSession {
         id: SessionId,
         request: SessionAdmissionRequest,
@@ -374,6 +382,29 @@ impl From<(SessionState, u64, crate::session::ProviderCostSummary)> for SessionV
     }
 }
 
+/// Entries count toward the history cursor even when their exact output needs text paging.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum HistoryEntry {
+    Inline(serde_json::Value),
+    /// Read content index zero with `HistoryText` at this entry's cursor and index.
+    /// This is a transport reference, not a shortened tool result or a new receipt.
+    ToolOutput {
+        call_id: String,
+        bytes: usize,
+        digest: Digest,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HistoryPage {
+    pub cursor: SessionCursor,
+    pub start: usize,
+    pub items: Vec<HistoryEntry>,
+    pub next: Option<usize>,
+    pub total: usize,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum Response {
@@ -402,7 +433,11 @@ pub enum Response {
         accepted: bool,
     },
     Sessions(Vec<SessionView>),
-    History(serde_json::Value),
+    History(HistoryPage),
+    HistoryText {
+        cursor: SessionCursor,
+        page: crate::context::TextPage,
+    },
     Session(Box<SessionView>),
     Task {
         id: TaskId,
@@ -771,6 +806,18 @@ async fn execute(
             start,
             limit,
         } => Response::History(host.history_page(cursor, start, limit).await?),
+        Command::HistoryText {
+            cursor,
+            item,
+            content_index,
+            offset,
+            limit,
+        } => Response::HistoryText {
+            page: host
+                .history_text(&cursor, item, content_index, offset, limit)
+                .await?,
+            cursor,
+        },
         Command::Watch { .. } => unreachable!("watch requests have a streaming handler"),
         Command::CreateSession {
             id,

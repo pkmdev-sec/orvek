@@ -1575,3 +1575,67 @@ async fn diagnostic_hook_record_failure_preserves_outcome_and_uncertain_claim() 
     );
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn history_paging_large_native_command_output_remains_truthful_without_interpreter() {
+    use orvek_harness::ipc::{HistoryEntry, Response};
+    let fixture = Fixture::new();
+    fs::write(fixture.source.join("large-output"), "x".repeat(1024 * 1024)).unwrap();
+    let (endpoint, server) = provider(vec![
+        vec![function_call(
+            "large-native",
+            "large-native",
+            "exec_command",
+            json!({"command":"cat large-output"}),
+        )],
+        vec![final_message("done")],
+    ])
+    .await;
+    let host = fixture.open_host(&endpoint).await;
+    let session = fixture.admit_session(&host).await;
+    let request = Uuid::new_v4();
+    host.submit(
+        session,
+        request,
+        vec![json!({"type":"input_text","text":"Print the large file"})],
+        new_task_intent(),
+    )
+    .await
+    .unwrap();
+    let run = wait_submission(&host, session, request).await;
+    assert_eq!(run.task.outcome, Some(Outcome::FinishedUnverified));
+    assert_eq!(run.task.jobs.len(), 1);
+    assert!(
+        run.task
+            .jobs
+            .values()
+            .all(|job| job.status == JobStatus::Succeeded)
+    );
+    server.await.unwrap();
+    let state = host.session(session).await.unwrap();
+    assert!(state.interpreter.cells.is_empty());
+    let result = tool_output(&host, session, "large-native").await;
+    assert_eq!(result["result"]["output_truncated"], true);
+    assert_eq!(result["result"]["status"]["kind"], "exited");
+    assert_eq!(result["result"]["status"]["detail"], 0);
+    let page = host.history_page(state.cursor(), 0, 64).await.unwrap();
+    assert!(page.next.is_none());
+    assert!(
+        serde_json::to_vec(&Response::History(page.clone()))
+            .unwrap()
+            .len()
+            < orvek_harness::ipc::MAX_FRAME_BYTES
+    );
+    let items = page
+        .items
+        .into_iter()
+        .map(|entry| match entry {
+            HistoryEntry::Inline(item) => item,
+            _ => panic!("native exec already explicitly bounds its output below one history item"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        items, state.history,
+        "history retains the whole tool result, including its truncation metadata"
+    );
+}

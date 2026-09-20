@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -30,6 +32,44 @@ class Accounting(unittest.TestCase):
             self.assertIsNone(measured["uncached_input_tokens"])
             self.assertIsNone(measured["request_bytes"],"absent receipts cannot be manufactured from reencoded JSON")
             self.assertEqual(measured["usage"]["reasoning_tokens"],None)
+
+
+
+class HistoryPaging(unittest.TestCase):
+    def test_wire_references_restore_exact_output_and_following_items(self):
+        output = ("\0雪🦀\\\"" * 90000).encode()
+        digest = hashlib.sha256(output).hexdigest()
+        cursor = {"version":1, "session":"fixture", "revision":7}
+        notice = {"role":"developer", "content":"following feedback"}
+
+        class HistoryWire:
+            def query(self, kind, **args):
+                if kind == "session":
+                    return {"revision":7, "history_items":2}
+                if kind == "history":
+                    return {"cursor":cursor, "start":0, "total":2, "next":None, "items":[
+                        {"type":"tool_output", "data":{"call_id":"large", "bytes":len(output), "digest":digest}},
+                        {"type":"inline", "data":notice},
+                    ]}
+                assert kind == "history_text" and args["cursor"] == cursor
+                assert args["item"] == 0 and args["content_index"] == 0
+                start = args["offset"]
+                end = min(start + args["limit"], len(output))
+                return {"cursor":cursor, "page":{
+                    "item":0, "content_index":0, "offset":start, "end":end,
+                    "total":len(output), "digest":digest,
+                    "bytes_base64":base64.b64encode(output[start:end]).decode(),
+                    "next":end if end < len(output) else None,
+                }}
+
+            def journal(self):
+                return []
+
+        state = run_paired.session_state(HistoryWire(), "fixture")
+        self.assertEqual(state["history"], [
+            {"type":"function_call_output", "call_id":"large", "output":output.decode()},
+            notice,
+        ])
 
 
 if __name__ == "__main__":

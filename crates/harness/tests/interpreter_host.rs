@@ -940,3 +940,165 @@ async fn failed_optional_cell_does_not_block_direct_tools_or_later_native_tasks(
     );
     server.await.unwrap();
 }
+
+async fn assert_large_result_history_advances(code: &str, value_bytes: usize, exceeds_frame: bool) {
+    use base64::Engine;
+    use orvek_harness::ipc::{self, HistoryEntry, Response};
+
+    async fn framed(response: Response) -> Response {
+        let encoded = serde_json::to_vec(&response).unwrap();
+        assert!(encoded.len() < ipc::HISTORY_PAGE_BYTES + 1024);
+        let (mut writer, mut reader) = tokio::io::duplex(4096);
+        let sender =
+            tokio::spawn(async move { ipc::write_frame(&mut writer, &response).await.unwrap() });
+        let response = ipc::read_frame(&mut reader).await.unwrap();
+        sender.await.unwrap();
+        response
+    }
+
+    let fixture = Fixture::new();
+    let (endpoint, provider) = provider(vec![eval("history-result", code), done()]).await;
+    let host = fixture.native(&endpoint);
+    let session = fixture.session(&host).await;
+    let result = run(&host, session, "Return exact selected evidence").await;
+    assert_eq!(result.task.outcome, Some(Outcome::FinishedUnverified));
+    provider.await.unwrap();
+    let state = host.session(session).await.unwrap();
+    let index = state
+        .history
+        .iter()
+        .position(|item| {
+            item["call_id"] == "history-result" && item["type"] == "function_call_output"
+        })
+        .unwrap();
+    let output: Value =
+        serde_json::from_str(state.history[index]["output"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        output["state_lost"], false,
+        "the fixture must produce a successful tool result"
+    );
+    assert_eq!(
+        serde_json::to_vec(&output["output"]["value"])
+            .unwrap()
+            .len(),
+        value_bytes
+    );
+    let item_bytes = serde_json::to_vec(&state.history[index]).unwrap().len();
+    assert!(item_bytes > 768 * 1024);
+    if exceeds_frame {
+        assert!(
+            item_bytes > ipc::MAX_FRAME_BYTES,
+            "nested JSON escaping exceeds one IPC frame: {item_bytes}"
+        );
+    }
+    let cursor = state.cursor();
+    assert!(host.shutdown_if_idle().await);
+    drop(host);
+
+    let host = fixture.native(&endpoint);
+    assert_eq!(host.session(session).await.unwrap().history, state.history);
+    let first = host.history_page(cursor.clone(), index, 1).await.unwrap();
+    let repeated = host.history_page(cursor.clone(), index, 1).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&first).unwrap(),
+        serde_json::to_value(repeated).unwrap()
+    );
+    let Response::History(page) = framed(Response::History(first)).await else {
+        panic!("expected history page")
+    };
+    assert_eq!(
+        page.items.len(),
+        1,
+        "a successful large output must not leave history stuck at its first item"
+    );
+    assert_eq!(page.next, Some(index + 1));
+    let HistoryEntry::ToolOutput {
+        call_id,
+        bytes,
+        digest,
+    } = &page.items[0]
+    else {
+        panic!("oversized output must have an explicit retrieval reference")
+    };
+    let expected = state.history[index]["output"].as_str().unwrap().as_bytes();
+    assert_eq!(call_id, "history-result");
+    assert_eq!(*bytes, expected.len());
+    assert_eq!(Some(*digest), state.tool_calls[call_id].output);
+    let mut retrieved = Vec::new();
+    loop {
+        let text = host
+            .history_text(&cursor, index, 0, retrieved.len(), 24 * 1024)
+            .await
+            .unwrap();
+        let Response::HistoryText {
+            cursor: source,
+            page: text,
+        } = framed(Response::HistoryText {
+            cursor: cursor.clone(),
+            page: text,
+        })
+        .await
+        else {
+            panic!("expected exact text page")
+        };
+        assert_eq!(source, cursor);
+        assert_eq!(text.digest, *digest);
+        assert_eq!(text.total, *bytes);
+        assert_eq!(text.offset, retrieved.len());
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(text.bytes_base64)
+            .unwrap();
+        assert!(!decoded.is_empty());
+        assert!(decoded.len() <= 24 * 1024);
+        retrieved.extend(decoded);
+        assert_eq!(text.end, retrieved.len());
+        assert_eq!(
+            text.next,
+            (retrieved.len() < *bytes).then_some(retrieved.len())
+        );
+        if text.next.is_none() {
+            break;
+        }
+    }
+    assert!(
+        retrieved == expected,
+        "every stored output byte must survive bounded retrieval"
+    );
+    let tail = host
+        .history_page(cursor.clone(), index + 1, 64)
+        .await
+        .unwrap();
+    assert!(tail.next.is_none());
+    assert!(
+        !tail.items.is_empty(),
+        "later assistant messages remain reachable"
+    );
+    assert!(
+        host.history_text(&cursor, index, 0, expected.len() + 1, 1)
+            .await
+            .is_err()
+    );
+    assert!(
+        host.history_text(&cursor, index, 0, 0, 24 * 1024 + 1)
+            .await
+            .is_err()
+    );
+    let after = host.session(session).await.unwrap();
+    assert_eq!(after.revision, state.revision);
+    assert_eq!(after.tool_calls, state.tool_calls);
+}
+
+#[tokio::test]
+async fn history_pages_advance_past_large_native_host_tool_results() {
+    assert_large_result_history_advances("return 'x'.repeat(900000);", 900002, false).await;
+}
+
+#[tokio::test]
+async fn history_pages_cover_maximum_interpreter_value_json_expansion() {
+    assert_large_result_history_advances(
+        "return String.fromCharCode(92).repeat((4*1024*1024-2)/2);",
+        4 * 1024 * 1024,
+        true,
+    )
+    .await;
+}

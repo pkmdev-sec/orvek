@@ -43,8 +43,34 @@ def session_state(host, session):
     history = []
     while len(history) < view["history_items"]:
         page = host.query("history",cursor=cursor,start=len(history),limit=64)
+        assert page["cursor"] == cursor and page["start"] == len(history)
         assert page["items"], "history retrieval made no progress"
-        history.extend(page["items"])
+        for entry in page["items"]:
+            if entry["type"] == "inline":
+                history.append(entry["data"])
+                continue
+            assert entry["type"] == "tool_output", entry["type"]
+            reference = entry["data"]
+            output = bytearray()
+            while True:
+                reply = host.query("history_text", cursor=cursor, item=len(history),
+                                   content_index=0, offset=len(output), limit=24576)
+                text = reply["page"]
+                assert reply["cursor"] == cursor and text["item"] == len(history)
+                assert text["content_index"] == 0 and text["offset"] == len(output)
+                assert text["digest"] == reference["digest"] and text["total"] == reference["bytes"]
+                chunk = base64.b64decode(text["bytes_base64"], validate=True)
+                assert 0 < len(chunk) <= 24576
+                output.extend(chunk)
+                assert text["end"] == len(output) <= reference["bytes"]
+                expected_next = len(output) if len(output) < reference["bytes"] else None
+                assert text.get("next") == expected_next
+                if expected_next is None:
+                    break
+            assert hashlib.sha256(output).hexdigest() == reference["digest"]
+            history.append({"type":"function_call_output", "call_id":reference["call_id"],
+                            "output":output.decode("utf-8")})
+        assert page["next"] == (len(history) if len(history) < page["total"] else None)
     transitions = [row["event"]["data"]["command"]["data"]["transition"]
                    for row in host.journal() if row["aggregate"] == session
                    and row["event"].get("data",{}).get("command",{}).get("type") == "context_transition"]
