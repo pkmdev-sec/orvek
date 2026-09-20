@@ -187,7 +187,7 @@ pub struct InternalContextMedia {
     pub provider_file_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PromptCacheIdentity {
     pub version: u32,
     pub routing: Digest,
@@ -346,6 +346,60 @@ impl InferenceRequest {
             self.output_format.as_ref(),
         )?;
         Ok(self)
+    }
+
+    /// Rebuild a recorded logical request through the same validation and cache
+    /// transforms as live requests. This does not grant authority to dispatch it.
+    pub(crate) fn from_recorded_template(
+        settings: ModelSettings,
+        template: &Value,
+        cache: &PromptCacheIdentity,
+    ) -> Result<Self, FailureKind> {
+        let input = template["input"]
+            .as_array()
+            .ok_or(FailureKind::InvalidRequest)?
+            .clone();
+        let tools = template["tools"]
+            .as_array()
+            .ok_or(FailureKind::InvalidRequest)?
+            .clone();
+        let instructions = template["instructions"]
+            .as_str()
+            .ok_or(FailureKind::InvalidRequest)?
+            .to_owned();
+        let routing = template["prompt_cache_key"]
+            .as_str()
+            .ok_or(FailureKind::InvalidRequest)?;
+        let limit = template["max_output_tokens"]
+            .as_u64()
+            .ok_or(FailureKind::InvalidRequest)?;
+        let input = PromptInput::segmented(Vec::new(), input, cache.stable_segments.clone())?;
+        let mut request = Self::new_segmented(
+            settings,
+            input,
+            tools,
+            instructions,
+            routing.to_owned(),
+            limit,
+        )?;
+        if let Some(format) = template.pointer("/text/format") {
+            let name = format["name"].as_str().ok_or(FailureKind::InvalidRequest)?;
+            request = request.with_json_schema(name, format["schema"].clone())?;
+        }
+        if request.cache_identity() != cache || request.wire(Transport::Http) != *template {
+            return Err(FailureKind::InvalidRequest);
+        }
+        Ok(request)
+    }
+
+    pub(crate) fn effective_wire(&self, transport: Transport, dialect: ResponseDialect) -> Value {
+        let mut wire = self.wire(transport);
+        if dialect == ResponseDialect::ChatGpt {
+            let fields = wire.as_object_mut().expect("request wire is an object");
+            fields.remove("max_output_tokens");
+            fields.remove("truncation");
+        }
+        wire
     }
 
     pub(crate) fn wire(&self, transport: Transport) -> Value {
@@ -721,6 +775,23 @@ pub struct ProviderResponse {
     pub usage: Usage,
 }
 
+impl ProviderResponse {
+    pub(crate) fn validate_recorded(&self) -> Result<(), FailureKind> {
+        let output = self
+            .history_items
+            .iter()
+            .map(normalize)
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut calls = std::collections::BTreeSet::new();
+        if output != self.output || output.iter().any(|item| {
+            matches!(item, OutputItem::ToolProposal(proposal) if !calls.insert(&proposal.call_id))
+        }) {
+            return Err(FailureKind::MalformedResponse);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Delta {
@@ -731,8 +802,9 @@ pub enum Delta {
     ItemDone { item: OutputItem },
 }
 
-#[derive(Default, Eq, PartialEq)]
-pub(crate) enum ResponseDialect {
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseDialect {
     #[default]
     OpenAi,
     ChatGpt,

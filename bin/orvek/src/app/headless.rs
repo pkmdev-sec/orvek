@@ -4,18 +4,20 @@ use crate::{
     app::{
         config::Config,
         error::{Error, Result},
+        host::HostClient,
     },
     core::ConfiguredSession,
 };
 use orvek_harness::{
     contract::Limits,
     inference::Model,
-    ipc::{Command, Request, Response, WatchFrame},
-    session::{SessionCommand, SessionEvent, SessionId},
+    ipc::{Command, HistoryEntry, Request, Response, SessionView, WatchFrame},
+    session::{SessionCommand, SessionCursor, SessionEvent, SessionId},
     state::{Outcome, TaskId},
     submission::{SubmissionStatus, SubmitIntent},
 };
 use serde::Serialize;
+use serde_json::json;
 use std::{collections::BTreeSet, io::Write, time::Duration};
 use tokio_util::sync::CancellationToken;
 
@@ -29,6 +31,44 @@ impl Output {
         bytes.push(b'\n');
         std::io::stdout().write_all(&bytes)?;
         Ok(())
+    }
+
+    async fn session_feedback(&mut self, client: &HostClient, view: &SessionView) -> Result<()> {
+        let cursor = SessionCursor {
+            version: 1,
+            session: view.id,
+            revision: view.revision,
+        };
+        let mut start = 0;
+        loop {
+            let Response::History(page) = client
+                .query(Command::History {
+                    cursor: cursor.clone(),
+                    start,
+                    limit: 64,
+                })
+                .await?
+            else {
+                return Err(Error::HostRequest("expected session history page".into()));
+            };
+            for entry in page.items {
+                // Feedback is inline. Do not fetch tool outputs for this optional notice scan.
+                if let HistoryEntry::Inline(item) = entry
+                    && item["role"] == "developer"
+                    && let Some(message) = item["content"].as_str()
+                {
+                    self.emit(
+                        "session_feedback",
+                        &json!({"session":view.id,"revision":view.revision,"message":message}),
+                    )?;
+                }
+            }
+            match page.next {
+                None => return Ok(()),
+                Some(next) if next > start && next <= view.history_items => start = next,
+                Some(_) => return Err(Error::HostRequest("invalid session history cursor".into())),
+            }
+        }
     }
 }
 
@@ -85,6 +125,14 @@ pub(crate) async fn run(
     });
     let mut output = Output;
     output.emit("session", &configured.session)?;
+    // Admission feedback predates this snapshot's watch cursor; resume also restores saved notices.
+    if output
+        .session_feedback(&client, &configured.session)
+        .await
+        .is_err()
+    {
+        output.emit("view_gap", &json!({"session":session,"view":"session_feedback","message":"Saved session feedback is unavailable."}))?;
+    }
     output.emit(
         "submission_pending",
         &serde_json::json!({"session":session,"request":request.id}),
@@ -105,6 +153,12 @@ pub(crate) async fn run(
             // Drain the authoritative journal through the host head observed after
             // the terminal receipt. Preview availability cannot change the result.
             if let Ok(info) = client.info().await {
+                output.emit(
+                    "event",
+                    &WatchFrame::Warnings {
+                        warnings: info.warnings,
+                    },
+                )?;
                 let target = info.journal_sequence;
                 let drain = async {
                     if watch.is_none() {
@@ -211,7 +265,7 @@ fn visible(session: SessionId, tasks: &mut BTreeSet<TaskId>, frame: &WatchFrame)
             tasks.iter().any(|id| id.to_string() == record.aggregate)
         }
         WatchFrame::Preview { session: owner, .. } => *owner == session,
-        WatchFrame::PreviewGap { .. } => true,
+        WatchFrame::PreviewGap { .. } | WatchFrame::Warnings { .. } => true,
         _ => false,
     }
 }
@@ -243,5 +297,48 @@ mod tests {
 
         reconnects.connected();
         assert!(reconnects.can_attempt());
+    }
+
+    #[test]
+    fn diagnostic_headless_visibility_includes_global_warnings_and_only_own_feedback() {
+        use orvek_harness::{
+            controller::HostWarning,
+            ipc::WatchFrame,
+            session::{JournalRecord, SessionCommand, SessionEvent, SessionId},
+        };
+        let session = SessionId::new();
+        let mut tasks = std::collections::BTreeSet::new();
+        let warning = WatchFrame::Warnings {
+            warnings: vec![HostWarning::EventIntakeStopped],
+        };
+        assert!(super::visible(session, &mut tasks, &warning));
+        assert!(super::visible(
+            session,
+            &mut tasks,
+            &WatchFrame::Warnings { warnings: vec![] }
+        ));
+        let feedback = |owner: SessionId| {
+            WatchFrame::Journal(JournalRecord {
+                sequence: 1,
+                aggregate: owner.to_string(),
+                kind: "session".into(),
+                revision: 1,
+                event: serde_json::to_value(SessionEvent::Command {
+                    operation: uuid::Uuid::new_v4(),
+                    command: SessionCommand::Feedback {
+                        message: "session warning".into(),
+                    },
+                    at_ms: 0,
+                })
+                .unwrap(),
+            })
+        };
+        assert!(super::visible(session, &mut tasks, &feedback(session)));
+        assert!(!super::visible(
+            session,
+            &mut tasks,
+            &feedback(SessionId::new())
+        ));
+        assert!(tasks.is_empty());
     }
 }

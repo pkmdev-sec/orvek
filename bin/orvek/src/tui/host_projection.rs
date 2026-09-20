@@ -2,10 +2,12 @@
 //! This module cannot execute tools, persist domain state, or certify a task.
 
 use orvek_harness::{
+    controller::HostWarning,
     inference::{Delta, ModelSettings},
     ipc::WatchFrame,
     session::{
         JournalRecord, SessionCommand, SessionConfig, SessionCursor, SessionEvent, SessionId,
+        ToolOutputBuffers,
     },
     state::{TaskEvent, TaskId},
 };
@@ -120,6 +122,7 @@ pub(crate) enum ViewChange {
 }
 
 pub(crate) struct HostProjection {
+    tool_outputs: ToolOutputBuffers,
     session: SessionId,
     sequence: u64,
     revision: u64,
@@ -129,11 +132,13 @@ pub(crate) struct HostProjection {
     auxiliary: BTreeMap<Uuid, bool>,
     tasks: BTreeSet<TaskId>,
     task_order: VecDeque<TaskId>,
+    warnings: Vec<HostWarning>,
 }
 
 impl HostProjection {
     pub(crate) fn new(session: SessionId, after: u64) -> Self {
         Self {
+            tool_outputs: ToolOutputBuffers::default(),
             session,
             sequence: after,
             revision: 0,
@@ -143,6 +148,7 @@ impl HostProjection {
             auxiliary: BTreeMap::new(),
             tasks: BTreeSet::new(),
             task_order: VecDeque::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -186,6 +192,15 @@ impl HostProjection {
 
     pub(crate) fn apply(&mut self, frame: WatchFrame) -> Vec<ViewChange> {
         match frame {
+            WatchFrame::Warnings { warnings } => {
+                let changes = warnings
+                    .iter()
+                    .filter(|warning| !self.warnings.contains(warning))
+                    .map(|warning| ViewChange::Warning(warning.message().into()))
+                    .collect();
+                self.warnings = warnings;
+                changes
+            }
             WatchFrame::Journal(record) => self.journal(record),
             // Subagent lifecycle is presentation state, not journal projection;
             // the client intercepts these frames before applying the rest.
@@ -311,8 +326,38 @@ impl HostProjection {
             } => {
                 self.recorded_ms = at_ms;
                 match command {
+                    SessionCommand::TraceRecorded { .. }
+                    | SessionCommand::ChildLifecycle(_)
+                    | SessionCommand::ContextTransition { .. } => Vec::new(),
+                    SessionCommand::Interpreter { event, .. } => {
+                        use orvek_harness::interpreter::InterpreterEvent;
+                        let message = match event {
+                            InterpreterEvent::Started { cell, .. } => {
+                                format!("Interpreter cell {cell} running")
+                            }
+                            InterpreterEvent::CallStarted {
+                                cell,
+                                ordinal,
+                                name,
+                                ..
+                            } => format!("Interpreter {cell}/{ordinal}: {name} pending"),
+                            InterpreterEvent::CallSettled {
+                                cell,
+                                ordinal,
+                                result,
+                            } => format!("Interpreter {cell}/{ordinal}: receipt {result}"),
+                            InterpreterEvent::Settled {
+                                cell, state_lost, ..
+                            } => format!(
+                                "Interpreter cell {cell} settled; live state lost: {state_lost}"
+                            ),
+                        };
+                        vec![ViewChange::Status(message)]
+                    }
+
                     SessionCommand::AdmissionPinned { .. }
-                    | SessionCommand::LegacyImportBound { .. } => Vec::new(),
+                    | SessionCommand::LegacyImportBound { .. }
+                    | SessionCommand::CompletionHook(_) => Vec::new(),
                     SessionCommand::ReviewRecorded { feedback } => {
                         vec![ViewChange::ReviewRecorded { feedback }]
                     }
@@ -432,6 +477,27 @@ impl HostProjection {
                         call,
                         cost_usd,
                     }],
+                    SessionCommand::ToolResultPart {
+                        request,
+                        call_id,
+                        offset,
+                        output,
+                    } => match self.tool_outputs.append(request, &call_id, offset, &output) {
+                        Ok(()) => Vec::new(),
+                        Err(error) => vec![ViewChange::Warning(error.to_string())],
+                    },
+                    SessionCommand::ToolResultEnd {
+                        request,
+                        call_id,
+                        digest,
+                    } => match self.tool_outputs.finish(request, &call_id, digest) {
+                        Ok(output) => vec![ViewChange::ToolResult {
+                            request: Some(request),
+                            call_id,
+                            output,
+                        }],
+                        Err(error) => vec![ViewChange::Warning(error.to_string())],
+                    },
                     SessionCommand::ToolResult {
                         request,
                         call_id,
@@ -465,6 +531,7 @@ impl HostProjection {
                     SessionCommand::SettingsChanged(settings) => {
                         vec![ViewChange::Settings(settings)]
                     }
+                    SessionCommand::ContextPrepared { .. } => Vec::new(),
                     SessionCommand::ContextProjected {
                         source_revision,
                         view,
@@ -496,6 +563,10 @@ fn project_items(request: Option<Uuid>, items: &[Value], inferred_final: bool) -
                     request,
                     text: content_text(&item["content"], true),
                 }),
+                Some("developer") => changes.push(ViewChange::Status(format!(
+                    "Feedback: {}",
+                    content_text(&item["content"], false)
+                ))),
                 Some("assistant") => changes.push(ViewChange::Assistant {
                     request,
                     item: item["id"].as_str().unwrap_or("message").to_owned(),
@@ -1188,5 +1259,126 @@ mod tests {
             [ViewChange::DiscardPreviews]
         ));
         assert_eq!(projection.sequence(), 4);
+    }
+    #[test]
+    fn tool_output_parts_publish_one_verified_result_and_survive_replayed_frames() {
+        let session = SessionId::new();
+        let request = Uuid::new_v4();
+        let mut projection = HostProjection::new(session, 0);
+        let first = event(
+            session,
+            1,
+            SessionCommand::ToolResultPart {
+                request,
+                call_id: "chunked".into(),
+                offset: 0,
+                output: "hello ".into(),
+            },
+        );
+        assert!(projection.apply(first.clone()).is_empty());
+        assert!(projection.apply(first).is_empty());
+        assert!(
+            projection
+                .apply(event(
+                    session,
+                    2,
+                    SessionCommand::ToolResultPart {
+                        request,
+                        call_id: "chunked".into(),
+                        offset: 6,
+                        output: "💎".into(),
+                    }
+                ))
+                .is_empty()
+        );
+        let changes = projection.apply(event(
+            session,
+            3,
+            SessionCommand::ToolResultEnd {
+                request,
+                call_id: "chunked".into(),
+                digest: Digest::of("hello 💎".as_bytes()),
+            },
+        ));
+        assert!(
+            matches!(changes.as_slice(), [ViewChange::ToolResult {output, ..}] if output == "hello 💎")
+        );
+    }
+
+    #[test]
+    fn incomplete_tool_output_is_a_warning_not_a_fabricated_result() {
+        let session = SessionId::new();
+        let mut projection = HostProjection::new(session, 0);
+        let changes = projection.apply(event(
+            session,
+            1,
+            SessionCommand::ToolResultEnd {
+                request: Uuid::new_v4(),
+                call_id: "missing".into(),
+                digest: Digest::of(b"missing"),
+            },
+        ));
+        assert!(matches!(changes.as_slice(), [ViewChange::Warning(_)]));
+    }
+
+    #[test]
+    fn diagnostic_warnings_are_global_but_feedback_stays_session_scoped() {
+        use orvek_harness::controller::HostWarning;
+        let session = SessionId::new();
+        let mut projection = HostProjection::new(session, 0);
+        let warning = || WatchFrame::Warnings {
+            warnings: vec![HostWarning::EventIntakeStopped],
+        };
+        assert!(
+            matches!(projection.apply(warning()).as_slice(), [ViewChange::Warning(message)] if message.contains("event intake stopped"))
+        );
+        assert!(
+            projection.apply(warning()).is_empty(),
+            "reconnect snapshots must not duplicate existing warnings"
+        );
+        assert!(
+            projection
+                .apply(event(
+                    SessionId::new(),
+                    1,
+                    SessionCommand::Feedback {
+                        message: "another session".into()
+                    }
+                ))
+                .is_empty()
+        );
+        assert!(
+            matches!(projection.apply(event(session, 2, SessionCommand::Feedback { message: "this session".into() })).as_slice(), [ViewChange::Status(message)] if message.contains("this session"))
+        );
+        assert!(
+            projection
+                .apply(WatchFrame::Warnings { warnings: vec![] })
+                .is_empty()
+        );
+        assert!(
+            matches!(
+                projection.apply(warning()).as_slice(),
+                [ViewChange::Warning(_)]
+            ),
+            "a new failure after recovery is visible"
+        );
+        assert_eq!(
+            projection.sequence(),
+            2,
+            "host status must not advance the durable cursor"
+        );
+    }
+
+    #[test]
+    fn diagnostic_feedback_survives_history_snapshot_projection() {
+        let changes = history_items(
+            None,
+            &[
+                json!({"role":"developer","content":"Warning: monitor behavior is unavailable; this session uses the compiled baseline."}),
+            ],
+        );
+        assert!(
+            matches!(changes.as_slice(), [ViewChange::Status(message)] if message.contains("compiled baseline"))
+        );
     }
 }

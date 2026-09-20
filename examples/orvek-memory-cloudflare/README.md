@@ -76,6 +76,14 @@ The credential uploader validates the TOML and passes the Worker secret to Wrang
 It creates no intermediate plaintext deployment file. Configure clients with the deployed HTTPS
 endpoint.
 
+## Protocol upgrade
+
+This build uses remote protocol v2. Upgrade clients with the Worker and apply all migrations,
+including `0002_evidence.sql` and `0003_ownership.sql`. Existing records remain legacy-unscoped and unverified. Metadata
+and citations persist through put, sync, and export; scoped scans filter before ranking and scoped
+reads filter before use telemetry. Owned lesson pages use the authenticated namespace and do not
+share the interactive list window. Ownership IDs preserve independent transfer provenance.
+
 ## Limits and operations
 
 Scans rank a bounded shared corpus with BM25 inside the Worker. The configured defaults are

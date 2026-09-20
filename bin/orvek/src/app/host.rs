@@ -12,6 +12,7 @@ use orvek_harness::{
     ipc::{self, Command, Request, Response, WatchFrame},
     runtime::DockerExecutor,
 };
+use serde_json::json;
 use std::{
     fs::{self, OpenOptions},
     io::{self, Read},
@@ -380,6 +381,10 @@ pub(crate) fn state_directory(config_path: &Path) -> PathBuf {
         .join("host/v1")
 }
 
+fn experimental_context_transitions() -> bool {
+    std::env::var("ORVEK_EXPERIMENTAL_CONTEXT_TRANSITIONS").as_deref() == Ok("1")
+}
+
 fn configuration_identity(config: &Config) -> Result<Digest> {
     Digest::of_value(&configuration_identity_material(config)?)
         .map_err(|error| Error::HostRequest(error.to_string()))
@@ -405,7 +410,7 @@ fn configuration_identity_material(config: &Config) -> Result<serde_json::Value>
     // Client build metadata is deliberately excluded. A rebuild does not
     // change host configuration, and protocol compatibility is enforced by
     // the IPC boundary instead.
-    Ok(serde_json::json!({
+    let mut material = serde_json::json!({
         "version": 1,
         "config_path": config.path(),
         "file_revision": revision,
@@ -414,12 +419,15 @@ fn configuration_identity_material(config: &Config) -> Result<serde_json::Value>
         "model_route_credentials": model_route_credential_identities(config)?,
         "mcp": config.mcp_servers(),
         "memory": config.memory(),
+        "skills": config.skills(),
         "children": config.subagents(),
         "max_children": config.agent().max_subagents(),
         "context_window_tokens": config.agent().context_window_tokens(),
         "web_search": config.agent().web_search(),
         "image_generation": config.agent().image_generation(),
-        "completion_hook": config.agent().completion_hook(),
+        "completion_hook": config.agent().completion_hook().map(|command| json!({"version":1,"command":command})),
+        "trace_recording_version": 1,
+        "provider_transport_version": 2,
         "websocket_url": config.agent().websocket_url(),
         "api_base_url": config.agent().api_base_url(),
         "execution": execution,
@@ -427,7 +435,11 @@ fn configuration_identity_material(config: &Config) -> Result<serde_json::Value>
         // pinning the executor image and helper explicitly.
         "executor_image": sandbox.then(|| std::env::var("ORVEK_EXECUTOR_IMAGE").ok()).flatten(),
         "executor_helper": sandbox.then(|| std::env::var_os("ORVEK_EXECUTOR_HELPER").map(PathBuf::from)),
-    }))
+    });
+    if experimental_context_transitions() {
+        material["experimental_context_transitions"] = json!(1);
+    }
+    Ok(material)
 }
 
 /// A configured `websocket_url` opts into the WebSocket transport; every other
@@ -517,6 +529,21 @@ fn model_routed_provider(provider: ResponsesClient, config: &Config) -> Result<R
     Ok(provider)
 }
 
+fn provider_limits(max_request_bytes: usize) -> ProviderLimits {
+    ProviderLimits {
+        max_attempts: 1,
+        max_request_bytes,
+        // An OpenAI-compatible bridge stays silent while the model thinks,
+        // so the idle window must cover a full reasoning phase. The total
+        // window keeps headroom above the bridge's own upstream cap.
+        idle_timeout: Duration::from_secs(600),
+        total_timeout: Duration::from_secs(900),
+        max_response_bytes: 64 * 1024 * 1024,
+        max_event_bytes: 32 * 1024 * 1024,
+        ..ProviderLimits::default()
+    }
+}
+
 pub(crate) async fn serve(config: &Config) -> Result<()> {
     let auth = config.auth().load()?;
     let route = Route::from_overrides(
@@ -527,24 +554,11 @@ pub(crate) async fn serve(config: &Config) -> Result<()> {
     )?;
     let max_request_bytes = context::request_byte_limit(config.agent().context_window_tokens())
         .map_err(|error| Error::HostRequest(error.to_string()))?;
-    let provider = ResponsesClient::new(
-        auth,
-        route,
-        ProviderLimits {
-            max_attempts: 1,
-            max_request_bytes,
-            // An OpenAI-compatible bridge stays silent while the model thinks,
-            // so the idle window must cover a full reasoning phase. The total
-            // window keeps headroom above the bridge's own upstream cap.
-            idle_timeout: Duration::from_secs(600),
-            total_timeout: Duration::from_secs(900),
-            ..ProviderLimits::default()
-        },
-    )?;
+    let provider = ResponsesClient::new(auth, route, provider_limits(max_request_bytes))?;
     let provider = model_routed_provider(provider, config)?;
     // Native mode never touches Docker; sandbox mode keeps the verified
     // isolated workflow and its executor requirements.
-    let host = Arc::new(if config.agent().execution().is_sandbox() {
+    let host = if config.agent().execution().is_sandbox() {
         let image =
             std::env::var("ORVEK_EXECUTOR_IMAGE").unwrap_or_else(|_| "debian:bookworm-slim".into());
         let executor = DockerExecutor::connect(&image)
@@ -562,7 +576,17 @@ pub(crate) async fn serve(config: &Config) -> Result<()> {
             provider,
             configuration_identity(config)?,
         )?
-    });
+    };
+    let host = host.with_experimental_context_transitions(experimental_context_transitions());
+    let host = if config.memory().enabled() || config.skills().enabled() {
+        host.with_context_service(Arc::new(crate::core::context::ConfiguredContext::new(
+            config,
+        )))
+    } else {
+        host
+    };
+    let host =
+        Arc::new(host.with_completion_hook(config.agent().completion_hook().map(str::to_owned)));
     host.set_subagent_policy(
         config.subagents().enabled(),
         config.subagents().allow_luna(),
@@ -590,6 +614,31 @@ mod tests {
         let listener = UnixListener::bind(&socket).unwrap();
         fs::set_permissions(socket, fs::Permissions::from_mode(0o600)).unwrap();
         listener
+    }
+
+    fn fixture_config(root: &Path, agent: &str) -> Config {
+        let command = root.join("fixture-auth");
+        fs::write(&command, "#!/bin/sh\nprintf fixture-provider-token\n").unwrap();
+        fs::set_permissions(&command, fs::Permissions::from_mode(0o700)).unwrap();
+        let path = root.join("config.toml");
+        fs::write(
+            &path,
+            format!("[auth]\nmode = \"api-key\"\ncommand = {command:?}\n[agent]\n{agent}"),
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        Config::load_isolated(crate::app::config::ConfigOverrides {
+            path: Some(path),
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn detached_host_accepts_bounded_high_reasoning_provider_streams() {
+        let limits = provider_limits(2 * 1024 * 1024);
+        assert_eq!(limits.max_response_bytes, 64 * 1024 * 1024);
+        assert_eq!(limits.max_event_bytes, 32 * 1024 * 1024);
     }
 
     #[test]
@@ -646,16 +695,34 @@ api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
     }
 
     #[test]
+    fn trace_recording_has_a_versioned_host_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = fixture_config(directory.path(), "");
+        let material = configuration_identity_material(&config).unwrap();
+        assert_eq!(
+            material["trace_recording_version"], 1,
+            "an idle pre-trace host must not match the new runtime identity"
+        );
+        assert_eq!(
+            material["provider_transport_version"], 2,
+            "an idle host with the smaller stream bounds must be restarted"
+        );
+    }
+
+    #[test]
+    fn configured_completion_hook_has_a_versioned_delivery_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = fixture_config(directory.path(), "completion_hook = \"notify-local\"\n");
+        assert_eq!(
+            configuration_identity_material(&config).unwrap()["completion_hook"],
+            json!({"version":1,"command":"notify-local"})
+        );
+    }
+
+    #[test]
     fn client_build_metadata_is_not_host_configuration() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("config.toml");
-        fs::write(&path, "[agent]\nmodel = \"glm-5.3\"\n").unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-        let config = crate::app::config::Config::load(crate::app::config::ConfigOverrides {
-            path: Some(path),
-            ..crate::app::config::ConfigOverrides::default()
-        })
-        .unwrap();
+        let config = fixture_config(directory.path(), "model = \"glm-5.3\"\n");
 
         let material = configuration_identity_material(&config).unwrap();
 
@@ -771,3 +838,7 @@ api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
         assert_eq!(watch.cursor(), 7);
     }
 }
+
+#[cfg(test)]
+#[path = "host_context_tests.rs"]
+mod context_tests;

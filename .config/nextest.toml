@@ -1,0 +1,5 @@
+[profile.default]
+
+[[profile.default.overrides]]
+filter = "binary(completion_hook) | binary(trace_cli) | test(~app::host::context_tests)"
+threads-required = "num-cpus"

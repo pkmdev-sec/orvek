@@ -1,7 +1,7 @@
 //! Exact conversion between D1 result objects and memory domain records.
 
 use super::MessageError;
-use orvek_memory::{MemoryError, MemoryKey, MemoryRecord, normalize_identity};
+use orvek_memory::{MemoryError, MemoryKey, MemoryRecord};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use worker::d1::D1Result;
@@ -46,6 +46,7 @@ impl DecodeResult for D1Result {
 /// D1 representation that preserves SQLite integers across JavaScript.
 #[derive(Deserialize)]
 struct RecordRow {
+    metadata: String,
     namespace: String,
     id: String,
     version: String,
@@ -64,6 +65,7 @@ impl TryFrom<RecordRow> for MemoryRecord {
 
     fn try_from(row: RecordRow) -> Result<Self, Self::Error> {
         Ok(Self {
+            metadata: serde_json::from_str(&row.metadata).map_err(MessageError::backend)?,
             key: MemoryKey::remote(row.namespace, parse(&row.id)?, parse(&row.version)?),
             content: row.content,
             created_at_ms: parse(&row.created_at_ms)?,
@@ -124,6 +126,7 @@ pub(super) struct ReplaceRow {
 /// Snapshot representation encoded for exact `json_each` ingestion.
 #[derive(Serialize)]
 pub(super) struct SyncRow {
+    metadata: String,
     id: String,
     version: String,
     content: String,
@@ -140,10 +143,11 @@ pub(super) struct SyncRow {
 impl From<&MemoryRecord> for SyncRow {
     fn from(record: &MemoryRecord) -> Self {
         Self {
+            metadata: serde_json::to_string(&record.metadata).expect("serializable metadata"),
             id: record.key.id.to_string(),
             version: record.key.version.to_string(),
             content: record.content.clone(),
-            identity: normalize_identity(&record.content),
+            identity: record.metadata.identity(&record.content),
             created_at_ms: record.created_at_ms.to_string(),
             updated_at_ms: record.updated_at_ms.to_string(),
             last_scanned_at_ms: record.last_scanned_at_ms.map(|value| value.to_string()),

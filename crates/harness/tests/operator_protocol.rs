@@ -121,6 +121,9 @@ async fn real_operator_socket_uses_the_host_owner_and_survives_client_reconnect(
             .unwrap(),
         ipc::WatchFrame::Ready { after: 0 }
     ));
+    assert!(
+        matches!(ipc::read_frame::<ipc::WatchFrame>(&mut watch).await.unwrap(), ipc::WatchFrame::Warnings { warnings } if warnings.is_empty())
+    );
     let id = SessionId::new();
     let create = Request::new(Command::CreateSession {
         id,
@@ -150,6 +153,9 @@ async fn real_operator_socket_uses_the_host_owner_and_survives_client_reconnect(
     let mut watch = ipc::subscribe(&socket, cursor).await.unwrap();
     assert!(
         matches!(ipc::read_frame::<ipc::WatchFrame>(&mut watch).await.unwrap(), ipc::WatchFrame::Ready { after } if after == cursor)
+    );
+    assert!(
+        matches!(ipc::read_frame::<ipc::WatchFrame>(&mut watch).await.unwrap(), ipc::WatchFrame::Warnings { warnings } if warnings.is_empty())
     );
     assert!(
         matches!(ipc::call(&socket,&create,Duration::from_secs(5)).await.unwrap(),Response::Session(view) if view.id==id && view.revision==1)

@@ -182,7 +182,7 @@ fn published_views_preserve_history_and_reject_corruption_or_stale_sources() {
         )
         .unwrap();
     assert_eq!(state.history, original_history);
-    assert_eq!(state.context_view, Some(view.clone()));
+    assert_eq!(state.context_view, Some(view.manifest.clone()));
 
     assert!(
         store
@@ -410,4 +410,80 @@ fn appending_live_items_preserves_the_settled_wire_prefix_across_resume() {
     .unwrap()
     .cache_lineage();
     assert_eq!(resumed_lineage, cache_lineage);
+}
+
+/// A projection that fits the context window must always fit one journal event.
+/// The cache records the manifest, so a large conversation cannot make the
+/// session unwritable.
+#[test]
+fn large_projections_stay_writable_at_the_largest_context_window() {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&root.path().join("state")).unwrap();
+    let mut state = store
+        .create_session(
+            SessionId::new(),
+            SessionConfig {
+                workspace: root.path().into(),
+                model: ModelSettings::default(),
+                instructions: String::new(),
+                context_window_tokens: context::MAX_WINDOW_TOKENS,
+            },
+            None,
+        )
+        .unwrap();
+    let limit = context::projection_byte_limit(context::MAX_WINDOW_TOKENS).unwrap();
+    for turn in 0..16 {
+        let request = Uuid::new_v4();
+        state = store
+            .session_command(
+                state.id,
+                state.revision,
+                request,
+                SessionCommand::Input {
+                    kind: RequestKind::Conversation,
+                    content: vec![json!({
+                        "role": "user",
+                        "content": "x".repeat(limit / 16),
+                        "turn": turn,
+                    })],
+                },
+            )
+            .unwrap();
+        state = store
+            .session_command(
+                state.id,
+                state.revision,
+                Uuid::new_v4(),
+                SessionCommand::TurnSettled {
+                    request,
+                    outcome: None,
+                    error: None,
+                },
+            )
+            .unwrap();
+    }
+    let view = context::project(&state, limit).unwrap();
+    assert!(
+        serde_json::to_vec(&view.input).unwrap().len() > 512 * 1024,
+        "the projected input must exceed one journal event for this test to mean anything"
+    );
+
+    state = store
+        .session_command(
+            state.id,
+            state.revision,
+            Uuid::new_v4(),
+            SessionCommand::ContextProjected {
+                source_revision: state.revision,
+                view: Some(view.clone()),
+                projection: Vec::new(),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        state.context_view.as_ref(),
+        Some(&view.manifest),
+        "the cached manifest must survive so representation reuse keeps working"
+    );
 }

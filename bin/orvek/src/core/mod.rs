@@ -1,5 +1,6 @@
 //! Session assembly for the durable host. No provider or execution loop lives here.
 
+pub(crate) mod context;
 pub(crate) mod extensions;
 
 use crate::app::{

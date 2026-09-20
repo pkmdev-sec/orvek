@@ -184,8 +184,39 @@ pub struct AttemptRecord {
     pub elapsed_ms: u64,
 }
 
+/// Route selection without credential-bearing endpoint or authentication data.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestRoute {
+    Default,
+    ModelOverride,
+}
+
+/// Credential-free application-body provenance, not proof of provider delivery.
+/// One prepared body is shared by every attempt in this outcome. Consult each
+/// attempt's `dispatched` flag for possible transport handoff; even `true` cannot
+/// prove that the remote peer received it. Headers and endpoints are never retained.
+/// Prompt/source data is retained verbatim; this is not a content secret scrubber.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum RequestProvenance {
+    /// Preparation did not finish, or a historical outcome did not capture it.
+    #[default]
+    Unavailable,
+    Prepared {
+        transport: Transport,
+        dialect: ResponseDialect,
+        route: RequestRoute,
+        /// Exact serialized UTF-8 HTTP body or WebSocket text payload. No framing.
+        /// May be prepared but never dispatched (for example, auth failure).
+        body: String,
+    },
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct CallOutcome {
+    #[serde(default)]
+    pub request: RequestProvenance,
     pub response: Option<ProviderResponse>,
     pub failure: Option<Failure>,
     pub attempts: Vec<AttemptRecord>,
@@ -516,17 +547,26 @@ impl ResponsesClient {
         let auth = override_route
             .map(|model_route| model_route.auth.as_ref())
             .unwrap_or(&self.auth);
-        let mut wire = request.wire(route.transport);
         if auth.mode() == AuthMode::ChatGpt {
             state.decoder.dialect = ResponseDialect::ChatGpt;
-            let fields = wire.as_object_mut().expect("request wire is an object");
-            fields.remove("max_output_tokens");
-            fields.remove("truncation");
         }
-        let body = serde_json::to_vec(&wire).map_err(|_| FailureKind::InvalidRequest)?;
+        let wire = request.effective_wire(route.transport, state.decoder.dialect);
+        let body = serde_json::to_string(&wire).map_err(|_| FailureKind::InvalidRequest)?;
         if body.len() > self.limits.max_request_bytes {
             return Err(FailureKind::SizeLimit);
         }
+        // Retain before the first await so auth failures, cancellation and timeouts
+        // carry the same body as successful calls. No credential/header data enters it.
+        state.outcome.request = RequestProvenance::Prepared {
+            transport: route.transport,
+            dialect: state.decoder.dialect,
+            route: if override_route.is_some() {
+                RequestRoute::ModelOverride
+            } else {
+                RequestRoute::Default
+            },
+            body: body.clone(),
+        };
         let mut recovered = false;
         for number in 1..=self.limits.max_attempts {
             state.response_cost_usd = None;
@@ -565,11 +605,11 @@ impl ResponsesClient {
             });
             let result = match route.transport {
                 Transport::Http => {
-                    self.http(&route.endpoint, &body, headers, state, emit)
+                    self.http(&route.endpoint, body.as_bytes(), headers, state, emit)
                         .await
                 }
                 Transport::WebSocket => {
-                    self.websocket(&route.endpoint, &body, headers, state, emit)
+                    self.websocket(&route.endpoint, body.as_bytes(), headers, state, emit)
                         .await
                 }
             };

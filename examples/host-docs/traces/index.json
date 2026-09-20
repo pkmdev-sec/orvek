@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "policy": "controlled-fixture-events-only-v1",
+  "sources": {
+    "examples/host-docs/native.py": "0b02227fb18ff8148ebaf6dfe0308f6659144335d3aa22db759572cb1260e942",
+    "examples/host-docs/sandbox.py": "97db936b193382ac775db47e4b3d54e5d83d6d45fc87106ae42712a2aaee0296",
+    "examples/host-docs/reconnect.py": "005d8f86be27d19bec74c9b332247e2e256d36edf42b3df2e4000f83ff8b928e",
+    "examples/host-docs/completion_hook.py": "02d946d6333ea8b74c123692598097f30743ab8155a810aa5b371d31c24c25c6",
+    "examples/host-docs/memory_skills.py": "79525bddc20155bed66d8767e41fa32ea29f5810ff8fdecf962b98629052d5db",
+    "examples/host-docs/fixture.py": "4dc0676f835d808906c9ba70837a65d92f34103e72b19a86416097571436d4de",
+    "scripts/doc-traces.py": "1819a31877f8b3f38432478f7ab07b62af116aa1b4f5a76b9a1b40d4a60c2bdb"
+  },
+  "runtime_sha256": "cbd7c8e3f8a9a85c201ea54d17d9283970a98b28cd820531c93e50ddf9a71214",
+  "binary_sha256": "648dcb7c4d50aa1336a1072e042ebb01fd8badf8182455b17aab169ecc5ee2a4",
+  "scenarios": {
+    "native": {
+      "sha256": "970b6d9f3efebef977177d7bfab7e78d75b799b421702502cbaa19e02cdeb9cb",
+      "bytes": 25902,
+      "records": 24,
+      "replay": {
+        "outcome": "finished_unverified",
+        "sessions": 1,
+        "tasks": 1
+      },
+      "original_exact": true,
+      "original_digest": "c3ed32412760010c73ac233bd329982ab89249ecd84963582ba9350c232eb4de",
+      "records_sha256": "2414ff13709c2eb67505eb2c67e41531979186ca035c83379de63dac60ef5d56"
+    },
+    "sandbox": {
+      "sha256": "53afb869fed36da0a9c9e393f754b1d7ecec4a1695859cfad8ed97b4a2e7c9ae",
+      "bytes": 39957,
+      "records": 41,
+      "replay": {
+        "outcome": "complete",
+        "sessions": 1,
+        "tasks": 1
+      },
+      "original_exact": true,
+      "original_digest": "27c88bdeedb68070baac1d2a0cdf54489b0f47758e3db9cad00f80ac72e391bb",
+      "records_sha256": "0d960aa6be1d3426fc3ac1b8085a566f4283916ae59c56c866a0048bd1cdf31a"
+    },
+    "reconnect": {
+      "sha256": "3523713febeb37524408a650ca3152373fdbca2413515816db51af95df0ead02",
+      "bytes": 26130,
+      "records": 24,
+      "replay": {
+        "outcome": "finished_unverified",
+        "sessions": 1,
+        "tasks": 1
+      },
+      "original_exact": true,
+      "original_digest": "992d8b1198e7932cbde9907e937bf6d5f40c96053ce1d5343cad6c6eae19979a",
+      "records_sha256": "a545a5ecae957ee73936318bd793bc9cc1ef6fd84f16715c4363500cb85d2631"
+    },
+    "completion_hook": {
+      "sha256": "56a70e48e26064bd4e1195a735993bbdae5839e0490d16c5f6cac5436a5f3380",
+      "bytes": 20814,
+      "records": 18,
+      "replay": {
+        "outcome": "finished_unverified",
+        "sessions": 1,
+        "tasks": 1
+      },
+      "original_exact": true,
+      "original_digest": "457ba2085f03dc42ac7001cd32bcd91c8c230515290324ca47b95e9a29a56264",
+      "records_sha256": "b4bdb05487db0001972c2c52e4577bc5bce9a68f4160b8551017916c9d0d8f78"
+    },
+    "memory_skills": {
+      "sha256": "b49bbc6ae7529a073e253f082599ffb6155a844e7df3dfe06d52600eea1077dc",
+      "bytes": 64033,
+      "records": 65,
+      "replay": {
+        "outcome": "finished_unverified",
+        "sessions": 2,
+        "tasks": 2
+      },
+      "original_exact": true,
+      "original_digest": "d6638b52de87512dd51cd26fbd10c52d44b0400f51ee6d0f31a02a7e023c3e85",
+      "records_sha256": "8c276c607254d80ffc472952effd89cfb0858c1a5618b268ac646b701d76e503"
+    }
+  },
+  "sandbox": {
+    "helper_sha256": "d35781f9ff02c7efac546d2c1daa8d5641b0d157ed974f42acac20b78bf6af70",
+    "image": "debian:bookworm-slim",
+    "image_id": "sha256:0c8bbb8e987a035fe1d9704eb2e571b7e9a836e1caa46345290674b45b69e417"
+  },
+  "exporter_revision": "313ae74d6762"
+}

@@ -311,7 +311,7 @@ fn validate_request(r: &Request) -> io::Result<()> {
         || r.job_id.len() != 36
         || r.nonce.len() != 36
         || r.command.is_empty()
-        || r.command.len() > 65536
+        || r.command.len() > wire::MAX_COMMAND_BYTES
         || r.timeout_ms == 0
         || r.timeout_ms > 3600000
         || r.output_bytes == 0

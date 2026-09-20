@@ -21,6 +21,8 @@ pub const SCAN_PATH: &str = concatcp!("v", crate::VERSION, "/memories/scan");
 pub const READ_PATH: &str = concatcp!("v", crate::VERSION, "/memories/read");
 /// Visible-record listing route.
 pub const LIST_PATH: &str = concatcp!("v", crate::VERSION, "/memories/list");
+/// Owned lesson query route (namespace comes only from authentication).
+pub const LESSONS_PATH: &str = concatcp!("v", crate::VERSION, "/memories/lessons");
 /// Direct mutation route.
 pub const PUT_PATH: &str = concatcp!("v", crate::VERSION, "/memories/put");
 /// Compare-and-swap deletion route.
@@ -71,10 +73,20 @@ pub struct SessionResponse {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScanRequest {
+    /// None retains legacy all-scope scanning. Some filters before ranking.
+    #[serde(default)]
+    pub scope: Option<ScanScope>,
     /// Search text, bounded by [`crate::MemoryLimits::query_bytes`].
     pub query: String,
     /// Maximum candidates requested from the server.
     pub limit: usize,
+}
+
+/// Global and legacy records plus this repository, when present.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScanScope {
+    pub repository: Option<String>,
 }
 
 /// Response to [`ScanRequest`].
@@ -88,6 +100,8 @@ pub struct ScanResponse {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadRequest {
+    #[serde(default)]
+    pub scope: Option<ScanScope>,
     /// IDs in the authenticated namespace.
     #[serde(default)]
     pub ids: Vec<i64>,
@@ -110,10 +124,21 @@ pub struct ListResponse {
     pub memories: Vec<MemoryRecord>,
 }
 
+/// Bounded owned-lesson page. A full page is followed by a request after its last ID.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LessonRequest {
+    pub query: crate::LessonQuery,
+    pub after: i64,
+}
+
 /// Request to insert or compare-and-swap replace a memory.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PutRequest {
+    /// Scope and evidence atomically stored with content.
+    #[serde(default)]
+    pub metadata: crate::MemoryMetadata,
     /// New record content.
     pub content: String,
     /// Current key of the record to replace, or `None` to insert.

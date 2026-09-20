@@ -5,7 +5,9 @@ use std::io::{self, Read, Write};
 
 pub const VERSION: u32 = 2;
 pub const MAGIC: &[u8; 8] = b"TACTEX02";
-pub const MAX_REQUEST_BYTES: usize = 256 * 1024;
+pub const MAX_COMMAND_BYTES: usize = 64 * 1024;
+// JSON escapes each control byte as six bytes; the remaining fixed fields fit in 1 KiB.
+pub const MAX_REQUEST_BYTES: usize = 6 * MAX_COMMAND_BYTES + 1024;
 pub const MAX_FRAME_BYTES: usize = 128 * 1024;
 pub const CHUNK_BYTES: usize = 64 * 1024;
 pub const HELLO: u8 = 1;
@@ -113,4 +115,46 @@ pub fn read_request(input: &mut impl Read) -> io::Result<Request> {
     let mut bytes = vec![0; size];
     input.read_exact(&mut bytes)?;
     serde_json::from_slice(&bytes).map_err(io::Error::other)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maximum_command_survives_json_expansion_on_the_executor_wire() {
+        let command = format!(": #{}", "\u{1}".repeat(MAX_COMMAND_BYTES - 3));
+        let request = Request {
+            version: VERSION,
+            job_id: "0".repeat(36),
+            nonce: "0".repeat(36),
+            command: command.clone(),
+            readonly: true,
+            timeout_ms: u64::MAX,
+            output_bytes: u64::MAX,
+            workspace_bytes: u64::MAX,
+            workspace_inodes: u64::MAX,
+            cache_bytes: u64::MAX,
+            cache_inodes: u64::MAX,
+            temporary_bytes: u64::MAX,
+            temporary_inodes: u64::MAX,
+        };
+        let bytes = serde_json::to_vec(&request).unwrap();
+        assert!(
+            bytes.len() > 256 * 1024,
+            "exercise escaped JSON, not just text length"
+        );
+        let mut wire = (bytes.len() as u32).to_le_bytes().to_vec();
+        wire.extend(bytes);
+        let decoded = read_request(&mut wire.as_slice())
+            .expect("every supported command must fit the helper request envelope");
+        assert_eq!(decoded.command, command);
+    }
+
+    #[test]
+    fn oversized_wire_request_is_rejected_before_reading_its_body() {
+        let prefix = ((MAX_REQUEST_BYTES + 1) as u32).to_le_bytes();
+        let error = read_request(&mut prefix.as_slice()).unwrap_err();
+        assert_eq!(error.to_string(), "request limit");
+    }
 }

@@ -13,20 +13,25 @@ pub mod contract;
 pub mod controller;
 pub mod delivery;
 pub mod digest;
+pub mod event_intake;
 pub mod feedback;
 pub mod import;
 pub mod inference;
 pub mod input;
+pub mod interpreter;
 #[cfg(unix)]
 pub mod ipc;
 pub mod manual;
+pub mod monitor;
 pub mod review;
 pub mod runtime;
+pub mod services;
 pub mod session;
 pub mod sloppiness;
 pub mod state;
 pub mod store;
 pub mod submission;
+pub mod trace;
 pub mod verification;
 pub mod workspace;
 

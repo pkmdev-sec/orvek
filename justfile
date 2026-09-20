@@ -38,6 +38,10 @@ audit-components:
 test *args='':
     cargo nextest run {{args}}
 
+# Subprocess fixtures are invoked by their owning isolation tests, not as standalone tests.
+test-docker *args='':
+    cargo nextest run --workspace --all-features --run-ignored only --test-threads=1 --no-fail-fast -E 'not (test(=process_owner) or test(=poisoned_configuration_child) or test(=environment_fixture_child))' {{args}}
+
 test-docs:
     rustdoc --test README.md --edition 2024
 
@@ -99,6 +103,7 @@ build-harbor-agent platform='':
         bin/orvek/src \
         crates/executor/src \
         crates/harness/src \
+        crates/harness/benches \
         crates/memory/src \
         examples/orvek-memory-cloudflare/src; do
         test -z "$(find "$source_tree" -type l -print -quit)" || {
@@ -106,10 +111,11 @@ build-harbor-agent platform='':
             exit 1
         }
         test -z "$(find "$source_tree" -type f ! -name '*.rs' \
-            ! -path 'bin/orvek/src/core/compaction/fonts/8x13-ascii.bin' \
-            ! -path 'bin/orvek/src/core/compaction/fonts/LICENSE' \
-            ! -path 'bin/orvek/src/core/compaction/fonts/README.md' \
-            ! -path 'bin/orvek/src/core/compaction/fonts/generate.py' \
+            ! -path 'crates/harness/src/context_render/fonts/8x13-ascii.bin' \
+            ! -path 'crates/harness/src/context_render/fonts/LICENSE' \
+            ! -path 'crates/harness/src/context_render/fonts/README.md' \
+            ! -path 'crates/harness/src/context_render/fonts/generate.py' \
+            ! -path 'crates/harness/src/interpreter/bootstrap.js' \
             ! -path 'crates/harness/src/runtime/IMPLEMENTATION.md' \
             ! -path 'crates/harness/src/review/README.md' -print -quit)" || {
             echo "refusing to send unrecognized source assets below $source_tree/ to the Harbor build" >&2
@@ -126,8 +132,9 @@ build-harbor-agent platform='':
     cp crates/executor/Cargo.toml crates/executor/README.md "$build_context/crates/executor/"
     cp -R crates/executor/src "$build_context/crates/executor/src"
     mkdir -p "$build_context/crates/harness"
-    cp crates/harness/Cargo.toml "$build_context/crates/harness/"
+    cp crates/harness/Cargo.toml crates/harness/build.rs "$build_context/crates/harness/"
     cp -R crates/harness/src "$build_context/crates/harness/src"
+    cp -R crates/harness/benches "$build_context/crates/harness/benches"
     mkdir -p "$build_context/crates/memory"
     cp crates/memory/Cargo.toml crates/memory/README.md "$build_context/crates/memory/"
     cp -R crates/memory/src "$build_context/crates/memory/src"

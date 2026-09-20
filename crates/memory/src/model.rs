@@ -45,6 +45,9 @@ impl MemoryKey {
 /// Complete durable state of a memory.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MemoryRecord {
+    /// Typed scope and evidence; omitted legacy fields remain unverified.
+    #[serde(default)]
+    pub metadata: crate::MemoryMetadata,
     /// Stable identity and current version.
     pub key: MemoryKey,
     /// User-authored memory content.
@@ -68,6 +71,9 @@ pub struct MemoryRecord {
 /// Ranked, bounded preview returned by a memory scan.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct MemoryCandidate {
+    /// Scope and citations, never instructions.
+    #[serde(default)]
+    pub metadata: crate::MemoryMetadata,
     /// Identity and version of the matching memory.
     pub key: MemoryKey,
     /// Bounded excerpt suitable for choosing whether to read the record.
@@ -163,6 +169,7 @@ pub struct MemoryImportReport {
 
 #[derive(Clone, Debug)]
 pub(crate) struct StoredMemory {
+    pub(crate) metadata: crate::MemoryMetadata,
     pub(crate) namespace: Option<String>,
     pub(crate) id: i64,
     pub(crate) content: String,
@@ -189,6 +196,7 @@ impl From<StoredMemory> for MemoryRecord {
     fn from(memory: StoredMemory) -> Self {
         Self {
             key: memory.key(),
+            metadata: memory.metadata,
             content: memory.content,
             created_at_ms: memory.created_at_ms,
             updated_at_ms: memory.updated_at_ms,

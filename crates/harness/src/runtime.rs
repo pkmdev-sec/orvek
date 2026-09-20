@@ -4,6 +4,7 @@
 //! cache, temporary and shared-memory files live on separate quota-limited tmpfs
 //! mounts. Validated normal-exit exports are published only after quiescence and
 //! a baseline check; conflicts retain the guest result without replacing source.
+use orvek_executor::MAX_COMMAND_BYTES;
 
 mod transport;
 mod workspace;
@@ -321,7 +322,7 @@ impl DockerExecutor {
             || request.output_bytes == 0
             || request.output_bytes > 16 * 1024 * 1024
             || request.command.is_empty()
-            || request.command.len() > 65536
+            || request.command.len() > MAX_COMMAND_BYTES
         {
             return Err(RuntimeError::Request(
                 "execution request must have bounded command, deadline and output",
@@ -1120,4 +1121,23 @@ fn validate_elf(bytes: &[u8], arch: &str) -> Result<(), RuntimeError> {
 }
 fn bounded_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).into_owned()
+}
+
+#[cfg(test)]
+impl DockerExecutor {
+    pub(crate) fn test_fixture() -> Self {
+        Self {
+            image_id: "sha256:fixture".into(),
+            architecture: "aarch64".into(),
+            helper: PathBuf::from("/fixture/helper"),
+            helper_digest: Digest::of(b"fixture helper"),
+            limits: ExecutionLimits::default(),
+            docker: Arc::new(Docker {
+                program: PathBuf::from("/fixture/no-docker"),
+                endpoint: "unix:///fixture/docker.sock".into(),
+                daemon_id: "fixture-daemon".into(),
+                config: tempfile::tempdir().unwrap(),
+            }),
+        }
+    }
 }

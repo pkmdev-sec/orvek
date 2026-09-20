@@ -34,17 +34,13 @@ pub(crate) async fn intent(client: &HostClient, session: SessionId) -> Result<Su
             };
             if let Some(task) = view.current_task {
                 let Response::Task {
-                    id,
-                    scope_revision,
-                    ..
+                    id, scope_revision, ..
                 } = client.query(Command::Task { id: task }).await?
                 else {
                     return Err(Error::HostRequest("unexpected task response".into()));
                 };
                 if id != task {
-                    return Err(Error::HostRequest(
-                        "task response identity mismatch".into(),
-                    ));
+                    return Err(Error::HostRequest("task response identity mismatch".into()));
                 }
                 return Ok(SubmitIntent::Continue {
                     task,
@@ -74,12 +70,11 @@ pub(crate) async fn intent(client: &HostClient, session: SessionId) -> Result<Su
             }
         }
         Err(Error::HostRequest(
-            "the first request is still being admitted; draft retained until the host assigns its task"
-                .into(),
+            "the first request is still being admitted until the host assigns its task".into(),
         ))
     })
     .await
-    .map_err(|_| Error::HostRequest("task admission lookup timed out; draft retained".into()))?
+    .map_err(|_| Error::HostRequest("task admission lookup timed out".into()))?
 }
 
 #[derive(Debug, thiserror::Error)]

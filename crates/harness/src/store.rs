@@ -20,20 +20,21 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     path::Path,
-    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-const SCHEMA_VERSION: i32 = 9;
+const SCHEMA_VERSION: i32 = 12;
 const MAX_EVENT_BYTES: usize = 512 * 1024;
 const MAX_JOURNAL_PAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_HOST_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
 mod auxiliary;
+mod event_intake;
 mod imports;
 mod manual;
+mod monitor;
 mod submissions;
 
 #[derive(Debug, Error)]
@@ -99,7 +100,18 @@ impl std::fmt::Debug for VerificationLease {
 pub struct Store {
     connection: Connection,
     artifacts: ArtifactStore,
-    _owner: Arc<File>,
+    // Fields drop in declaration order: close SQLite before releasing the writer lease.
+    _owner: OwnerLock,
+}
+
+struct OwnerLock(File);
+
+impl Drop for OwnerLock {
+    fn drop(&mut self) {
+        // A concurrent fork can retain this file description until exec, even with CLOEXEC.
+        // Release our lease explicitly rather than waiting for every inherited fd to close.
+        let _ = FileExt::unlock(&self.0);
+    }
 }
 
 impl Store {
@@ -127,7 +139,7 @@ impl Store {
             .truncate(false)
             .open(root.join("owner.lock"))?;
         owner.try_lock_exclusive()?;
-        let owner = Arc::new(owner);
+        let owner = OwnerLock(owner);
         let database = root.join("v1.sqlite3");
         let mut connection = Connection::open(&database)?;
         connection.busy_timeout(Duration::from_secs(5))?;
@@ -150,9 +162,12 @@ impl Store {
                 migrate_v8_to_v9(&mut connection)?;
             }
             8 => migrate_v8_to_v9(&mut connection)?,
-            SCHEMA_VERSION => {}
+            9 | 10 | 11 | SCHEMA_VERSION => {}
             unsupported => return Err(StoreError::Schema(unsupported)),
         }
+        event_intake::initialize(&connection)?;
+        monitor::initialize(&connection)?;
+        connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         let artifacts = ArtifactStore::open(&root.join("artifacts"), max_artifact_bytes)?;
         Ok(Self {
             connection,
@@ -1042,9 +1057,12 @@ impl Store {
         }
         match &command {
             SessionCommand::Response { request, .. }
+            | SessionCommand::Interpreter { request, .. }
             | SessionCommand::ProviderUsage { request, .. }
             | SessionCommand::WorkspaceSaved { request, .. }
             | SessionCommand::ToolResult { request, .. }
+            | SessionCommand::ToolResultPart { request, .. }
+            | SessionCommand::ToolResultEnd { request, .. }
             | SessionCommand::TaskLinked { request, .. }
             | SessionCommand::TurnSettled { request, .. }
                 if state.active_request != Some(*request) =>
@@ -1056,6 +1074,101 @@ impl Store {
             _ => {}
         }
         match &command {
+            SessionCommand::Interpreter { request, event } => {
+                use crate::interpreter::InterpreterEvent;
+                match event {
+                    InterpreterEvent::Started {
+                        cell,
+                        task,
+                        outer_call,
+                        source,
+                        environment,
+                        ..
+                    } => {
+                        if state.interpreter.cells.contains_key(cell)
+                            || state.tasks_by_request.get(request) != Some(task)
+                            || !state.tool_calls.get(outer_call).is_some_and(|call| {
+                                call.request == *request && call.output.is_none()
+                            })
+                        {
+                            return Err(StoreError::Invalid(
+                                "interpreter cell has no pending outer call",
+                            ));
+                        }
+                        self.artifacts.read(*source)?;
+                        self.artifacts.read(*environment)?;
+                    }
+                    InterpreterEvent::CallStarted {
+                        cell,
+                        ordinal,
+                        call_id,
+                        arguments,
+                        ..
+                    } => {
+                        if *ordinal == 0
+                            || *call_id != format!("{cell}/{ordinal}")
+                            || state.interpreter.pending_calls.contains_key(call_id)
+                            || !state.interpreter.cells.get(cell).is_some_and(|cell| {
+                                cell.request == *request && cell.status.pending()
+                            })
+                        {
+                            return Err(StoreError::Invalid(
+                                "interpreter call has no active owning cell",
+                            ));
+                        }
+                        self.artifacts.read(*arguments)?;
+                    }
+                    InterpreterEvent::CallSettled {
+                        cell,
+                        ordinal,
+                        result,
+                    } => {
+                        if state
+                            .interpreter
+                            .pending_calls
+                            .get(&format!("{cell}/{ordinal}"))
+                            != Some(cell)
+                            || !state.interpreter.cells.get(cell).is_some_and(|cell| {
+                                cell.request == *request && cell.status.pending()
+                            })
+                        {
+                            return Err(StoreError::Invalid(
+                                "interpreter result has no pending call",
+                            ));
+                        }
+                        self.artifacts.read(*result)?;
+                    }
+                    InterpreterEvent::Settled {
+                        cell,
+                        result,
+                        checkpoint,
+                        ..
+                    } => {
+                        if !state
+                            .interpreter
+                            .cells
+                            .get(cell)
+                            .is_some_and(|cell| cell.request == *request && cell.status.pending())
+                            || state
+                                .interpreter
+                                .pending_calls
+                                .values()
+                                .any(|owner| owner == cell)
+                        {
+                            return Err(StoreError::Invalid(
+                                "interpreter cell is not ready to settle",
+                            ));
+                        }
+                        self.artifacts.read(*result)?;
+                        if let Some(checkpoint) = checkpoint {
+                            self.artifacts.read(checkpoint.artifact)?;
+                        }
+                    }
+                }
+            }
+            SessionCommand::AdmissionPinned { profile, .. } => {
+                profile.validate().map_err(StoreError::Invalid)?
+            }
             SessionCommand::WorkspaceSaved { request, seed } => {
                 let id = state
                     .tasks_by_request
@@ -1126,6 +1239,12 @@ impl Store {
                 }
             }
             SessionCommand::ToolResult {
+                request, call_id, ..
+            }
+            | SessionCommand::ToolResultPart {
+                request, call_id, ..
+            }
+            | SessionCommand::ToolResultEnd {
                 request, call_id, ..
             } => {
                 if !state
@@ -1863,9 +1982,10 @@ impl Store {
                         && !session.tool_calls.get(call).is_some_and(|call| {
                             call.request == invocation.request && call.output.is_none()
                         })
+                        && !session.interpreter.admits(call, invocation.request, id)
                     {
                         return Err(StoreError::Invalid(
-                            "execution has no pending model proposal",
+                            "execution has no pending admitted tool call",
                         ));
                     }
                 }
@@ -2520,6 +2640,42 @@ fn append_session_command(
     };
     let bytes = serde_json::to_vec(&event)?;
     if bytes.len() > MAX_EVENT_BYTES {
+        if let SessionCommand::ToolResult {
+            request,
+            call_id,
+            output,
+        } = command
+        {
+            let mut offset = 0;
+            while offset < output.len() {
+                // Six-byte JSON escaping still leaves room for the event envelope.
+                let end = output.floor_char_boundary((offset + 64 * 1024).min(output.len()));
+                append_session_command(
+                    transaction,
+                    state,
+                    head,
+                    Uuid::new_v5(&operation, &(offset as u64).to_le_bytes()),
+                    SessionCommand::ToolResultPart {
+                        request,
+                        call_id: call_id.clone(),
+                        offset,
+                        output: output[offset..end].to_owned(),
+                    },
+                )?;
+                offset = end;
+            }
+            return append_session_command(
+                transaction,
+                state,
+                head,
+                operation,
+                SessionCommand::ToolResultEnd {
+                    request,
+                    call_id,
+                    digest: Digest::of(output.as_bytes()),
+                },
+            );
+        }
         return Err(StoreError::Invalid("session command exceeds journal limit"));
     }
     state.apply(operation, &command)?;
@@ -2973,7 +3129,7 @@ fn event_hash(
     aggregate_hash("task", task.0, revision, previous, bytes)
 }
 
-fn aggregate_hash(
+pub(crate) fn aggregate_hash(
     kind: &str,
     id: Uuid,
     revision: u64,
@@ -2987,6 +3143,68 @@ fn aggregate_hash(
         previous,
         Digest::of(bytes),
     ))?)
+}
+
+fn legacy_context_command(bytes: &[u8]) -> Result<Option<(Uuid, Digest)>, StoreError> {
+    #[derive(serde::Deserialize)]
+    struct RawEvent<'a> {
+        #[serde(rename = "type")]
+        kind: &'a str,
+        #[serde(borrow)]
+        data: &'a serde_json::value::RawValue,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct RawCommand<'a> {
+        operation: Uuid,
+        #[serde(borrow)]
+        command: &'a serde_json::value::RawValue,
+    }
+
+    let event = serde_json::from_slice::<RawEvent<'_>>(bytes)?;
+    if event.kind != "command" {
+        return Ok(None);
+    }
+    let command = serde_json::from_str::<RawCommand<'_>>(event.data.get())?;
+    let value = serde_json::from_str::<serde_json::Value>(command.command.get())?;
+    if value["type"] != "context_projected" || !value["data"]["view"]["input"].is_array() {
+        return Ok(None);
+    }
+    Ok(Some((
+        command.operation,
+        Digest::of(command.command.get().as_bytes()),
+    )))
+}
+
+fn session_cache_matches(state: &SessionState, cached: &[u8]) -> Result<bool, StoreError> {
+    let canonical = serde_json::to_vec(state)?;
+    if canonical == cached {
+        return Ok(true);
+    }
+
+    let mut legacy = serde_json::from_slice::<serde_json::Value>(cached)?;
+    let manifest = {
+        let Some(wrapper) = legacy
+            .get_mut("context_view")
+            .and_then(serde_json::Value::as_object_mut)
+        else {
+            return Ok(false);
+        };
+        if wrapper.len() != 2
+            || !wrapper
+                .get("input")
+                .is_some_and(serde_json::Value::is_array)
+        {
+            return Ok(false);
+        }
+        let Some(manifest) = wrapper.remove("manifest") else {
+            return Ok(false);
+        };
+        manifest
+    };
+    legacy["context_view"] = manifest;
+
+    Ok(legacy == serde_json::from_slice::<serde_json::Value>(&canonical)?)
 }
 
 fn load_session_state(
@@ -3082,7 +3300,20 @@ fn load_session_state(
                 SessionEvent::Command {
                     operation, command, ..
                 },
-            ) => state.apply(operation, &command)?,
+            ) => {
+                let legacy = if matches!(command, SessionCommand::ContextProjected { .. }) {
+                    legacy_context_command(&bytes)?
+                } else {
+                    None
+                };
+                state.apply(operation, &command)?;
+                if let Some((journaled_operation, command_digest)) = legacy {
+                    if journaled_operation != operation {
+                        return Err(StoreError::Integrity("session command operation"));
+                    }
+                    state.operations.insert(operation, command_digest);
+                }
+            }
             _ => return Err(StoreError::Integrity("session creation sequence")),
         }
         head = Some(hash);
@@ -3091,7 +3322,7 @@ fn load_session_state(
     let head = head.ok_or(StoreError::Integrity("session head missing"))?;
     if state.revision != last
         || (last == current_revision
-            && (head.to_string() != stored_head || serde_json::to_vec(&state)? != cached))
+            && (head.to_string() != stored_head || !session_cache_matches(&state, &cached)?))
     {
         return Err(StoreError::Integrity(
             "session projection differs from journal",
@@ -3595,5 +3826,90 @@ mod admission_store_tests {
             store.load_session(id),
             Err(StoreError::Integrity("session journal hash"))
         ));
+    }
+
+    #[test]
+    fn legacy_context_view_cache_matches_authoritative_manifest_projection() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let mut store = Store::open(root.path()).unwrap();
+        let id = SessionId::new();
+        let state = store
+            .create_session(id, config(workspace.path()), None)
+            .unwrap();
+        let view = crate::context::project(&state, 4096).unwrap();
+        let manifest = view.manifest.clone();
+        let operation = Uuid::new_v4();
+        let mut state = store
+            .session_command(
+                id,
+                state.revision,
+                operation,
+                SessionCommand::ContextProjected {
+                    source_revision: state.revision,
+                    view: Some(view),
+                    projection: vec![],
+                },
+            )
+            .unwrap();
+        let mut event = store
+            .connection
+            .query_row(
+                "SELECT event FROM events WHERE aggregate=?1 AND kind='session' AND revision=?2",
+                params![id.to_string(), state.revision as i64],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .map(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).unwrap())
+            .unwrap();
+        event["data"]["command"]["data"]["view"]["input"] =
+            serde_json::json!([{"role": "user", "content": "legacy cached projection"}]);
+        let event_bytes = serde_json::to_vec(&event).unwrap();
+        let command_bytes = serde_json::to_vec(&event["data"]["command"]).unwrap();
+        state
+            .operations
+            .insert(operation, Digest::of(&command_bytes));
+        let previous = store
+            .connection
+            .query_row(
+                "SELECT hash FROM events WHERE aggregate=?1 AND kind='session' AND revision=?2",
+                params![id.to_string(), state.revision as i64 - 1],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap()
+            .parse::<Digest>()
+            .unwrap();
+        let head = aggregate_hash(
+            "session",
+            id.0,
+            state.revision,
+            Some(previous),
+            &event_bytes,
+        )
+        .unwrap();
+        let mut legacy = serde_json::to_value(&state).unwrap();
+        legacy["context_view"] = serde_json::json!({
+            "manifest": manifest,
+            "input": [{"role": "user", "content": "legacy cached projection"}]
+        });
+        let transaction = store.connection.transaction().unwrap();
+        transaction
+            .execute(
+                "UPDATE events SET event=?3,hash=?4 WHERE aggregate=?1 AND kind='session' AND revision=?2",
+                params![id.to_string(), state.revision as i64, event_bytes, head.to_string()],
+            )
+            .unwrap();
+        transaction
+            .execute(
+                "UPDATE sessions SET state=?2,head=?3 WHERE id=?1",
+                params![
+                    id.to_string(),
+                    serde_json::to_vec(&legacy).unwrap(),
+                    head.to_string()
+                ],
+            )
+            .unwrap();
+        transaction.commit().unwrap();
+
+        assert_eq!(store.load_session(id).unwrap(), state);
     }
 }

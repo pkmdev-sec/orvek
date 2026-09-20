@@ -182,6 +182,21 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Inspect trace monitoring and versioned native read behavior.
+    Monitor {
+        #[command(subcommand)]
+        command: super::monitor::MonitorCommand,
+    },
+    /// Configure schedules and forward local webhook deliveries to the host queue.
+    Event {
+        #[command(subcommand)]
+        command: super::event_intake::EventCommand,
+    },
+    /// Export, inspect, and replay local trace bundles.
+    Trace {
+        #[command(subcommand)]
+        command: super::trace::TraceCommand,
+    },
     /// Run the durable local host independently of terminal clients.
     #[command(hide = true)]
     Host,
@@ -219,6 +234,10 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum MemoryCommand {
+    /// Export the local store as a portable manifest and readable records.
+    Export { directory: PathBuf },
+    /// Import a portable archive into local storage, preserving provenance.
+    Import { directory: PathBuf },
     /// Replace the remote personal namespace with the complete local corpus.
     Push {
         /// Report the local corpus that would be pushed without contacting the remote.
@@ -467,9 +486,13 @@ fn resume_command(session_id: &str) -> String {
 impl Command {
     const fn requires_config(&self) -> bool {
         !matches!(self, Self::Update)
+            && !matches!(self, Self::Trace { command } if command.offline())
     }
 
     async fn run_without_config(self) -> Result<()> {
+        if let Self::Trace { command } = self {
+            return command.run_offline();
+        }
         let Self::Update = self else {
             unreachable!("only update is config-independent");
         };
@@ -494,7 +517,10 @@ impl Command {
 
     async fn run_with_config(self, config: &Config) -> Result<()> {
         match self {
+            Self::Event { command } => command.run(config).await,
+            Self::Monitor { command } => command.run(config).await,
             Self::Host => crate::app::host::serve(config).await,
+            Self::Trace { command } => command.reexecute(config).await,
             Self::Auth { command } => command.run(config).await.map_err(Into::into),
             Self::Config { command } => command.run(config),
             Self::Mcp { command } => command.run(config),
@@ -535,6 +561,29 @@ impl Command {
 impl MemoryCommand {
     async fn run(self, config: &Config) -> Result<()> {
         match self {
+            Self::Export { directory } => {
+                let store = orvek_memory::LocalMemoryStore::new(config.memory_path());
+                let manifest = orvek_memory::MemoryArchive::export(&store, &directory)
+                    .await
+                    .map_err(crate::app::error::MemoryTransferError::Archive)?;
+                println!(
+                    "Exported {} records to {}",
+                    manifest.records.len(),
+                    directory.display()
+                );
+                Ok(())
+            }
+            Self::Import { directory } => {
+                let store = orvek_memory::LocalMemoryStore::new(config.memory_path());
+                let report = orvek_memory::MemoryArchive::import(&directory, &store)
+                    .await
+                    .map_err(crate::app::error::MemoryTransferError::Archive)?;
+                println!(
+                    "Imported {} records; skipped {}",
+                    report.inserted, report.skipped
+                );
+                Ok(())
+            }
             Self::Push { dry_run } => push_memories(config, dry_run).await,
             Self::Pull { all, namespace } => pull_memories(config, all, namespace).await,
         }
@@ -825,6 +874,7 @@ mod tests {
     #[test]
     fn replication_snapshot_includes_memory_telemetry() {
         let original = orvek_memory::MemoryRecord {
+            metadata: Default::default(),
             key: orvek_memory::MemoryKey::local(1, 1),
             content: "telemetry".to_owned(),
             created_at_ms: 1,

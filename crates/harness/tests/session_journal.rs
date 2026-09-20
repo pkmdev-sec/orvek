@@ -467,3 +467,201 @@ fn prompt_cache_lineage_is_shared_by_nested_forks_and_survives_reopen() {
         original.id
     );
 }
+
+#[test]
+fn large_tool_results_replay_losslessly_with_bounded_records_and_stable_retry_identity() {
+    use orvek_harness::{
+        Digest,
+        session::SessionEvent,
+        trace::{TraceBundle, TraceLimits},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let state_root = root.path().join("state");
+    let mut store = Store::open(&state_root).unwrap();
+    let mut state = store
+        .create_session(
+            SessionId::new(),
+            SessionConfig {
+                workspace: root.path().into(),
+                model: ModelSettings::default(),
+                instructions: String::new(),
+                context_window_tokens: orvek_harness::context::MAX_WINDOW_TOKENS,
+            },
+            None,
+        )
+        .unwrap();
+    let request = Uuid::new_v4();
+    state = store
+        .session_command(
+            state.id,
+            state.revision,
+            request,
+            SessionCommand::Input {
+                kind: RequestKind::Conversation,
+                content: vec![json!({"role":"user","content":"inspect"})],
+            },
+        )
+        .unwrap();
+    state = store.session_command(state.id, state.revision, Uuid::new_v4(),
+        SessionCommand::Response { request, items: vec![json!({"type":"function_call","call_id":"large","name":"read_file","arguments":"{}"})] }).unwrap();
+    let output = json!({"value":"\u{1}💎".repeat(400000)}).to_string();
+    let command = SessionCommand::ToolResult {
+        request,
+        call_id: "large".into(),
+        output: output.clone(),
+    };
+    assert!(serde_json::to_vec(&command).unwrap().len() > 512 * 1024);
+    let operation = Uuid::new_v4();
+    let revision = state.revision;
+    let connection = rusqlite::Connection::open(state_root.join("v1.sqlite3")).unwrap();
+    connection.execute_batch("CREATE TRIGGER reject_tool_end BEFORE INSERT ON events WHEN json_extract(CAST(NEW.event AS TEXT), '$.data.command.type') = 'tool_result_end' BEGIN SELECT RAISE(FAIL, 'fixture refuses final record'); END;").unwrap();
+    assert!(
+        store
+            .session_command(state.id, revision, operation, command.clone())
+            .is_err()
+    );
+    assert_eq!(
+        store.load_session(state.id).unwrap(),
+        state,
+        "all fragments must roll back together"
+    );
+    connection
+        .execute_batch("DROP TRIGGER reject_tool_end;")
+        .unwrap();
+    state = store
+        .session_command(state.id, revision, operation, command.clone())
+        .unwrap();
+    let journal_bytes = std::fs::metadata(state_root.join("v1.sqlite3-wal"))
+        .unwrap()
+        .len();
+    assert!(
+        journal_bytes < (output.len() * 8) as u64,
+        "framing must not rewrite the growing session for every part: {journal_bytes} WAL bytes for {} result bytes",
+        output.len()
+    );
+    assert_eq!(state.history.last().unwrap()["output"], output);
+    assert_eq!(
+        state.tool_calls["large"].output,
+        Some(Digest::of(output.as_bytes()))
+    );
+    assert_eq!(
+        store
+            .session_command(state.id, revision, operation, command.clone())
+            .unwrap(),
+        state
+    );
+    let mut records = Vec::new();
+    let mut after = 0;
+    loop {
+        let page = store.journal_page(after, 256).unwrap();
+        let Some(last) = page.last() else {
+            break;
+        };
+        assert!(last.sequence > after);
+        after = last.sequence;
+        records.extend(page);
+    }
+    eprintln!(
+        "framing metrics: {} result bytes, {journal_bytes} WAL bytes, {} records",
+        output.len(),
+        records.len()
+    );
+    assert!(
+        records
+            .iter()
+            .all(|r| serde_json::to_vec(&r.event).unwrap().len() <= 512 * 1024)
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|r| matches!(
+                serde_json::from_value::<SessionEvent>(r.event.clone()),
+                Ok(SessionEvent::Command {
+                    command: SessionCommand::ToolResultEnd { .. },
+                    ..
+                })
+            ))
+            .count(),
+        1
+    );
+    drop(store);
+    let mut store = Store::open(&state_root).unwrap();
+    assert_eq!(store.load_session(state.id).unwrap(), state);
+    assert_eq!(
+        store
+            .session_command(state.id, revision, operation, command)
+            .unwrap(),
+        state
+    );
+    let trace = TraceBundle::export(
+        &state_root,
+        None,
+        TraceLimits::default(),
+        &Default::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(trace.replay().unwrap().sessions[&state.id], state);
+    let first_part = records
+        .iter()
+        .find(|record| {
+            matches!(
+                serde_json::from_value::<SessionEvent>(record.event.clone()),
+                Ok(SessionEvent::Command {
+                    command: SessionCommand::ToolResultPart { .. },
+                    ..
+                })
+            )
+        })
+        .unwrap();
+    let prefix = TraceBundle::export(
+        &state_root,
+        Some(first_part.sequence),
+        TraceLimits::default(),
+        &Default::default(),
+        None,
+    )
+    .unwrap()
+    .replay()
+    .unwrap();
+    let partial = &prefix.sessions[&state.id];
+    assert!(partial.tool_calls["large"].output.is_none());
+    assert!(
+        !partial
+            .history
+            .iter()
+            .any(|item| item["type"] == "function_call_output")
+    );
+}
+
+#[test]
+fn malformed_tool_output_parts_cannot_settle_a_result() {
+    use orvek_harness::{Digest, session::ToolOutputBuffers};
+    let mut pending = ToolOutputBuffers::default();
+    let request = Uuid::new_v4();
+    assert!(pending.append(request, "call", 1, "suffix").is_err());
+    pending.append(request, "call", 0, "hello ").unwrap();
+    assert!(
+        pending
+            .append(Uuid::new_v4(), "call", 6, "foreign")
+            .is_err()
+    );
+    assert!(pending.append(request, "call", 0, "duplicate").is_err());
+    assert!(
+        pending
+            .finish(request, "call", Digest::of(b"wrong"))
+            .is_err()
+    );
+    pending.append(request, "call", 6, "world").unwrap();
+    assert_eq!(
+        pending
+            .finish(request, "call", Digest::of(b"hello world"))
+            .unwrap(),
+        "hello world"
+    );
+    assert!(
+        pending
+            .finish(request, "call", Digest::of(b"hello world"))
+            .is_err()
+    );
+}

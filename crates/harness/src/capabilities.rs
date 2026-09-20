@@ -5,6 +5,7 @@
 //! as a check result nor certify a task. File updates compare expected bytes before
 //! atomic publication; the host must quiesce noncooperating concurrent writers,
 //! because POSIX rename cannot atomically compare a file's content digest.
+use orvek_executor::MAX_COMMAND_BYTES;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod files;
@@ -14,8 +15,8 @@ pub mod host;
 use crate::{
     Digest,
     runtime::{
-        DockerExecutor, ExecutionPolicy, ExecutionRequest, ExecutionResult, ExecutionStatus,
-        RuntimeError,
+        DockerExecutor, ExecutionEnvironment, ExecutionPolicy, ExecutionRequest, ExecutionResult,
+        ExecutionStatus, RuntimeError,
     },
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -182,6 +183,10 @@ impl WorkspaceTools {
         Self { executor }
     }
 
+    pub(crate) fn protected_environment(&self) -> ExecutionEnvironment {
+        self.executor.environment()
+    }
+
     pub fn definitions() -> Vec<Value> {
         let path = json!({"type":"string","minLength":1,"maxLength":4096,"description":"Relative workspace path. Symlinks and parent traversal are forbidden."});
         let expected = json!({"oneOf":[
@@ -228,7 +233,7 @@ impl WorkspaceTools {
         let prepared = validate(&context, &arguments)
             .and_then(|()| decode::<ExecArgs>(arguments))
             .and_then(|args| {
-                if args.command.trim().is_empty() || args.command.len() > 65536 {
+                if args.command.trim().is_empty() || args.command.len() > MAX_COMMAND_BYTES {
                     return Err(ToolError::InvalidArguments);
                 }
                 Control::new(&context, &cancellation).check()?;

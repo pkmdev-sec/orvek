@@ -1397,6 +1397,7 @@ mod tests {
 
     fn record(id: i64, version: u64, content: &str) -> MemoryRecord {
         MemoryRecord {
+            metadata: Default::default(),
             key: MemoryKey::local(id, version),
             content: content.to_owned(),
             created_at_ms: 0,

@@ -1156,7 +1156,7 @@ pub(super) async fn run(
                             }
                             Err(failure)=>{
                                 current.pending=if failure.uncertain {request.map(|request|(request,prompt))} else {None};
-                                schedule(app.update(AppEvent::SubmissionFailed {pane,uncertain:failure.uncertain,error:format!("{}{}",failure.error,if failure.uncertain {" · Enter retries the same request"} else {" · Draft retained"})}),&mut scheduler,&mut effects);
+                                schedule(app.update(AppEvent::SubmissionFailed {pane,uncertain:failure.uncertain,error:submission_notice(&failure)}),&mut scheduler,&mut effects);
                             }
                         }
                     }
@@ -1955,6 +1955,14 @@ fn subagent_update(event: &orvek_harness::controller::SubagentEvent) -> Option<C
             id: ChildId(*agent),
             status: ChildStatus::Returned { output: *output },
         }),
+        SubagentEvent::Unsubmitted {
+            agent, diagnostic, ..
+        } => Some(ChildUpdate::Status {
+            id: ChildId(*agent),
+            status: ChildStatus::Failed {
+                error: format!("unsubmitted: {diagnostic}"),
+            },
+        }),
         SubagentEvent::Failed { agent, error, .. } => Some(ChildUpdate::Status {
             id: ChildId(*agent),
             status: ChildStatus::Failed {
@@ -2048,6 +2056,16 @@ fn is_image_paste_shortcut(event: &Event) -> bool {
         if key.kind == KeyEventKind::Press
             && key.code == KeyCode::Char('v')
             && key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER))
+}
+
+/// The recovery hint belongs to the terminal, so host errors must not repeat it.
+fn submission_notice(failure: &SubmitFailure) -> String {
+    let hint = if failure.uncertain {
+        "Enter retries the same request"
+    } else {
+        "Draft retained"
+    };
+    format!("{} · {hint}", failure.error)
 }
 
 fn dispatch_submission(

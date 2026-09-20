@@ -215,10 +215,19 @@ impl RemoteMemoryClient {
         if limit == 0 {
             return Ok(Vec::new());
         }
+        self.scan_filtered(query, limit, None).await
+    }
+    async fn scan_filtered(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: Option<protocol::ScanScope>,
+    ) -> Result<Vec<MemoryCandidate>, RemoteClientError> {
         let response: ScanResponse = self
             .post(
                 protocol::SCAN_PATH,
                 &ScanRequest {
+                    scope: scope.clone(),
                     query: query.to_owned(),
                     limit,
                 },
@@ -232,6 +241,12 @@ impl RemoteMemoryClient {
         let mut candidates = Vec::new();
         let mut previous_score = None;
         for candidate in response.candidates {
+            if scope
+                .as_ref()
+                .is_some_and(|scope| !candidate.metadata.visible_in(scope.repository.as_deref()))
+            {
+                return Err(RemoteClientError::InvalidResponse);
+            }
             if !self.valid_candidate(&candidate) {
                 continue;
             }
@@ -254,6 +269,7 @@ impl RemoteMemoryClient {
         &self,
         ids: &[i64],
         keys: &[MemoryKey],
+        scope: Option<protocol::ScanScope>,
     ) -> Result<Vec<MemoryRecord>, RemoteClientError> {
         let keys = keys
             .iter()
@@ -269,7 +285,11 @@ impl RemoteMemoryClient {
         let response: ReadResponse = self
             .post(
                 protocol::READ_PATH,
-                &ReadRequest { ids, keys },
+                &ReadRequest {
+                    ids,
+                    keys,
+                    scope: scope.clone(),
+                },
                 Replay::ConnectOnly,
             )
             .await?;
@@ -289,6 +309,12 @@ impl RemoteMemoryClient {
         let mut seen = HashSet::new();
         let mut memories = Vec::new();
         for memory in response.memories {
+            if scope
+                .as_ref()
+                .is_some_and(|scope| !memory.metadata.visible_in(scope.repository.as_deref()))
+            {
+                return Err(RemoteClientError::InvalidResponse);
+            }
             if !(requested.contains(&memory.key)
                 || (memory.key.namespace.as_deref() == Some(self.namespace())
                     && requested_ids.contains(&memory.key.id)))
@@ -333,10 +359,21 @@ impl RemoteMemoryClient {
         content: &str,
         replacement: Option<&MemoryKey>,
     ) -> Result<MemoryRecord, RemoteClientError> {
+        self.put_metadata(content, &crate::MemoryMetadata::default(), replacement)
+            .await
+    }
+
+    async fn put_metadata(
+        &self,
+        content: &str,
+        metadata: &crate::MemoryMetadata,
+        replacement: Option<&MemoryKey>,
+    ) -> Result<MemoryRecord, RemoteClientError> {
         let response: PutResponse = self
             .post(
                 protocol::PUT_PATH,
                 &PutRequest {
+                    metadata: metadata.clone(),
                     content: content.to_owned(),
                     replacement: replacement.cloned(),
                 },
@@ -346,6 +383,11 @@ impl RemoteMemoryClient {
         if !Self::valid_record(&response.memory)
             || response.memory.key.namespace.as_deref() != Some(self.namespace())
             || response.memory.content != content
+            || {
+                let mut returned = response.memory.metadata.clone();
+                returned.ownership_id = metadata.ownership_id.clone();
+                &returned != metadata
+            }
             || match replacement {
                 Some(replacement) => {
                     response.memory.key.id != replacement.id
@@ -461,7 +503,8 @@ impl RemoteMemoryClient {
     }
 
     fn valid_candidate(&self, candidate: &MemoryCandidate) -> bool {
-        Self::valid_key(&candidate.key)
+        candidate.metadata.validate().is_ok()
+            && Self::valid_key(&candidate.key)
             && candidate.key.namespace.is_some()
             && candidate.preview.len() <= 64
             && candidate.score.is_finite()
@@ -470,7 +513,8 @@ impl RemoteMemoryClient {
     }
 
     fn valid_record(memory: &MemoryRecord) -> bool {
-        Self::valid_key(&memory.key)
+        memory.metadata.validate().is_ok()
+            && Self::valid_key(&memory.key)
             && memory.key.namespace.is_some()
             && !memory.content.trim().is_empty()
             && memory.content.len() <= MemoryLimits::PRODUCTION.content_bytes
@@ -560,6 +604,54 @@ impl RemoteMemoryClient {
 }
 
 impl MemoryStore for RemoteMemoryClient {
+    async fn read_scoped(
+        &self,
+        ids: &[i64],
+        keys: &[MemoryKey],
+        repository: Option<&str>,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        Ok(RemoteMemoryClient::read(
+            self,
+            ids,
+            keys,
+            Some(protocol::ScanScope {
+                repository: repository.map(str::to_owned),
+            }),
+        )
+        .await?)
+    }
+    async fn lesson_page(
+        &self,
+        query: &crate::LessonQuery,
+        after: i64,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        let response: ListResponse = self
+            .post(
+                protocol::LESSONS_PATH,
+                &protocol::LessonRequest {
+                    query: query.clone(),
+                    after,
+                },
+                Replay::Safe,
+            )
+            .await?;
+        let mut previous = after;
+        if response.memories.len() > protocol::MAX_EXPORT_PAGE_RECORDS {
+            return Err(MemoryError::InvalidPagination);
+        }
+        for record in &response.memories {
+            if !Self::valid_record(record)
+                || record.key.namespace.as_deref() != Some(self.namespace())
+                || record.key.id <= previous
+                || !query.matches(record)
+            {
+                return Err(MemoryError::InvalidPagination);
+            }
+            previous = record.key.id;
+        }
+        Ok(response.memories)
+    }
+
     fn scan(
         &self,
         query: &str,
@@ -573,12 +665,32 @@ impl MemoryStore for RemoteMemoryClient {
             })
         }
     }
+    async fn scan_scoped(
+        &self,
+        query: &str,
+        limit: usize,
+        repository: Option<&str>,
+    ) -> Result<MemoryScan, MemoryError> {
+        let candidates = self
+            .scan_filtered(
+                query,
+                limit,
+                Some(protocol::ScanScope {
+                    repository: repository.map(str::to_owned),
+                }),
+            )
+            .await?;
+        Ok(MemoryScan {
+            abstained: candidates.is_empty(),
+            candidates,
+        })
+    }
     fn read(
         &self,
         ids: &[i64],
         keys: &[MemoryKey],
     ) -> impl std::future::Future<Output = Result<Vec<MemoryRecord>, MemoryError>> + Send {
-        async move { Ok(RemoteMemoryClient::read(self, ids, keys).await?) }
+        async move { Ok(RemoteMemoryClient::read(self, ids, keys, None).await?) }
     }
     fn list(
         &self,
@@ -596,6 +708,17 @@ impl MemoryStore for RemoteMemoryClient {
             }
             Ok(RemoteMemoryClient::put(self, content, replacement.as_ref()).await?)
         }
+    }
+    async fn put_with_metadata(
+        &self,
+        content: &str,
+        metadata: &crate::MemoryMetadata,
+        replacement: Option<MemoryKey>,
+    ) -> Result<MemoryRecord, MemoryError> {
+        metadata.validate()?;
+        Ok(self
+            .put_metadata(content, metadata, replacement.as_ref())
+            .await?)
     }
     fn delete(
         &self,
@@ -740,6 +863,7 @@ mod tests {
 
     fn memory(namespace: &str, id: i64, content: &str) -> MemoryRecord {
         MemoryRecord {
+            metadata: Default::default(),
             key: MemoryKey::remote(namespace.to_owned(), id, 1),
             content: content.to_owned(),
             created_at_ms: 1,

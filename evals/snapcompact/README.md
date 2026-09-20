@@ -41,6 +41,8 @@ python3 -B evals/snapcompact/run_paired.py \
   --config /path/to/config.toml \
   --auth-file /path/to/auth.json \
   --api-base-url https://provider.example/v1 \
+  --tool-access-id native-workspace-profile-v1 \
+  --environment-id pinned-runtime-image-or-host-manifest-digest \
   --output raw-records.jsonl \
   --logs raw-logs \
   --coding-check
@@ -58,27 +60,110 @@ Use an independent verifier. It must check:
 
 Do not tune on final evaluation runs.
 
-## Raw record format
+## Raw records and failure accounting (schema v2)
 
-Write one JSON object per condition and paired run. A pair must have identical values for `model`, `fixture_revision`, `settings_digest`, `cache_condition`, `generation`, `branch`, and `run`. Use `condition` to distinguish `native` from `bitmap`.
+The runner creates an append-only JSONL file. It refuses to overwrite an existing output or log.
+Use new output and log paths for each batch. Keep all batches, including failures.
 
-Each record contains:
+Each process invocation has an `attempt_id` and two snapshots:
 
-- `task_passed` and `exact_match`;
-- root and child input, cached-input, output, and reasoning tokens;
-- provider receipt and catalog estimate as separate fields;
-- retrieval count and failures;
-- render time, serialized request bytes, latency, peak memory, and retries.
+- `attempt_revision: 0`, `attempt_status: "running"`: flushed and synced before launch.
+- `attempt_revision: 1`: the final result, written before an execution error returns.
 
-Provider receipts are authoritative. Preserve `null` when the provider does not report a value. Do not replace an unknown receipt with zero or a catalog estimate.
+The report resolves snapshots by attempt identity. A missing final snapshot counts as interrupted,
+not as a missing trial. An incomplete final JSON line is reported in `input_issues`; the earlier
+admission remains in the denominator. Malformed complete lines and conflicting snapshots are errors.
+Do not compare reports while a batch is still running.
+
+Final `attempt_status` values are:
+
+| Status | Meaning |
+| --- | --- |
+| `completed` | Execution settled and the independent evaluation ran. `task_passed` can still be false. |
+| `failed` | A process launch, nonzero exit, or terminal submission failed. |
+| `interrupted` | Cancellation, signal termination, or an admission with no final snapshot. |
+| `invalid_evaluation` | Missing/mismatched terminal receipt, incomplete journal view, malformed log, or evaluator error. |
+
+`exit_code`, `submission_status`, and diagnostic codes in `issues` preserve the distinction.
+The runner continues independent conditions after an execution failure, then exits nonzero.
+A runner interrupt stops the batch. It does not create records for generations never attempted.
+CLI argument and input-identity validation occurs before attempts are admitted.
+
+`task_passed` and `exact_match` are null when evaluation could not run. A headless
+`finished_unverified` receipt is a settled native execution, not sandbox certification. The exact
+answer or AST check can pass without making that stronger claim.
+
+### Unknown measurements
+
+All numeric measurement fields accept null. A measured zero remains zero. A missing/null token
+component in any call makes that component's aggregate unknown. Partial logs cannot supply complete
+usage or cost totals. Duplicate journal sequences are counted once; conflicting duplicates invalidate
+the view. Receipt totals require a receipt for every recorded usage call, with no unknown receipt.
+
+The raw fields include:
+
+- `usage.root` and `usage.child`: input, cached-input, output, and reasoning tokens;
+- `provider_receipt_usd`: recorded root and child provider costs, not a catalog fallback;
+- `root_catalog_estimate_usd`: a root-only estimate, null if its pricing inputs are unknown;
+- `catalog_estimate_usd`: total root and child estimate, null when child usage is unavailable;
+- retrieval count/failures, render time, request bytes, latency, peak memory, and retries.
+
+Current headless telemetry does not provide attributable child usage, reliable retry counts, or
+retrieval-failure totals. The runner leaves these null. It does not infer retries by subtracting
+usage-event counts from cost-event counts: child calls also emit costs. Unattributed calls make root
+usage totals unknown. Render time, request bytes, and peak memory also remain null.
+
+`child_outcomes` preserves observed `spawn_agent`, `wait_agent`, and `list_agents` results. A recorded
+child failure adds `failed_child` to `issues` and contributes to the failed-child-attempt denominator.
+It does not automatically fail a parent that recovered and passed the independent check. An empty
+list does not prove no children ran; the headless stream does not expose all child lifecycle events.
+
+### Pair identity and denominators
+
+Pair identity includes `dataset`, `fixture_revision`, `task_digest`, `model`, `settings_digest`,
+`harness_build`, `tool_access_digest`, `environment_digest`, `cache_condition`, `generation`,
+`branch`, and `run`. Only `condition` differs (`native` or `bitmap`).
+
+The runner hashes the fixture and task prompt, binary bytes, and model/thinking/configuration/endpoint
+inputs. Supply pinned tool-access and runtime identities with `--tool-access-id` and
+`--environment-id`. These two identities are caller declarations, not measured host telemetry.
+Keep their manifests beside the records. The reader checks equality, not whether the declarations
+are true. Pin provider-side model versions and external runtime state separately.
+
+Unmatched records stay in condition summaries. Multiple attempts with the same pair key are
+ambiguous; the reader keeps them all but does not select a winning retry. Use distinct `run` values
+for planned repetitions. The report lists unmatched attempt IDs and counts.
+
+Each condition reports separate completed, failed, interrupted, and invalid-evaluation counts, plus
+attempts with observed failed children and tasks evaluated, passed, failed, or unscored. Task pass rate uses **all
+attempts** as its denominator; unknown evaluation is not a success. Metric coverage counts show
+which token fields and provider receipts were measured. A total is null if any contributing value
+is unknown. Paired deltas also stay null when a matched pair lacks the metric; their measured-pair
+count remains visible. Cost per completed task is **all attempt costs divided by successful tasks**,
+including failed-attempt costs. It is null if any cost is missing or no task passed.
 
 Generate the report:
 
 ```sh
-python3 -B evals/snapcompact/paired_report.py raw-records.jsonl   --output paired-report.json
+python3 -B evals/snapcompact/paired_report.py raw-records.jsonl --output paired-report.json
 ```
 
-The report sums root and child work, reports task and exact-match Wilson intervals, and reports paired bitmap-minus-native mean intervals. Keep `raw-records.jsonl`, the report, command transcript, Orvek revision, fixture digest, and provider profile together.
+The report version is 2. It reports task/exact-match Wilson intervals and normal-approximation
+paired mean intervals. Repeated resume generations are correlated; these intervals are not proof
+of independent-trial significance. Keep the raw records, report, logs, command transcript, build,
+fixture, provider profile, and environment/tool manifests together.
+
+### Historical data
+
+Version 1 and unversioned raw records are rejected. They contain unsupported zero-filled values and
+may omit failed attempts. Do not migrate them by adding a version number or treating their zeros as
+measurements. Reparse original logs and execution receipts where available; otherwise rerun the
+trials. Missing controls or attempt evidence cannot be reconstructed from the old aggregate.
+The archived `results/2026-09-19/` files remain unchanged historical artifacts, not v2 evidence.
+
+`score.py` reads the separate legacy `run.completed`/`run.failed` event format. Its version-2 output
+also keeps missing/null usage, duration, and billing uncertainty unknown. It does not convert these
+logs into matched schema-v2 trials. Sparse warmup maps no longer imply zero token components.
 
 ## Interpretation
 
@@ -99,4 +184,4 @@ Call out these comparison targets, but do not enforce them as runtime stops:
 - total model cost is at least 15% lower at matched quality;
 - p95 task time is no more than 20% higher.
 
-The 2026-09-19 partial live run is in `results/2026-09-19/`. It covers resume and independent coding verification but not sandbox fork or three operational measurements, so it is not a complete release qualification. Do not claim savings from the paper or from offline tests. Reference [SnapCompact](https://stencil.so/blog/snapcompact) and the pinned [research code](https://github.com/can1357/oh-my-pi/tree/e109c5a63fc1ef67e8543094be45494de1252cf4/packages/snapcompact/research) only as external prior work.
+The 2026-09-19 partial live run is in `results/2026-09-19/`. Its legacy accounting and incomplete attempt coverage prevent release qualification. It also lacks sandbox fork and operational measurements. Do not claim savings from the paper or from offline tests. Reference [SnapCompact](https://stencil.so/blog/snapcompact) and the pinned [research code](https://github.com/can1357/oh-my-pi/tree/e109c5a63fc1ef67e8543094be45494de1252cf4/packages/snapcompact/research) only as external prior work.

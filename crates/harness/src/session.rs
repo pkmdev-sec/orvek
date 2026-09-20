@@ -1,15 +1,18 @@
+mod tool_output;
 use crate::{
     Digest,
     admission_profile::{
         BaselineReason, Channel, HarnessBinding, HarnessProvenance, ModelIdentity, PolicyIdentity,
         TargetProfile, ValidatedHarnessRevision,
     },
+    controller::notification::{CompletionDelivery, DeliveryEvent},
     inference::ModelSettings,
     state::{Outcome, RequestKind, TaskId},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
+pub use tool_output::{ToolOutputBuffers, ToolOutputError};
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -156,6 +159,26 @@ impl SessionAdmissionProfile {
         })
     }
 
+    pub(crate) fn with_native_read(mut self, config: crate::monitor::PinnedBehavior) -> Self {
+        let revision = ValidatedHarnessRevision::with_native_read(config);
+        self.binding = HarnessBinding::baseline(
+            self.binding.target(),
+            revision.digest(),
+            revision.behavior_digest(),
+            revision.envelope_digest(),
+            self.binding.policy(),
+        );
+        self.revision_manifest = revision.canonical_bytes().to_vec();
+        self.provenance = HarnessProvenance::Registered;
+        self
+    }
+
+    pub fn native_read(&self) -> Option<crate::monitor::PinnedBehavior> {
+        ValidatedHarnessRevision::from_manifest_json(&self.revision_manifest)
+            .ok()?
+            .native_read()
+    }
+
     pub const fn version(&self) -> u32 {
         self.version
     }
@@ -197,10 +220,17 @@ impl SessionAdmissionProfile {
     }
 
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if !self.request.workspace.is_dir() {
+            return Err("session workspace must be an absolute directory");
+        }
+        self.validate_recorded()
+    }
+
+    pub(crate) fn validate_recorded(&self) -> Result<(), &'static str> {
         if self.version != 1 {
             return Err("unsupported session admission profile");
         }
-        if !self.request.workspace.is_absolute() || !self.request.workspace.is_dir() {
+        if !self.request.workspace.is_absolute() {
             return Err("session workspace must be an absolute directory");
         }
         if self.request.context_window_tokens == 0 {
@@ -286,6 +316,45 @@ mod admission_tests {
     }
 
     #[test]
+    fn recorded_admission_validation_does_not_require_the_original_workspace() {
+        let workspace = tempfile::tempdir().unwrap();
+        let profile = profile(workspace.path().to_owned());
+        let config = SessionConfig {
+            workspace: workspace.path().to_owned(),
+            model: ModelSettings::default(),
+            instructions: String::new(),
+            context_window_tokens: default_context_window_tokens(),
+        };
+        let mut state = SessionState::create(
+            SessionId::new(),
+            SessionCreation {
+                branch: SessionBranch::default(),
+                config: config.clone(),
+                admission: None,
+                parent: None,
+                history: vec![],
+                started_ms: 0,
+                imported: None,
+            },
+        );
+        drop(workspace);
+        assert!(
+            profile.validate().is_err(),
+            "live admission still checks its boundary"
+        );
+        state
+            .apply(
+                Uuid::new_v4(),
+                &SessionCommand::AdmissionPinned {
+                    profile: Box::new(profile),
+                    legacy_config_digest: Digest::of_value(&config).unwrap(),
+                },
+            )
+            .unwrap();
+        assert!(state.admission.is_some());
+    }
+
+    #[test]
     fn serialized_behavior_tampering_is_rejected() {
         let workspace = tempfile::tempdir().unwrap();
         let mut serialized = serde_json::to_value(profile(workspace.path().to_owned())).unwrap();
@@ -309,6 +378,50 @@ mod admission_tests {
             tampered.validate(),
             Err("session admission target differs from its request")
         );
+    }
+
+    #[test]
+    fn legacy_context_view_wrapper_deserializes_to_manifest() {
+        let workspace = tempfile::tempdir().unwrap();
+        let config = SessionConfig {
+            workspace: workspace.path().to_owned(),
+            model: ModelSettings::default(),
+            instructions: String::new(),
+            context_window_tokens: default_context_window_tokens(),
+        };
+        let state = SessionState::create(
+            SessionId::new(),
+            SessionCreation {
+                branch: SessionBranch::default(),
+                config,
+                admission: None,
+                parent: None,
+                history: vec![],
+                started_ms: 0,
+                imported: None,
+            },
+        );
+        let manifest = crate::context::Manifest {
+            version: 2,
+            source: state.cursor(),
+            original_history: Digest::of(b"history"),
+            renderer: Digest::of(b"renderer"),
+            byte_limit: 4096,
+            omitted_items: 0,
+            interrupted_calls: vec![],
+            stable_input_items: 0,
+            segments: vec![],
+            input: Digest::of(b"input"),
+        };
+        let mut serialized = serde_json::to_value(&state).unwrap();
+        serialized["context_view"] = json!({
+            "manifest": manifest,
+            "input": [{"role": "user", "content": "legacy cached projection"}]
+        });
+
+        let restored: SessionState = serde_json::from_value(serialized).unwrap();
+
+        assert_eq!(restored.context_view, Some(manifest));
     }
 }
 
@@ -337,6 +450,15 @@ pub struct SessionBranch {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionState {
+    #[serde(default, skip_serializing_if = "ToolOutputBuffers::is_empty")]
+    pub tool_output_buffers: ToolOutputBuffers,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::interpreter::InterpreterState::is_empty"
+    )]
+    pub interpreter: crate::interpreter::InterpreterState,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub completion_deliveries: BTreeMap<Uuid, CompletionDelivery>,
     pub feedbacks: std::collections::BTreeSet<Digest>,
     pub branch: SessionBranch,
     pub id: SessionId,
@@ -352,8 +474,17 @@ pub struct SessionState {
     pub history: Vec<Value>,
     #[serde(default)]
     pub settled_history_items: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_view: Option<crate::context::ContextView>,
+    /// The manifest of the most recent projection, kept for representation
+    /// reuse. The projected items are not retained: they are rebuilt from
+    /// history, and one projection can exceed a single journal event.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_context_view",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub context_view: Option<crate::context::Manifest>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_transitions: Vec<crate::context::transitions::ContextTransition>,
     pub operations: BTreeMap<Uuid, Digest>,
     pub current_task: Option<TaskId>,
     pub tasks_by_request: BTreeMap<Uuid, TaskId>,
@@ -367,6 +498,27 @@ pub struct SessionState {
     pub imported: Option<ImportedSource>,
     pub submissions: BTreeMap<Uuid, crate::submission::Submission>,
     pub queue_order: Vec<Uuid>,
+}
+
+fn deserialize_context_view<'de, D>(
+    deserializer: D,
+) -> Result<Option<crate::context::Manifest>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StoredContextView {
+        Manifest(crate::context::Manifest),
+        Legacy(crate::context::ContextView),
+    }
+
+    Option::<StoredContextView>::deserialize(deserializer).map(|view| {
+        view.map(|view| match view {
+            StoredContextView::Manifest(manifest) => manifest,
+            StoredContextView::Legacy(view) => view.manifest,
+        })
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -419,6 +571,16 @@ pub enum SessionEvent {
     deny_unknown_fields
 )]
 pub enum SessionCommand {
+    Interpreter {
+        request: Uuid,
+        event: crate::interpreter::InterpreterEvent,
+    },
+    CompletionHook(DeliveryEvent),
+    ChildLifecycle(Box<crate::controller::subagents::lifecycle::Event>),
+    TraceRecorded {
+        request: Uuid,
+        record: Digest,
+    },
     AdmissionPinned {
         profile: Box<SessionAdmissionProfile>,
         legacy_config_digest: Digest,
@@ -496,6 +658,17 @@ pub enum SessionCommand {
         call_id: String,
         output: String,
     },
+    ToolResultPart {
+        request: Uuid,
+        call_id: String,
+        offset: usize,
+        output: String,
+    },
+    ToolResultEnd {
+        request: Uuid,
+        call_id: String,
+        digest: Digest,
+    },
     TaskLinked {
         request: Uuid,
         task: TaskId,
@@ -506,6 +679,14 @@ pub enum SessionCommand {
         error: Option<String>,
     },
     SettingsChanged(ModelSettings),
+    ContextPrepared {
+        request: Uuid,
+        call: Uuid,
+        manifest: Digest,
+    },
+    ContextTransition {
+        transition: Box<crate::context::transitions::ContextTransition>,
+    },
     ContextProjected {
         source_revision: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -577,6 +758,8 @@ impl SessionState {
             BTreeMap::new()
         };
         Self {
+            tool_output_buffers: ToolOutputBuffers::default(),
+            completion_deliveries: BTreeMap::new(),
             branch,
             feedbacks: std::collections::BTreeSet::new(),
             id,
@@ -589,10 +772,12 @@ impl SessionState {
             history,
             settled_history_items,
             context_view: None,
+            context_transitions: Vec::new(),
             operations,
             current_task: None,
             tasks_by_request: BTreeMap::new(),
             tool_calls: BTreeMap::new(),
+            interpreter: Default::default(),
             kind: RequestKind::Conversation,
             active_request: None,
             outcome: None,
@@ -611,13 +796,16 @@ impl SessionState {
         command: &SessionCommand,
     ) -> Result<(), serde_json::Error> {
         match command {
+            SessionCommand::CompletionHook(event) => {
+                event.apply(self.id, &mut self.completion_deliveries)?;
+            }
             SessionCommand::AdmissionPinned {
                 profile,
                 legacy_config_digest,
             } => {
                 if self.admission.is_some()
                     || Digest::of_value(&self.config)? != *legacy_config_digest
-                    || profile.validate().is_err()
+                    || profile.validate_recorded().is_err()
                 {
                     return Err(serde_json::Error::io(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -761,10 +949,61 @@ impl SessionState {
                 }
                 self.history.extend(items.clone());
             }
-            SessionCommand::ProviderUsage { .. } | SessionCommand::ProviderCost { .. } => {}
+            SessionCommand::Interpreter { request, event } => {
+                self.interpreter.apply(*request, event)
+            }
+            SessionCommand::ProviderUsage { .. }
+            | SessionCommand::ProviderCost { .. }
+            | SessionCommand::ContextPrepared { .. }
+            | SessionCommand::TraceRecorded { .. }
+            | SessionCommand::ChildLifecycle(_) => {}
             SessionCommand::Feedback { message } => self
                 .history
                 .push(json!({"role":"developer","content":message})),
+            SessionCommand::ToolResultPart {
+                request,
+                call_id,
+                offset,
+                output,
+            } => {
+                if self.active_request != Some(*request)
+                    || !self
+                        .tool_calls
+                        .get(call_id)
+                        .is_some_and(|call| call.request == *request && call.output.is_none())
+                {
+                    return Err(serde_json::Error::io(std::io::Error::other(
+                        "tool output part has no pending call in this request",
+                    )));
+                }
+                self.tool_output_buffers
+                    .append(*request, call_id, *offset, output)
+                    .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))?;
+            }
+            SessionCommand::ToolResultEnd {
+                request,
+                call_id,
+                digest,
+            } => {
+                if self.active_request != Some(*request) {
+                    return Err(serde_json::Error::io(std::io::Error::other(
+                        "tool output end belongs to an inactive request",
+                    )));
+                }
+                let output = self
+                    .tool_output_buffers
+                    .finish(*request, call_id, *digest)
+                    .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))?;
+                // The logical command owns retry identity; fragments only frame its storage.
+                return self.apply(
+                    operation,
+                    &SessionCommand::ToolResult {
+                        request: *request,
+                        call_id: call_id.clone(),
+                        output,
+                    },
+                );
+            }
             SessionCommand::ToolResult {
                 call_id, output, ..
             } => {
@@ -779,7 +1018,13 @@ impl SessionState {
                 self.current_task = Some(*task);
                 self.tasks_by_request.insert(*request, *task);
             }
-            SessionCommand::TurnSettled { outcome, error, .. } => {
+            SessionCommand::TurnSettled {
+                request,
+                outcome,
+                error,
+            } => {
+                self.interpreter.interrupt(*request);
+                self.tool_output_buffers = ToolOutputBuffers::default();
                 self.active_request = None;
                 self.outcome = *outcome;
                 self.error = error.clone();
@@ -793,8 +1038,17 @@ impl SessionState {
                 }
                 self.config.model = *settings;
             }
+            SessionCommand::ContextTransition { transition } => {
+                transition.validate_acceptance(self).map_err(|error| {
+                    serde_json::Error::io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        error,
+                    ))
+                })?;
+                self.context_transitions.push(transition.as_ref().clone());
+            }
             SessionCommand::ContextProjected { view, .. } => {
-                self.context_view = view.clone();
+                self.context_view = view.as_ref().map(|view| view.manifest.clone());
             }
         }
         self.operations

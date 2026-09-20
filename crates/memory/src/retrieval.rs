@@ -41,6 +41,7 @@ pub(super) fn rank(query: &str, memories: &[MemoryRecord], limit: usize) -> Vec<
                 return None;
             }
             Some(MemoryCandidate {
+                metadata: document.memory.metadata.clone(),
                 key: document.memory.key.clone(),
                 preview: preview(&document.memory.content),
                 score,
@@ -196,6 +197,7 @@ mod tests {
 
     fn memory(id: i64, content: &str) -> MemoryRecord {
         MemoryRecord {
+            metadata: Default::default(),
             key: MemoryKey::local(id, 1),
             content: content.to_owned(),
             created_at_ms: 0,

@@ -37,6 +37,16 @@ pub trait MemoryStore: Clone + Send + Sync + 'static {
         limit: usize,
     ) -> impl Future<Output = Result<MemoryScan, MemoryError>> + Send;
 
+    /// Filters global/legacy plus the selected repository before ranking, not after truncation.
+    fn scan_scoped(
+        &self,
+        _query: &str,
+        _limit: usize,
+        _repository: Option<&str>,
+    ) -> impl Future<Output = Result<MemoryScan, MemoryError>> + Send {
+        async { Err(MemoryError::MetadataUnsupported) }
+    }
+
     /// Reads unversioned IDs and versioned keys, recording use telemetry.
     fn read(
         &self,
@@ -50,12 +60,47 @@ pub trait MemoryStore: Clone + Send + Sync + 'static {
     /// does not grow with the complete shared corpus. Full transfer uses paginated export instead.
     fn list(&self) -> impl Future<Output = Result<Vec<MemoryRecord>, MemoryError>> + Send;
 
+    /// Reads scoped records, filtering before recording use telemetry.
+    fn read_scoped(
+        &self,
+        _ids: &[i64],
+        _keys: &[MemoryKey],
+        _repository: Option<&str>,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, MemoryError>> + Send {
+        async { Err(MemoryError::MetadataUnsupported) }
+    }
+
+    /// Returns at most 128 owned lessons after an exclusive numeric cursor.
+    /// Ownership comes from the backend binding, not query data. No use telemetry is recorded.
+    fn lesson_page(
+        &self,
+        _query: &crate::LessonQuery,
+        _after: i64,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, MemoryError>> + Send {
+        async { Err(MemoryError::MetadataUnsupported) }
+    }
+
     /// Inserts content or compare-and-swap replaces `replacement`.
     fn put(
         &self,
         content: &str,
         replacement: Option<MemoryKey>,
     ) -> impl Future<Output = Result<MemoryRecord, MemoryError>> + Send;
+
+    /// Atomically replaces content and all provenance, under the same version check.
+    fn put_with_metadata(
+        &self,
+        content: &str,
+        metadata: &crate::MemoryMetadata,
+        replacement: Option<MemoryKey>,
+    ) -> impl Future<Output = Result<MemoryRecord, MemoryError>> + Send {
+        async move {
+            if metadata != &crate::MemoryMetadata::default() {
+                return Err(MemoryError::MetadataUnsupported);
+            }
+            self.put(content, replacement).await
+        }
+    }
 
     /// Compare-and-swap deletes `key`.
     ///
@@ -182,6 +227,28 @@ impl SelectedMemoryStore {
 
 #[cfg(all(feature = "client", feature = "local"))]
 impl MemoryStore for SelectedMemoryStore {
+    async fn read_scoped(
+        &self,
+        ids: &[i64],
+        keys: &[MemoryKey],
+        repository: Option<&str>,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        match self {
+            Self::Local(store) => store.read_scoped(ids, keys, repository).await,
+            Self::Remote(store) => store.read_scoped(ids, keys, repository).await,
+        }
+    }
+    async fn lesson_page(
+        &self,
+        query: &crate::LessonQuery,
+        after: i64,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        match self {
+            Self::Local(store) => store.lesson_page(query, after).await,
+            Self::Remote(store) => store.lesson_page(query, after).await,
+        }
+    }
+
     fn scan(
         &self,
         query: &str,
@@ -192,6 +259,17 @@ impl MemoryStore for SelectedMemoryStore {
                 Self::Local(store) => MemoryStore::scan(store, query, limit).await,
                 Self::Remote(client) => MemoryStore::scan(client, query, limit).await,
             }
+        }
+    }
+    async fn scan_scoped(
+        &self,
+        query: &str,
+        limit: usize,
+        repository: Option<&str>,
+    ) -> Result<MemoryScan, MemoryError> {
+        match self {
+            Self::Local(store) => store.scan_scoped(query, limit, repository).await,
+            Self::Remote(client) => client.scan_scoped(query, limit, repository).await,
         }
     }
     fn read(
@@ -224,6 +302,27 @@ impl MemoryStore for SelectedMemoryStore {
             match self {
                 Self::Local(store) => MemoryStore::put(store, content, replacement).await,
                 Self::Remote(client) => MemoryStore::put(client, content, replacement).await,
+            }
+        }
+    }
+    async fn put_with_metadata(
+        &self,
+        content: &str,
+        metadata: &crate::MemoryMetadata,
+        replacement: Option<MemoryKey>,
+    ) -> Result<MemoryRecord, MemoryError> {
+        reject_unsafe(content)?;
+        metadata.validate()?;
+        match self {
+            Self::Local(store) => {
+                store
+                    .put_with_metadata(content, metadata, replacement)
+                    .await
+            }
+            Self::Remote(client) => {
+                client
+                    .put_with_metadata(content, metadata, replacement)
+                    .await
             }
         }
     }
@@ -289,6 +388,12 @@ fn current_time_ms() -> i64 {
 /// Failure from local storage, remote transport, validation, or optimistic concurrency.
 #[derive(Debug, Error)]
 pub enum MemoryError {
+    /// Scope or evidence metadata failed validation.
+    #[error("invalid memory metadata")]
+    InvalidMetadata,
+    /// An external backend has not implemented metadata writes.
+    #[error("memory backend does not support evidence metadata writes")]
+    MetadataUnsupported,
     /// Content is empty after trimming.
     #[error("memory content is empty")]
     EmptyContent,

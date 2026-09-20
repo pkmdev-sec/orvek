@@ -101,6 +101,7 @@ impl<S: MemoryStore> MemoryServer<S> {
             .route(&route(protocol::SCAN_PATH), post(scan))
             .route(&route(protocol::READ_PATH), post(read))
             .route(&route(protocol::LIST_PATH), post(list))
+            .route(&route(protocol::LESSONS_PATH), post(lessons))
             .route(&route(protocol::PUT_PATH), post(put))
             .route(&route(protocol::DELETE_PATH), post(delete))
             .route(&route(protocol::SYNC_PATH), post(sync))
@@ -168,7 +169,16 @@ async fn scan<S: MemoryStore>(
     match run_store(
         operation,
         counts,
-        store.scan(&request.query, request.limit),
+        async {
+            match &request.scope {
+                Some(scope) => {
+                    store
+                        .scan_scoped(&request.query, request.limit, scope.repository.as_deref())
+                        .await
+                }
+                None => store.scan(&request.query, request.limit).await,
+            }
+        },
         |scan| OperationCounts::candidates(scan.candidates.len()),
     )
     .await
@@ -206,7 +216,16 @@ async fn read<S: MemoryStore>(
     match run_store(
         operation,
         counts,
-        store.read(&request.ids, &request.keys),
+        async {
+            match &request.scope {
+                Some(scope) => {
+                    store
+                        .read_scoped(&request.ids, &request.keys, scope.repository.as_deref())
+                        .await
+                }
+                None => store.read(&request.ids, &request.keys).await,
+            }
+        },
         |memories| OperationCounts::records(memories.len()),
     )
     .await
@@ -231,6 +250,45 @@ async fn list<S: MemoryStore>(
         OperationCounts::default(),
         store.list(),
         |memories| OperationCounts::records(memories.len()),
+    )
+    .await
+    {
+        Ok(memories) => Json(ListResponse { memories }).into_response(),
+        Err(error) => error.into_response(),
+    }
+}
+
+async fn lessons<S: MemoryStore>(
+    State(state): State<Arc<ServerState<S>>>,
+    headers: HeaderMap,
+    payload: Result<Json<protocol::LessonRequest>, JsonRejection>,
+) -> Response<Body> {
+    let principal = match authenticate(&state, &headers) {
+        Ok(value) => value,
+        Err(error) => return error.into_response(),
+    };
+    let operation = OperationTrace::new("lessons", &principal);
+    if principal.role != RemoteRole::Writer {
+        return operation.error_response(
+            ApiError::new(StatusCode::FORBIDDEN, RemoteErrorCode::Forbidden),
+            OperationCounts::default(),
+        );
+    }
+    let request = match json_payload(payload) {
+        Ok(value) => value,
+        Err(error) => return operation.error_response(error, OperationCounts::default()),
+    };
+    if request.after < 0
+        || serde_json::to_vec(&request.query).map_or(true, |bytes| bytes.len() > 4096)
+    {
+        return operation.error_response(ApiError::bad_request(), OperationCounts::default());
+    }
+    let store = (state.store_factory)(principal.namespace);
+    match run_store(
+        operation,
+        OperationCounts::default(),
+        store.lesson_page(&request.query, request.after),
+        |records| OperationCounts::records(records.len()),
     )
     .await
     {
@@ -284,7 +342,7 @@ async fn put<S: MemoryStore>(
     match run_store(
         operation,
         counts,
-        store.put(&request.content, request.replacement),
+        store.put_with_metadata(&request.content, &request.metadata, request.replacement),
         |_| OperationCounts::records(1),
     )
     .await
@@ -681,7 +739,9 @@ impl From<MemoryError> for ApiError {
             return Self::unavailable();
         }
         match error {
-            MemoryError::EmptyContent => Self::bad_request(),
+            MemoryError::InvalidMetadata
+            | MemoryError::MetadataUnsupported
+            | MemoryError::EmptyContent => Self::bad_request(),
             MemoryError::ContentTooLarge { .. } => Self::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 RemoteErrorCode::ContentTooLarge,

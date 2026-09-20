@@ -3,7 +3,7 @@
 use crate::{
     Digest,
     contract::Contract,
-    controller::{Host, TaskRun},
+    controller::{Host, HostWarning, TaskRun},
     inference::ModelSettings,
     session::{
         JournalRecord, SessionAdmissionProfile, SessionAdmissionRequest, SessionCursor, SessionId,
@@ -29,9 +29,10 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 6;
 pub const UNSUPPORTED_PROTOCOL_VERSION: &str = "unsupported operator protocol version";
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+pub const HISTORY_PAGE_BYTES: usize = 768 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -60,6 +61,43 @@ impl Request {
     deny_unknown_fields
 )]
 pub enum Command {
+    MonitorReport {
+        offset: usize,
+        limit: usize,
+    },
+    MonitorSampling {
+        every: u32,
+    },
+    InstallReadBehavior {
+        expected: Digest,
+        bytes: u32,
+        note: String,
+    },
+    RollbackReadBehavior {
+        expected: Digest,
+    },
+    RegisterEventSource {
+        config: crate::event_intake::SourceConfig,
+    },
+    EventSource {
+        source: Uuid,
+    },
+    DisableEventSource {
+        source: Uuid,
+    },
+    DeliverEvent {
+        source: Uuid,
+        key: String,
+        payload: String,
+    },
+    InspectEvent {
+        source: Uuid,
+        key: String,
+    },
+    CancelEvent {
+        source: Uuid,
+        key: String,
+    },
     RecordReview {
         session: SessionId,
         manifest: Digest,
@@ -189,6 +227,13 @@ pub enum Command {
         start: usize,
         limit: usize,
     },
+    HistoryText {
+        cursor: SessionCursor,
+        item: usize,
+        content_index: usize,
+        offset: usize,
+        limit: usize,
+    },
     CreateSession {
         id: SessionId,
         request: SessionAdmissionRequest,
@@ -236,6 +281,9 @@ pub enum Command {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum WatchFrame {
+    Warnings {
+        warnings: Vec<HostWarning>,
+    },
     Journal(JournalRecord),
     Preview {
         session: SessionId,
@@ -334,9 +382,36 @@ impl From<(SessionState, u64, crate::session::ProviderCostSummary)> for SessionV
     }
 }
 
+/// Entries count toward the history cursor even when their exact output needs text paging.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum HistoryEntry {
+    Inline(serde_json::Value),
+    /// Read content index zero with `HistoryText` at this entry's cursor and index.
+    /// This is a transport reference, not a shortened tool result or a new receipt.
+    ToolOutput {
+        call_id: String,
+        bytes: usize,
+        digest: Digest,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HistoryPage {
+    pub cursor: SessionCursor,
+    pub start: usize,
+    pub items: Vec<HistoryEntry>,
+    pub next: Option<usize>,
+    pub total: usize,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum Response {
+    Monitor(Box<crate::monitor::MonitorReport>),
+    Behavior(Digest),
+    EventSource(crate::event_intake::SourceRecord),
+    Event(crate::event_intake::EventRecord),
     ReviewFeedback(Digest),
     TaskReview {
         view: crate::controller::ArtifactView,
@@ -358,7 +433,11 @@ pub enum Response {
         accepted: bool,
     },
     Sessions(Vec<SessionView>),
-    History(serde_json::Value),
+    History(HistoryPage),
+    HistoryText {
+        cursor: SessionCursor,
+        page: crate::context::TextPage,
+    },
     Session(Box<SessionView>),
     Task {
         id: TaskId,
@@ -406,6 +485,36 @@ pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<(
     let runs = Arc::new(Semaphore::new(4));
     let watchers = Arc::new(Semaphore::new(8));
     let mut handlers = JoinSet::new();
+    let monitor_host = host.clone();
+    let monitor_shutdown = shutdown.child_token();
+    handlers.spawn(async move {
+        tokio::select! {
+            () = monitor_shutdown.cancelled() => {},
+            () = monitor_host.run_monitor() => {},
+        }
+    });
+    let intake_host = host.clone();
+    let intake_shutdown = shutdown.child_token();
+    handlers.spawn(async move {
+        tokio::select! {
+            () = intake_shutdown.cancelled() => {},
+            result = intake_host.run_event_intake() => {
+                if result.is_err() { intake_host.warn(HostWarning::EventIntakeStopped); }
+            }
+        }
+    });
+    let recovery_host = host.clone();
+    let recovery_shutdown = shutdown.child_token();
+    handlers.spawn(async move {
+        tokio::select! {
+            () = recovery_shutdown.cancelled() => {},
+            result = recovery_host.recover_completion_hooks() => {
+                if result.is_err() {
+                    recovery_host.warn(HostWarning::CompletionHookRecoveryFailed);
+                }
+            }
+        }
+    });
     loop {
         tokio::select! {
             () = shutdown.cancelled() => break,
@@ -428,6 +537,9 @@ pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<(
     }
     while handlers.join_next().await.is_some() {}
     drop(listener);
+    // Socket disappearance tells reconnecting clients that replacement may start.
+    // Release the store-owner lock before publishing that signal.
+    drop(host);
     std::fs::remove_file(socket)?;
     Ok(())
 }
@@ -487,6 +599,37 @@ async fn execute(
     shutdown: CancellationToken,
 ) -> Result<Response, crate::controller::HostError> {
     Ok(match request.command {
+        Command::MonitorReport { offset, limit } => {
+            Response::Monitor(Box::new(host.monitor_report(offset, limit).await?))
+        }
+        Command::MonitorSampling { every } => {
+            host.set_monitor_sampling(every).await?;
+            Response::Monitor(Box::new(host.monitor_report(0, 100).await?))
+        }
+        Command::InstallReadBehavior {
+            expected,
+            bytes,
+            note,
+        } => Response::Behavior(host.install_read_behavior(expected, bytes, note).await?),
+        Command::RollbackReadBehavior { expected } => {
+            Response::Behavior(host.rollback_read_behavior(expected).await?)
+        }
+        Command::RegisterEventSource { config } => {
+            Response::EventSource(host.register_event_source(config).await?)
+        }
+        Command::EventSource { source } => Response::EventSource(host.event_source(source).await?),
+        Command::DisableEventSource { source } => {
+            Response::EventSource(host.disable_event_source(source).await?)
+        }
+        Command::DeliverEvent {
+            source,
+            key,
+            payload,
+        } => Response::Event(host.deliver_event(source, &key, &payload).await?),
+        Command::InspectEvent { source, key } => Response::Event(host.event(source, &key).await?),
+        Command::CancelEvent { source, key } => {
+            Response::Event(host.cancel_event(source, &key).await?)
+        }
         Command::RecordReview {
             session,
             manifest,
@@ -666,6 +809,18 @@ async fn execute(
             start,
             limit,
         } => Response::History(host.history_page(cursor, start, limit).await?),
+        Command::HistoryText {
+            cursor,
+            item,
+            content_index,
+            offset,
+            limit,
+        } => Response::HistoryText {
+            page: host
+                .history_text(&cursor, item, content_index, offset, limit)
+                .await?,
+            cursor,
+        },
         Command::Watch { .. } => unreachable!("watch requests have a streaming handler"),
         Command::CreateSession {
             id,
@@ -792,6 +947,8 @@ async fn watch(
 ) -> io::Result<()> {
     let mut previews = host.subscribe_previews();
     let mut subagents = host.subscribe_subagents();
+    let mut warnings = host.subscribe_warnings();
+    let mut sent_warnings = None;
     let mut unexpected = [0u8; 1];
     send_watch(stream, &WatchFrame::Ready { after }).await?;
     if let Some(session) = session {
@@ -800,6 +957,21 @@ async fn watch(
     loop {
         if shutdown.is_cancelled() {
             return Ok(());
+        }
+        let current_warnings = warnings
+            .borrow_and_update()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        if sent_warnings.as_ref() != Some(&current_warnings) {
+            send_watch(
+                stream,
+                &WatchFrame::Warnings {
+                    warnings: current_warnings.clone(),
+                },
+            )
+            .await?;
+            sent_warnings = Some(current_warnings);
         }
         let events = host
             .journal_page(after, 16)
@@ -822,6 +994,7 @@ async fn watch(
                 };
             }
             () = tokio::time::sleep(Duration::from_millis(50)) => {},
+            changed = warnings.changed() => { if changed.is_err() { return Ok(()); } },
             preview = previews.recv() => match preview {
                 Ok(crate::controller::HostUpdate::Provisional { session, request, delta }) => send_watch(stream, &WatchFrame::Preview { session, request, delta }).await?,
                 Ok(crate::controller::HostUpdate::PreviewGap { .. }) => send_watch(stream, &WatchFrame::PreviewGap { dropped: 1 }).await?,
@@ -851,6 +1024,7 @@ fn subagent_event_session(event: &crate::controller::SubagentEvent) -> SessionId
     match event {
         crate::controller::SubagentEvent::Spawned { session, .. }
         | crate::controller::SubagentEvent::Returned { session, .. }
+        | crate::controller::SubagentEvent::Unsubmitted { session, .. }
         | crate::controller::SubagentEvent::Failed { session, .. }
         | crate::controller::SubagentEvent::Cancelled { session, .. } => *session,
     }
@@ -941,4 +1115,135 @@ pub async fn write_frame(
     }
     stream.write_u32(bytes.len() as u32).await?;
     stream.write_all(&bytes).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inference::{
+        Limits, ResponsesClient, Route, Transport,
+        auth::{Auth, SecretString},
+    };
+
+    #[tokio::test]
+    async fn previous_protocol_clients_cannot_subscribe_to_warning_frames() {
+        let root = tempfile::tempdir().unwrap();
+        let provider = ResponsesClient::new(
+            Auth::api_key(SecretString::new("fixture".into())).unwrap(),
+            Route::new(Transport::Http, "http://127.0.0.1:1/v1/responses").unwrap(),
+            Limits {
+                max_attempts: 1,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let host =
+            Arc::new(Host::open_native(root.path(), provider, Digest::of(b"fixture")).unwrap());
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let stop = CancellationToken::new();
+        let serving = tokio::spawn(handle(
+            server,
+            host,
+            Arc::new(Semaphore::new(1)),
+            Arc::new(Semaphore::new(1)),
+            stop.clone(),
+            stop.clone(),
+        ));
+        let mut request = Request::new(Command::Watch {
+            after: 0,
+            session: None,
+        });
+        request.version = PROTOCOL_VERSION - 1;
+        write_frame(&mut client, &request).await.unwrap();
+        let response: serde_json::Value = read_frame(&mut client).await.unwrap();
+        stop.cancel();
+        serving.await.unwrap().unwrap();
+        assert_eq!(
+            response["type"], "error",
+            "older clients cannot decode warning frames; reject before watch readiness"
+        );
+        assert_eq!(response["data"]["message"], UNSUPPORTED_PROTOCOL_VERSION);
+    }
+
+    fn diagnostic_host(root: &Path) -> Arc<Host> {
+        let provider = ResponsesClient::new(
+            Auth::api_key(SecretString::new("fixture".into())).unwrap(),
+            Route::new(Transport::Http, "http://127.0.0.1:1/v1/responses").unwrap(),
+            Limits {
+                max_attempts: 1,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        Arc::new(Host::open_native(root, provider, Digest::of(b"fixture")).unwrap())
+    }
+
+    async fn warning_frame(stream: &mut UnixStream, expected: &[HostWarning]) {
+        timeout(Duration::from_secs(3), async {
+            loop {
+                let frame: WatchFrame = read_frame(stream).await.unwrap();
+                if let WatchFrame::Warnings { warnings } = frame
+                    && warnings == expected
+                {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("host warnings must reach watch clients");
+    }
+
+    #[tokio::test]
+    async fn diagnostic_global_warnings_reach_session_watches_live_and_on_reconnect() {
+        let root = tempfile::tempdir().unwrap();
+        let host = diagnostic_host(root.path());
+        let db = rusqlite::Connection::open(root.path().join("v1.sqlite3")).unwrap();
+        let status: Vec<u8> = db
+            .query_row("SELECT record FROM monitor_state", [], |row| row.get(0))
+            .unwrap();
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let stop = CancellationToken::new();
+        let task_host = host.clone();
+        let task_stop = stop.clone();
+        let serving = tokio::spawn(async move {
+            watch(&mut server, task_host, 0, Some(SessionId::new()), task_stop).await
+        });
+        warning_frame(&mut client, &[]).await;
+        db.execute("DELETE FROM monitor_state", []).unwrap();
+        assert!(host.monitor_tick().await.is_err());
+        let expected = [
+            HostWarning::MonitorUnavailable,
+            HostWarning::MonitorStatusUnavailable,
+        ];
+        warning_frame(&mut client, &expected).await;
+        assert!(host.monitor_tick().await.is_err());
+        assert_eq!(host.info().await.unwrap().warnings, expected);
+        stop.cancel();
+        serving.await.unwrap().unwrap();
+
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let stop = CancellationToken::new();
+        let task_host = host.clone();
+        let task_stop = stop.clone();
+        let serving = tokio::spawn(async move {
+            watch(&mut server, task_host, 0, Some(SessionId::new()), task_stop).await
+        });
+        warning_frame(&mut client, &expected).await;
+        db.execute("INSERT INTO monitor_state VALUES(1,?1)", [status])
+            .unwrap();
+        host.monitor_tick().await.unwrap();
+        warning_frame(&mut client, &[]).await;
+        assert!(host.info().await.unwrap().warnings.is_empty());
+        stop.cancel();
+        serving.await.unwrap().unwrap();
+        drop(host);
+        assert!(
+            diagnostic_host(root.path())
+                .info()
+                .await
+                .unwrap()
+                .warnings
+                .is_empty()
+        );
+    }
 }

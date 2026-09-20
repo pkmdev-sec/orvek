@@ -49,6 +49,8 @@ pub(crate) enum Error {
 
 #[derive(Debug, Error)]
 pub(crate) enum MemoryTransferError {
+    #[error("memory archive transfer failed: {0}")]
+    Archive(#[source] MemoryError),
     #[error("remote memory is not configured")]
     RemoteNotConfigured,
     #[error("failed to read the local memory snapshot for push: {0}")]
