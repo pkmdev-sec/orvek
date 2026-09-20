@@ -1,0 +1,83 @@
+{
+  "brand": "Orvek",
+  "overview": {
+    "title": "From setup to evaluation.",
+    "subtitle": "Thirteen capability areas / Details in the Configuration guide",
+    "cards": [
+      {
+        "lines": [
+          "Configuration, authentication,",
+          "skills & MCP"
+        ]
+      },
+      {
+        "lines": [
+          "Sessions, review",
+          "& reflection"
+        ]
+      },
+      {
+        "lines": [
+          "Local & remote memory"
+        ]
+      },
+      {
+        "lines": [
+          "Context projection &",
+          "legacy compaction data"
+        ]
+      },
+      {
+        "lines": [
+          "Subagents"
+        ]
+      },
+      {
+        "lines": [
+          "Sloppiness diagnostics"
+        ]
+      },
+      {
+        "lines": [
+          "Performance notes"
+        ]
+      },
+      {
+        "lines": [
+          "Evaluations"
+        ]
+      },
+      {
+        "lines": [
+          "Portable trace bundles",
+          "& offline replay"
+        ]
+      },
+      {
+        "lines": [
+          "Optional interpreter",
+          "for composed tool calls"
+        ]
+      },
+      {
+        "lines": [
+          "Durable event intake",
+          "& schedules"
+        ]
+      },
+      {
+        "lines": [
+          "Trace monitoring",
+          "& native read recovery"
+        ]
+      },
+      {
+        "lines": [
+          "Experimental context",
+          "phase transitions"
+        ]
+      }
+    ],
+    "footnote": "Configuration guide: setup, behavior, requirements, and limitations."
+  }
+}

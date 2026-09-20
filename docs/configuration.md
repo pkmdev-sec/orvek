@@ -121,6 +121,36 @@ and errored trial counts with mean reward; unavailable subscription costs are no
 [Harbor evaluations](../evals/README.md) for setup, credential isolation, trial commands, and comparison
 requirements.
 
+### Portable trace bundles and offline replay
+
+Export local journal records and referenced artifacts with `orvek trace`. Offline replay checks
+recorded state and reports missing evidence. Hashes detect changes; they do not authenticate the
+source or prove a tool ran correctly. See [Trace bundles](trace-bundles.md).
+
+### Optional interpreter for composed tool calls
+
+Use native tools directly for normal work. Optional `interpreter_eval` cells compose admitted host
+tools and filter large results with session-local JavaScript state. Direct tools remain available after
+a cell fails. Only explicit checkpoints survive state loss;
+the host does not rerun interrupted effects. See [Interpreter](interpreter.md).
+
+### Durable event intake and schedules
+
+Registered event sources feed the host's durable submission queue. Source identity, deduplication,
+and admission stay host-owned; payload text cannot grant capabilities. See [Event intake](event-intake.md).
+
+### Trace monitoring and native read recovery
+
+The host records monitor status and evaluates narrowly defined native-read configuration changes
+against retained evidence. This is not general automatic code repair or proof of model quality.
+See [Monitoring](monitoring.md).
+
+### Experimental context phase transitions
+
+Optional `transition_context` proposals replace eligible settled ranges in the derived context view,
+not the journal. Summaries remain model claims; exact source stays available through `read_context`.
+The feature is experimental and disabled by default. See [Context views](compaction.md).
+
 ## Paths and precedence
 
 - CLI flags override environment variables and file settings.

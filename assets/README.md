@@ -20,10 +20,18 @@ and a periodic animation to keep pixel edges sharp and the loop continuous.
 
 ## Capability diagram
 
-`orvex-differentiators.gif` is the 1280 × 800 eight-area capability animation embedded before
+`orvex-differentiators.gif` is the 1280 × 800 thirteen-area capability animation embedded before
 installation instructions in the root README. It loops every eight seconds at 25 fps.
-Supporting exports and the generator stay local in the ignored `assets/marketing/`
-folder; they are not needed to build or run the application.
+`orvex-differentiators.png` is the reduced-motion fallback. Card text is in
+`capabilities.json`. Regenerate and check both assets from the repository root:
+
+```sh
+uv run scripts/generate-capability-diagram.py
+uv run scripts/generate-capability-diagram.py --check
+```
+
+The generator checks all text bounds and compares rendered bytes with the checked-in assets.
+It is development-only and does not enter application builds.
 
 `orvex-comparison.gif` is the matching animated comparison with Codex and Claude Code,
 shown in the root README's Differentiators section. Its sources and qualifications

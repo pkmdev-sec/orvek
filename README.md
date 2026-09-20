@@ -10,7 +10,10 @@ keeps resumable sessions, and uses your configured model provider for inference.
 
 ## Capabilities
 
-<a href="docs/configuration.md#capabilities"><img src="assets/orvex-differentiators.gif" alt="Orvex capabilities: configuration, authentication, skills and MCP; sessions, review and reflection; local and remote memory; context projection and legacy compaction data; subagents; sloppiness diagnostics; performance notes; evaluations." width="1280"></a>
+<a href="docs/configuration.md#capabilities"><picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="assets/orvex-differentiators.png">
+  <img src="assets/orvex-differentiators.gif" alt="Thirteen capability areas: configuration and extensions; sessions and review; memory; context projection; subagents; diagnostics; performance; evaluations; trace replay; optional interpreter; event intake; monitoring; experimental context transitions." width="1280">
+</picture></a>
 
 See the [Configuration guide](docs/configuration.md#capabilities) for behavior, setup, and limitations.
 
