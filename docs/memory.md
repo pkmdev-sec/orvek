@@ -51,7 +51,8 @@ Preserve each key's ID, version, and remote namespace:
 
 Local keys omit `namespace`. Replacement increments the version. Open `/memory` to inspect records.
 The browser uses `list` for up to 512 records without changing scan or read telemetry; `list` is not
-an agent-tool operation.
+an agent-tool operation. Host tool results must fit a 128 KiB encoded JSON bound; if a bulk
+`read` exceeds it, request fewer keys. The host returns an error rather than truncating records.
 
 Store one self-contained conclusion per record, such as a durable preference or an expensive
 operational finding. Do not store credentials, transcripts, plans, raw output, or transient state.
@@ -143,7 +144,7 @@ Discovery includes configured roots, `$CODEX_HOME/skills` (or `~/.codex/skills`)
 A skill's name must match its containing directory. The host sends bounded metadata, not skill
 bodies, with each request. `read_skill` loads a catalogued skill by name, including when a sandbox
 cannot access its host path. It returns the complete body, canonical path, and content digest;
-bodies over 128 KiB are rejected rather than truncated. Bodies are read at tool-call time, so the
+bodies or encoded tool results over 128 KiB are rejected rather than truncated. Bodies are read at tool-call time, so the
 returned digest, rather than the earlier catalog metadata, identifies their exact version. Referenced resource files are not copied
 into sandboxes by this tool.
 

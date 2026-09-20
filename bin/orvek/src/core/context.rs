@@ -19,6 +19,8 @@ use std::{
 };
 
 const MAX_SKILL_BYTES: u64 = 128 * 1024;
+// Tool JSON is encoded again as a journal string; leave room for that escaping and its envelope.
+const MAX_CONTEXT_OUTPUT_BYTES: usize = 128 * 1024;
 
 pub(crate) struct ConfiguredContext {
     config: Config,
@@ -128,7 +130,7 @@ impl ContextSession for ConfiguredContextSession {
         access: ContextAccess,
     ) -> BoxFuture<'a, io::Result<Value>> {
         Box::pin(async move {
-            match name {
+            let output = match name {
                 "memory" => self
                     .memory
                     .as_ref()
@@ -155,7 +157,13 @@ impl ContextSession for ConfiguredContextSession {
                         .map_err(io::Error::other)?
                 }
                 _ => Err(io::Error::other("context tool is not admitted")),
+            }?;
+            if serde_json::to_vec(&output)?.len() > MAX_CONTEXT_OUTPUT_BYTES {
+                return Err(io::Error::other(
+                    "context tool output exceeds 128 KiB; read fewer memory keys or use a smaller skill body",
+                ));
             }
+            Ok(output)
         })
     }
 }
@@ -243,5 +251,33 @@ mod tests {
         fs::remove_dir(&canonical).unwrap();
         fs::write(&canonical, vec![b'x'; MAX_SKILL_BYTES as usize + 1]).unwrap();
         assert!(read_skill(canonical).is_err());
+    }
+    #[tokio::test]
+    async fn context_tools_reject_output_that_would_overflow_the_host_journal() {
+        let directory = tempfile::tempdir().unwrap();
+        let skill = directory.path().join("large-skill");
+        fs::create_dir(&skill).unwrap();
+        let mut body =
+            "---\nname: large-skill\ndescription: Exercise encoded output bounds.\n---\n"
+                .to_owned();
+        body.push_str(&"\0".repeat(120 * 1024));
+        fs::write(skill.join("SKILL.md"), body).unwrap();
+        let skills = SkillsConfig::from_roots(true, vec![directory.path().to_owned()]);
+        let mut session = ConfiguredContextSession {
+            catalog: SkillCatalog::load(&skills),
+            skills,
+            memory: None,
+        };
+        let result = session
+            .execute(
+                "read_skill",
+                json!({"name":"large-skill"}),
+                ContextAccess::ReadOnly,
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "escaped tool output must not overflow the journal envelope"
+        );
     }
 }
