@@ -182,6 +182,11 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Inspect trace monitoring and versioned native read behavior.
+    Monitor {
+        #[command(subcommand)]
+        command: super::monitor::MonitorCommand,
+    },
     /// Configure schedules and forward local webhook deliveries to the host queue.
     Event {
         #[command(subcommand)]
@@ -513,6 +518,7 @@ impl Command {
     async fn run_with_config(self, config: &Config) -> Result<()> {
         match self {
             Self::Event { command } => command.run(config).await,
+            Self::Monitor { command } => command.run(config).await,
             Self::Host => crate::app::host::serve(config).await,
             Self::Trace { command } => command.reexecute(config).await,
             Self::Auth { command } => command.run(config).await.map_err(Into::into),

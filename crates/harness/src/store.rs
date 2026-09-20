@@ -26,7 +26,7 @@ use thiserror::Error;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-const SCHEMA_VERSION: i32 = 10;
+const SCHEMA_VERSION: i32 = 11;
 const MAX_EVENT_BYTES: usize = 512 * 1024;
 const MAX_JOURNAL_PAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_HOST_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
@@ -34,6 +34,7 @@ mod auxiliary;
 mod event_intake;
 mod imports;
 mod manual;
+mod monitor;
 mod submissions;
 
 #[derive(Debug, Error)]
@@ -161,10 +162,11 @@ impl Store {
                 migrate_v8_to_v9(&mut connection)?;
             }
             8 => migrate_v8_to_v9(&mut connection)?,
-            9 | SCHEMA_VERSION => {}
+            9 | 10 | SCHEMA_VERSION => {}
             unsupported => return Err(StoreError::Schema(unsupported)),
         }
         event_intake::initialize(&connection)?;
+        monitor::initialize(&connection)?;
         let artifacts = ArtifactStore::open(&root.join("artifacts"), max_artifact_bytes)?;
         Ok(Self {
             connection,

@@ -47,6 +47,7 @@ mod auxiliary;
 mod event_intake;
 mod imports;
 mod manual;
+mod monitor;
 pub mod notification;
 mod review;
 pub mod subagents;
@@ -383,6 +384,8 @@ impl Drop for TaskDeadline {
 
 /// Host-owned orchestration. Views receive projections and never own this future.
 pub struct Host {
+    monitor: Mutex<()>,
+    monitor_build: Option<crate::Digest>,
     event_intake: Mutex<()>,
     experimental_context_transitions: bool,
     completion_hook: Option<String>,
@@ -477,6 +480,11 @@ impl Host {
             store.pin_session_admission(id, profile)?;
         }
         Ok(Self {
+            monitor: Mutex::new(()),
+            monitor_build: std::env::current_exe()
+                .ok()
+                .and_then(|p| fs::read(p).ok())
+                .map(|bytes| crate::Digest::of(&bytes)),
             event_intake: Mutex::new(()),
             experimental_context_transitions: false,
             completion_hook: None,
@@ -679,15 +687,7 @@ impl Host {
         &self,
         request: SessionAdmissionRequest,
     ) -> Result<SessionState, HostError> {
-        let request = self.canonicalize_admission_request(request)?;
-        let mut store = self.store.lock().await;
-        let profile = resolve_admission(
-            self.runtime(),
-            self.config_identity,
-            request,
-            BaselineReason::UnregisteredTarget,
-        )?;
-        Ok(store.create_bound_session(SessionId::new(), profile, None)?)
+        self.create_session_with_id(SessionId::new(), request).await
     }
 
     pub async fn session(&self, id: SessionId) -> Result<SessionState, HostError> {
@@ -1004,13 +1004,47 @@ impl Host {
     ) -> Result<SessionState, HostError> {
         let request = self.canonicalize_admission_request(request)?;
         let mut store = self.store.lock().await;
+        match store.load_session(id) {
+            Ok(existing) => {
+                self.validate_session_admission(&existing)?;
+                if existing
+                    .admission()
+                    .is_some_and(|profile| profile.request() == &request)
+                    && existing.parent.is_none()
+                    && existing.imported.is_none()
+                    && !existing.branch.fresh_context
+                {
+                    return Ok(existing);
+                }
+                return Err(HostError::Invalid(
+                    "session ID reused with different configuration or import",
+                ));
+            }
+            Err(StoreError::MissingSession(_)) => {}
+            Err(error) => return Err(error.into()),
+        }
         let profile = resolve_admission(
             self.runtime(),
             self.config_identity,
             request,
             BaselineReason::UnregisteredTarget,
         )?;
-        Ok(store.create_bound_session(id, profile, None)?)
+        let profile = if self.native_tools.is_some() {
+            match self.pin_read_behavior(&store) {
+                Ok(behavior) => profile.with_native_read(behavior),
+                Err(error) => {
+                    eprintln!("monitor behavior unavailable; using compiled baseline: {error}");
+                    profile
+                }
+            }
+        } else {
+            profile
+        };
+        let session = store.create_bound_session(id, profile, None)?;
+        if let Err(error) = store.monitor_set_origin(session.id, crate::monitor::Origin::User) {
+            eprintln!("monitor origin unavailable: {error}");
+        }
+        Ok(session)
     }
 
     pub async fn register_program(
@@ -2779,7 +2813,9 @@ impl Host {
             let environment = store
                 .artifacts()
                 .put(&if self.native_tools.is_some() {
-                    serde_json::to_vec(&native_environment())?
+                    let mut environment = native_environment();
+                    environment["host_build"] = serde_json::to_value(self.monitor_build)?;
+                    serde_json::to_vec(&environment)?
                 } else {
                     serde_json::to_vec(
                         &self
@@ -2829,7 +2865,17 @@ impl Host {
                     } else {
                         60_000
                     }),
-                    max_output_bytes: 32 * 1024,
+                    max_output_bytes: if proposal.name == "read_file" {
+                        self.store
+                            .lock()
+                            .await
+                            .load_session(session)?
+                            .admission()
+                            .and_then(|profile| profile.native_read())
+                            .map_or(32 * 1024, |config| config.native_read_output_bytes as usize)
+                    } else {
+                        32 * 1024
+                    },
                 };
                 let run = native_tools
                     .execute_recorded(&proposal.name, arguments, context, cancellation.clone())

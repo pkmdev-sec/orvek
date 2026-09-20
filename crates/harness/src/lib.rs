@@ -21,6 +21,7 @@ pub mod input;
 #[cfg(unix)]
 pub mod ipc;
 pub mod manual;
+pub mod monitor;
 pub mod review;
 pub mod runtime;
 pub mod services;

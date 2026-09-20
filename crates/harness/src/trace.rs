@@ -927,6 +927,7 @@ fn references(value: &Value, depth: usize, out: &mut VecDeque<(Digest, usize, bo
                                 | "request_digest"
                                 | "legacy_config_digest"
                                 | "host_config"
+                                | "host_build"
                                 | "fingerprint"
                                 | "request_fingerprint"
                                 | "harness_revision"

@@ -12,6 +12,7 @@ mod headless;
 pub(crate) mod herdr;
 pub(crate) mod host;
 pub(crate) mod installation;
+mod monitor;
 pub(crate) mod secret;
 mod shutdown;
 pub(crate) mod submission;

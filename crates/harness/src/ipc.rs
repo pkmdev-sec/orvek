@@ -60,6 +60,21 @@ impl Request {
     deny_unknown_fields
 )]
 pub enum Command {
+    MonitorReport {
+        offset: usize,
+        limit: usize,
+    },
+    MonitorSampling {
+        every: u32,
+    },
+    InstallReadBehavior {
+        expected: Digest,
+        bytes: u32,
+        note: String,
+    },
+    RollbackReadBehavior {
+        expected: Digest,
+    },
     RegisterEventSource {
         config: crate::event_intake::SourceConfig,
     },
@@ -359,6 +374,8 @@ impl From<(SessionState, u64, crate::session::ProviderCostSummary)> for SessionV
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum Response {
+    Monitor(Box<crate::monitor::MonitorReport>),
+    Behavior(Digest),
     EventSource(crate::event_intake::SourceRecord),
     Event(crate::event_intake::EventRecord),
     ReviewFeedback(Digest),
@@ -430,6 +447,14 @@ pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<(
     let runs = Arc::new(Semaphore::new(4));
     let watchers = Arc::new(Semaphore::new(8));
     let mut handlers = JoinSet::new();
+    let monitor_host = host.clone();
+    let monitor_shutdown = shutdown.child_token();
+    handlers.spawn(async move {
+        tokio::select! {
+            () = monitor_shutdown.cancelled() => {},
+            () = monitor_host.run_monitor() => {},
+        }
+    });
     let intake_host = host.clone();
     let intake_shutdown = shutdown.child_token();
     handlers.spawn(async move {
@@ -533,6 +558,21 @@ async fn execute(
     shutdown: CancellationToken,
 ) -> Result<Response, crate::controller::HostError> {
     Ok(match request.command {
+        Command::MonitorReport { offset, limit } => {
+            Response::Monitor(Box::new(host.monitor_report(offset, limit).await?))
+        }
+        Command::MonitorSampling { every } => {
+            host.set_monitor_sampling(every).await?;
+            Response::Monitor(Box::new(host.monitor_report(0, 100).await?))
+        }
+        Command::InstallReadBehavior {
+            expected,
+            bytes,
+            note,
+        } => Response::Behavior(host.install_read_behavior(expected, bytes, note).await?),
+        Command::RollbackReadBehavior { expected } => {
+            Response::Behavior(host.rollback_read_behavior(expected).await?)
+        }
         Command::RegisterEventSource { config } => {
             Response::EventSource(host.register_event_source(config).await?)
         }

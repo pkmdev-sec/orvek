@@ -149,6 +149,7 @@ pub(crate) struct ValidatedHarnessRevision {
     envelope_digest: Digest,
     policy_id: String,
     behavior_instructions: String,
+    native_read: Option<crate::monitor::PinnedBehavior>,
 }
 
 impl ValidatedHarnessRevision {
@@ -164,6 +165,17 @@ impl ValidatedHarnessRevision {
             return Err(ManifestError::UnsupportedPolicy);
         }
         validate_instructions(&revision.behavior.instructions)?;
+        if let Some(config) = revision.behavior.native_read {
+            if !(4096..=crate::monitor::DEFAULT_READ_OUTPUT_BYTES)
+                .contains(&config.native_read_output_bytes)
+            {
+                return Err(ManifestError::InvalidInstructions);
+            }
+            let value: serde_json::Value = serde_json::from_slice(manifest)?;
+            if Digest::of_value(&value["behavior"])? != revision.behavior_digest {
+                return Err(ManifestError::InvalidInstructions);
+            }
+        }
         Ok(Self {
             canonical: manifest.to_vec(),
             digest: Digest::of(manifest),
@@ -171,6 +183,7 @@ impl ValidatedHarnessRevision {
             envelope_digest: revision.envelope_digest,
             policy_id: revision.policy_id,
             behavior_instructions: revision.behavior.instructions,
+            native_read: revision.behavior.native_read,
         })
     }
 
@@ -187,6 +200,23 @@ impl ValidatedHarnessRevision {
         });
         let bytes = serde_json::to_vec(&manifest).expect("JSON values serialize");
         Self::from_manifest_json(&bytes).expect("compiled admission manifest is valid")
+    }
+
+    pub(crate) fn with_native_read(config: crate::monitor::PinnedBehavior) -> Self {
+        let baseline = Self::compiled_baseline();
+        let mut value: serde_json::Value =
+            serde_json::from_slice(baseline.canonical_bytes()).expect("compiled JSON");
+        value["parent"] = serde_json::to_value(baseline.digest()).expect("digest");
+        value["behavior"]["native_read"] = serde_json::to_value(config).expect("config");
+        value["behavior_digest"] =
+            serde_json::to_value(Digest::of_value(&value["behavior"]).expect("behavior"))
+                .expect("digest");
+        Self::from_manifest_json(&serde_json::to_vec(&value).expect("manifest"))
+            .expect("validated read config")
+    }
+
+    pub(crate) fn native_read(&self) -> Option<crate::monitor::PinnedBehavior> {
+        self.native_read
     }
 
     pub(crate) fn digest(&self) -> Digest {
@@ -229,6 +259,7 @@ struct RevisionManifest {
 #[derive(Deserialize)]
 struct BehaviorManifest {
     instructions: String,
+    native_read: Option<crate::monitor::PinnedBehavior>,
 }
 
 #[derive(Debug, Error)]

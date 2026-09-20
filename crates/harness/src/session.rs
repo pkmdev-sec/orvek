@@ -157,6 +157,26 @@ impl SessionAdmissionProfile {
         })
     }
 
+    pub(crate) fn with_native_read(mut self, config: crate::monitor::PinnedBehavior) -> Self {
+        let revision = ValidatedHarnessRevision::with_native_read(config);
+        self.binding = HarnessBinding::baseline(
+            self.binding.target(),
+            revision.digest(),
+            revision.behavior_digest(),
+            revision.envelope_digest(),
+            self.binding.policy(),
+        );
+        self.revision_manifest = revision.canonical_bytes().to_vec();
+        self.provenance = HarnessProvenance::Registered;
+        self
+    }
+
+    pub fn native_read(&self) -> Option<crate::monitor::PinnedBehavior> {
+        ValidatedHarnessRevision::from_manifest_json(&self.revision_manifest)
+            .ok()?
+            .native_read()
+    }
+
     pub const fn version(&self) -> u32 {
         self.version
     }
