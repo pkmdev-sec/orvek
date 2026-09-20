@@ -296,6 +296,14 @@ async fn request_wiring(auxiliary: bool, sandbox: bool) {
         tools.iter().any(|tool| tool["name"] == "memory"),
         "configured memory never reached provider"
     );
+    let memory_tool = tools.iter().find(|tool| tool["name"] == "memory").unwrap();
+    assert!(
+        memory_tool["description"]
+            .as_str()
+            .unwrap()
+            .contains("admitted host repository, not isolated candidate bytes"),
+        "source freshness must disclose its workspace boundary to the provider"
+    );
     assert!(tools.iter().any(|tool| tool["name"] == "read_skill"));
     let instructions = requests[0]["instructions"].as_str().unwrap();
     assert!(instructions.contains("check-note"));
