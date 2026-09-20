@@ -731,8 +731,9 @@ pub enum Delta {
     ItemDone { item: OutputItem },
 }
 
-#[derive(Default, Eq, PartialEq)]
-pub(crate) enum ResponseDialect {
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseDialect {
     #[default]
     OpenAi,
     ChatGpt,

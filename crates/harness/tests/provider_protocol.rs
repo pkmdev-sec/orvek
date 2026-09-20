@@ -1,11 +1,11 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::{SinkExt, StreamExt};
 use orvek_harness::{
-    Digest,
+    Digest, Store,
     inference::{
-        ArgumentValidity, AttemptStatus, Delta, FailureKind, InferenceRequest, Limits, Model,
-        ModelSettings, OutputItem, PromptInput, ReasoningMode, ResponseStatus, ResponsesClient,
-        Route, Thinking, Transport, UsdCost,
+        ArgumentValidity, AttemptStatus, CallOutcome, Delta, FailureKind, InferenceRequest, Limits,
+        Model, ModelSettings, OutputItem, PromptInput, ReasoningMode, ResponseStatus,
+        ResponsesClient, Route, Thinking, Transport, UsdCost,
         auth::{
             Auth, AuthError, AuthMode, ChatGptLogin, SecretString, chatgpt_auth_status,
             logout_chatgpt,
@@ -230,6 +230,49 @@ fn tool(arguments: &str) -> Value {
 }
 fn tool_schema() -> Value {
     json!({"type":"function","name":"read_file","description":"Read authorized source","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false},"strict":true})
+}
+
+// Persist through the same artifact store as parent reports and child response spans.
+fn persisted_outcome(outcome: &CallOutcome) -> Value {
+    let root = tempfile::tempdir().unwrap();
+    let store = Store::open(root.path()).unwrap();
+    let artifacts = store.public_artifacts();
+    let receipt = artifacts
+        .write(&serde_json::to_vec(outcome).unwrap())
+        .unwrap();
+    let bytes = artifacts.resolve(receipt).unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    for secret in [
+        "fixture-api-token",
+        "fixture-refresh-token",
+        "fixture-rotated",
+        "fixture-key",
+        "fixture-account",
+        "authorization",
+    ] {
+        assert!(
+            !text.contains(secret),
+            "provenance must not retain auth data"
+        );
+    }
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+fn assert_prepared_body(
+    outcome: &CallOutcome,
+    body: &[u8],
+    transport: &str,
+    dialect: &str,
+    route: &str,
+) {
+    let persisted = persisted_outcome(outcome);
+    let request = &persisted["request"];
+    assert_eq!(request["status"], "prepared");
+    assert_eq!(request["transport"], transport);
+    assert_eq!(request["dialect"], dialect);
+    assert_eq!(request["route"], route);
+    assert_eq!(request["body"].as_str().unwrap().as_bytes(), body);
+    assert!(outcome.attempts.iter().any(|attempt| attempt.dispatched));
 }
 
 #[tokio::test]
@@ -612,7 +655,12 @@ async fn rate_limit_retries_remain_visible_after_success() {
     assert_eq!(outcome.attempts.len(), 3);
     assert!(!outcome.billing_uncertain());
     assert!(!outcome.rate_limited());
-    assert_eq!(served.await.unwrap().len(), 3);
+    let captures = served.await.unwrap();
+    assert_eq!(captures.len(), 3);
+    for (index, capture) in captures.iter().enumerate() {
+        assert_prepared_body(&outcome, &capture.body, "http", "open_ai", "default");
+        assert_eq!(outcome.attempts[index].number, index as u32 + 1);
+    }
 }
 
 #[tokio::test]
@@ -665,7 +713,11 @@ async fn exhausted_retries_and_permanent_rejections_are_bounded_and_redacted() {
         assert_eq!(outcome.attempts.len(), attempts);
         assert!(outcome.failure.is_some());
         assert!(!format!("{outcome:?}").contains("provider-controlled secret text"));
-        assert_eq!(served.await.unwrap().len(), attempts);
+        let captures = served.await.unwrap();
+        assert_eq!(captures.len(), attempts);
+        for capture in captures {
+            assert_prepared_body(&outcome, &capture.body, "http", "open_ai", "default");
+        }
     }
 }
 
@@ -773,6 +825,10 @@ async fn cancellation_before_dispatch_has_no_attempts_or_spend() {
     );
     assert!(outcome.attempts.is_empty());
     assert!(!outcome.billing_uncertain());
+    assert_eq!(
+        persisted_outcome(&outcome)["request"],
+        json!({"status":"unavailable"})
+    );
 }
 
 #[tokio::test]
@@ -857,7 +913,7 @@ async fn websocket_transport_uses_auth_and_normalizes_the_actual_event_frames() 
         let Message::Text(request) = socket.next().await.unwrap().unwrap() else {
             panic!("request must be text");
         };
-        let request: Value = serde_json::from_str(&request).unwrap();
+        let request = request.as_bytes().to_vec();
         socket.send(Message::Ping(vec![1, 2].into())).await.unwrap();
         for event in [
             created(),
@@ -882,8 +938,13 @@ async fn websocket_transport_uses_auth_and_normalizes_the_actual_event_frames() 
         .respond(&request(), &CancellationToken::new(), |_| {})
         .await;
     assert!(outcome.failure.is_none());
-    assert_eq!(outcome.response.unwrap().status, ResponseStatus::Completed);
-    let wire = served.await.unwrap();
+    assert_eq!(
+        outcome.response.as_ref().unwrap().status,
+        ResponseStatus::Completed
+    );
+    let body = served.await.unwrap();
+    assert_prepared_body(&outcome, &body, "web_socket", "open_ai", "default");
+    let wire: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(wire["type"], "response.create");
     assert!(wire.get("stream").is_none());
     assert_eq!(wire["model"], "gpt-5.6-sol");
@@ -1094,6 +1155,17 @@ async fn chatgpt_http_uses_effective_auth_to_omit_unsupported_parameters() {
             .await;
         assert!(outcome.failure.is_none());
         let captures = served.await.unwrap();
+        assert_prepared_body(
+            &outcome,
+            &captures[0].body,
+            "http",
+            if chatgpt { "chat_gpt" } else { "open_ai" },
+            if default_chatgpt == chatgpt {
+                "default"
+            } else {
+                "model_override"
+            },
+        );
         let wire: Value = serde_json::from_slice(&captures[0].body).unwrap();
         if chatgpt {
             assert!(
@@ -1146,22 +1218,24 @@ async fn chatgpt_websocket_omits_unsupported_parameters() {
             ))
             .await
             .unwrap();
-        serde_json::from_str::<Value>(&request).unwrap()
+        request.as_bytes().to_vec()
     });
-    let provider = ResponsesClient::new(
+    // The effective model route must override both the default auth and transport.
+    let provider = client("http://127.0.0.1:1", limits()).with_model_route(
+        Model::Sol,
         auth,
         Route::new(Transport::WebSocket, &endpoint).unwrap(),
-        limits(),
-    )
-    .unwrap();
+    );
     let outcome = provider
         .respond(&request(), &CancellationToken::new(), |_| {})
         .await;
     assert!(outcome.failure.is_none());
     assert!(
-        matches!(&outcome.response.unwrap().output[0], OutputItem::Message { text, .. } if text == "ok")
+        matches!(&outcome.response.as_ref().unwrap().output[0], OutputItem::Message { text, .. } if text == "ok")
     );
-    let wire = served.await.unwrap();
+    let body = served.await.unwrap();
+    assert_prepared_body(&outcome, &body, "web_socket", "chat_gpt", "model_override");
+    let wire: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(wire["type"], "response.create");
     assert!(wire.get("stream").is_none());
     assert!(wire.get("max_output_tokens").is_none());
@@ -1317,6 +1391,20 @@ async fn unauthorized_chatgpt_refresh_preserves_shared_file_fields_and_retries_o
     assert!(outcome.failure.is_none());
     assert_eq!(outcome.attempts.len(), 2);
     let captures = served.await.unwrap();
+    for index in [0, 2] {
+        assert_prepared_body(
+            &outcome,
+            &captures[index].body,
+            "http",
+            "chat_gpt",
+            "default",
+        );
+    }
+    assert!(
+        !persisted_outcome(&outcome)
+            .to_string()
+            .contains(&new_access)
+    );
     assert_eq!(
         captures.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
         ["/responses", "/oauth/token", "/responses"]
@@ -1421,7 +1509,14 @@ async fn logout_and_account_switch_are_observed_before_the_next_request() {
         let outcome = client
             .respond(&request(), &CancellationToken::new(), |_| {})
             .await;
-        assert_eq!(outcome.failure.unwrap().kind, FailureKind::Authentication);
+        assert_eq!(
+            outcome.failure.as_ref().unwrap().kind,
+            FailureKind::Authentication
+        );
+        let persisted = persisted_outcome(&outcome);
+        assert_eq!(persisted["request"]["status"], "prepared");
+        assert_eq!(persisted["request"]["dialect"], "chat_gpt");
+        assert!(persisted["request"]["body"].is_string());
         assert!(outcome.attempts.is_empty());
     }
 }
@@ -1488,7 +1583,9 @@ async fn websocket_disconnect_and_cancellation_keep_usage_unknown() {
         let served = tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
             let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
-            socket.next().await.unwrap().unwrap();
+            let Message::Text(body) = socket.next().await.unwrap().unwrap() else {
+                panic!("request must be text");
+            };
             for event in [created(), text_delta("partial ws")] {
                 socket
                     .send(Message::Text(event.to_string().into()))
@@ -1496,6 +1593,7 @@ async fn websocket_disconnect_and_cancellation_keep_usage_unknown() {
                     .unwrap();
             }
             socket.close(None).await.unwrap();
+            body.as_bytes().to_vec()
         });
         let auth = Auth::api_key(SecretString::new("fixture-key".into())).unwrap();
         let client = ResponsesClient::new(
@@ -1517,14 +1615,15 @@ async fn websocket_disconnect_and_cancellation_keep_usage_unknown() {
         assert!(outcome.billing_uncertain());
         assert_eq!(outcome.attempts.len(), 1);
         assert_eq!(
-            outcome.failure.unwrap().kind,
+            outcome.failure.as_ref().unwrap().kind,
             if should_cancel {
                 FailureKind::Cancelled
             } else {
                 FailureKind::Interrupted
             }
         );
-        served.await.unwrap();
+        let body = served.await.unwrap();
+        assert_prepared_body(&outcome, &body, "web_socket", "open_ai", "default");
     }
 }
 
@@ -1638,5 +1737,42 @@ fn route_overrides_keep_http_and_websocket_independent_and_preserve_auth_default
         .unwrap()
         .endpoint(),
         "wss://custom.invalid/responses"
+    );
+}
+
+#[tokio::test]
+async fn websocket_handshake_rejection_keeps_prepared_body_without_dispatch() {
+    let (base, served) = server(vec![Reply::reject(403)]).await;
+    let endpoint = base.replacen("http://", "ws://", 1);
+    let auth = Auth::api_key(SecretString::new("fixture-api-token".into())).unwrap();
+    let outcome = ResponsesClient::new(
+        auth,
+        Route::new(Transport::WebSocket, &format!("{endpoint}/responses")).unwrap(),
+        limits(),
+    )
+    .unwrap()
+    .respond(&request(), &CancellationToken::new(), |_| {})
+    .await;
+    assert_eq!(outcome.failure.as_ref().unwrap().http_status, Some(403));
+    assert_eq!(outcome.attempts.len(), 1);
+    assert!(!outcome.attempts[0].dispatched);
+    let capture = served.await.unwrap();
+    assert!(
+        capture[0].body.is_empty(),
+        "only a handshake reached the fixture"
+    );
+    let persisted = persisted_outcome(&outcome);
+    assert_eq!(persisted["request"]["status"], "prepared");
+    assert_eq!(persisted["request"]["transport"], "web_socket");
+}
+
+#[test]
+fn legacy_outcome_has_explicitly_unavailable_request_provenance() {
+    let mut legacy = serde_json::to_value(CallOutcome::default()).unwrap();
+    legacy.as_object_mut().unwrap().remove("request");
+    let outcome: CallOutcome = serde_json::from_value(legacy).unwrap();
+    assert_eq!(
+        persisted_outcome(&outcome)["request"],
+        json!({"status":"unavailable"})
     );
 }

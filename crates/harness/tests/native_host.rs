@@ -471,15 +471,18 @@ async fn native_task_retries_a_pre_generation_authentication_rejection() {
         Some(Outcome::FinishedUnverified)
     );
     assert!(replay.tasks[&run.task.id].certificates.is_empty());
-    assert_eq!(
-        bundle
-            .prefixes()
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap()
-            .len(),
-        2
-    );
+    let prefixes = bundle
+        .prefixes()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(prefixes.len(), 2);
+    for prefix in prefixes {
+        assert_eq!(prefix.decision["payload_kind"], "logical_http_template");
+        assert_eq!(prefix.decision["wire"]["status"], "unavailable");
+        assert!(prefix.decision["logical_request_payload"]["input"].is_array());
+        assert!(prefix.decision.get("request_payload").is_none());
+    }
     assert_eq!(
         replay
             .spans
@@ -488,7 +491,54 @@ async fn native_task_retries_a_pre_generation_authentication_rejection() {
             .count(),
         2
     );
-    assert_eq!(server.await.unwrap().len(), 2);
+    let captures = server.await.unwrap();
+    assert_eq!(captures.len(), 2);
+    let dispatches = replay
+        .spans
+        .iter()
+        .filter(|span| span["span"]["kind"] == "model_dispatch")
+        .collect::<Vec<_>>();
+    assert_ne!(dispatches[0]["span"]["call"], dispatches[1]["span"]["call"]);
+    // A prefix ending after dispatch intent models a crash before outcome persistence.
+    let interrupted = orvek_harness::trace::TraceBundle::export(
+        host.state_directory(),
+        Some(dispatches[0]["sequence"].as_u64().unwrap()),
+        Default::default(),
+        &Default::default(),
+        None,
+    )
+    .unwrap();
+    let interrupted = interrupted.replay().unwrap();
+    assert!(
+        !interrupted
+            .spans
+            .iter()
+            .any(|span| span["span"]["kind"] == "model_response")
+    );
+    let intent = interrupted
+        .spans
+        .iter()
+        .find(|span| span["span"]["kind"] == "model_dispatch")
+        .unwrap();
+    assert_eq!(
+        intent["span"]["wire"],
+        json!({"status":"unavailable","reason":"outcome_not_recorded"})
+    );
+    for (dispatch, captured) in dispatches.iter().zip(captures) {
+        assert_eq!(dispatch["span"]["payload_kind"], "logical_http_template");
+        assert_eq!(dispatch["span"]["wire"]["status"], "unavailable");
+        let call: Uuid = serde_json::from_value(dispatch["span"]["call"].clone()).unwrap();
+        let receipt = &run.task.model_receipts[&call];
+        let report: Value =
+            serde_json::from_slice(&artifact_bytes(&host, receipt.report).await).unwrap();
+        let prepared = &report["outcome"]["request"];
+        assert_eq!(prepared["transport"], "http");
+        assert_eq!(prepared["dialect"], "open_ai");
+        assert_eq!(
+            serde_json::from_str::<Value>(prepared["body"].as_str().unwrap()).unwrap(),
+            captured
+        );
+    }
 }
 
 #[tokio::test]

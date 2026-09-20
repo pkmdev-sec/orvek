@@ -13,10 +13,10 @@ mod transport;
 
 pub use protocol::{
     ArgumentValidity, Delta, InferenceRequest, InternalContextMedia, Model, ModelSettings,
-    OutputItem, PromptCacheIdentity, PromptInput, ProviderResponse, ReasoningMode, ResponseStatus,
-    Thinking, ToolProposal, Usage, UsdCost,
+    OutputItem, PromptCacheIdentity, PromptInput, ProviderResponse, ReasoningMode, ResponseDialect,
+    ResponseStatus, Thinking, ToolProposal, Usage, UsdCost,
 };
 pub use transport::{
-    AttemptRecord, AttemptStatus, CallOutcome, Failure, FailureKind, Limits, ResponsesClient,
-    Route, Transport,
+    AttemptRecord, AttemptStatus, CallOutcome, Failure, FailureKind, Limits, RequestProvenance,
+    RequestRoute, ResponsesClient, Route, Transport,
 };

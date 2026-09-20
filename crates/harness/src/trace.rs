@@ -713,7 +713,11 @@ impl TraceBundle {
             .and_then(Value::as_str)
             .and_then(|s| s.parse::<Digest>().ok())
         {
-            decision["request_payload"] = match self.artifacts.get(&payload) {
+            // Historical dispatches also used the logical HTTP template, never
+            // the effective auth/route body. Do not relabel them as wire captures.
+            decision["payload_kind"] = json!("logical_http_template");
+            decision["wire"] = json!({"status":"unavailable","reason":"outcome_not_recorded"});
+            decision["logical_request_payload"] = match self.artifacts.get(&payload) {
                 Some(Payload::Present(encoded)) => decode_json(encoded)?,
                 _ => Value::Null,
             };
@@ -778,7 +782,7 @@ impl TraceBundle {
         let report = self.replay()?;
         let tasks=report.tasks.values().map(|task|json!({"task":task.id,"intent":task.request,"contract":task.contract,"candidate":task.candidate,"delivery":task.delivery,"patch":task.delivery.as_ref().filter(|delivery|delivery.kind == crate::contract::DeliveryKind::Patch).map(|delivery|json!({"digest":delivery.artifact,"payload":self.artifacts.get(&delivery.artifact)})),"verification":task.evidence,"certificates":task.certificates,"outcome":task.outcome})).collect::<Vec<_>>();
         Ok(
-            json!({"version":VERSION,"range":{"after":self.after,"through":self.through},"exporter_revision":self.exporter_revision,"exact":report.exact,"tasks":tasks,"cost":report.cost,"provenance":report.sessions.values().map(|s|json!({"session":s.id,"settings":s.model(),"admission":s.admission(),"context":s.context_view})).collect::<Vec<_>>(),"spans":report.spans,"unresolved":report.unresolved,"limitations":["Receipt replay is not fresh verification.","Native finished_unverified is not a completion certificate.","Provider-hidden reasoning and unrecorded external state are unavailable.","Historical missing call/child links are not inferred.","Hashes detect corruption, not a malicious wholesale rewrite."]}),
+            json!({"version":VERSION,"range":{"after":self.after,"through":self.through},"exporter_revision":self.exporter_revision,"exact":report.exact,"tasks":tasks,"cost":report.cost,"provenance":report.sessions.values().map(|s|json!({"session":s.id,"settings":s.model(),"admission":s.admission(),"context":s.context_view})).collect::<Vec<_>>(),"spans":report.spans,"unresolved":report.unresolved,"limitations":["Receipt replay is not fresh verification.","Native finished_unverified is not a completion certificate.","Provider-hidden reasoning and unrecorded external state are unavailable.","Historical missing call/child links are not inferred.","Dispatch payloads are logical HTTP templates, not effective provider bodies. Effective body/transport/dialect are available only in captured outcomes; missing outcomes (including crashes) leave wire provenance unavailable.","Prepared bodies and dispatched attempts do not prove remote delivery. Headers, credentials, endpoints and network framing are not captured.","Hashes detect corruption, not a malicious wholesale rewrite."]}),
         )
     }
 }
@@ -964,8 +968,8 @@ fn references(value: &Value, depth: usize, out: &mut VecDeque<(Digest, usize, bo
     walk(value, "", depth, out);
 }
 
-/// A dispatch receipt is durable before the provider sees the request. Child proposals
-/// retain their own call IDs without gaining authority in the parent's pending-call map.
+/// Record a causal span. Child proposals retain their own call IDs without gaining
+/// authority in the parent's pending-call map.
 pub(crate) fn record_span(
     store: &mut Store,
     session: SessionId,
@@ -982,6 +986,7 @@ pub(crate) fn record_span(
     )?;
     Ok(record)
 }
+/// Durable logical intent before dispatch. Effective bodies belong to provider outcomes.
 pub(crate) fn record_dispatch(
     store: &mut Store,
     session: SessionId,
@@ -1006,7 +1011,7 @@ pub(crate) fn record_dispatch(
         store,
         session,
         request,
-        json!({"version":VERSION,"kind":"model_dispatch","source_revision":env!("ORVEK_TRACE_SOURCE_REVISION"),"source_dirty":env!("ORVEK_TRACE_SOURCE_DIRTY"),"session":session,"request":request,"task":task,"child":child,"call":call,"model":inference.settings(),"input":input,"tools":tools,"instructions":instructions,"payload":payload,"cache":inference.cache_identity()}),
+        json!({"version":VERSION,"kind":"model_dispatch","source_revision":env!("ORVEK_TRACE_SOURCE_REVISION"),"source_dirty":env!("ORVEK_TRACE_SOURCE_DIRTY"),"session":session,"request":request,"task":task,"child":child,"call":call,"model":inference.settings(),"input":input,"tools":tools,"instructions":instructions,"payload":payload,"payload_kind":"logical_http_template","wire":{"status":"unavailable","reason":"outcome_not_recorded"},"cache":inference.cache_identity()}),
     )?;
     Ok(())
 }

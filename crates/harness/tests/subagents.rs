@@ -19,7 +19,10 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-struct Reply(Vec<u8>);
+struct Reply {
+    status: u16,
+    body: Vec<u8>,
+}
 impl Reply {
     fn sse(events: Vec<Value>) -> Self {
         let body = events
@@ -32,7 +35,7 @@ impl Reply {
             })
             .collect::<String>()
             .into_bytes();
-        Self(body)
+        Self { status: 200, body }
     }
 }
 
@@ -54,20 +57,30 @@ async fn read_request(socket: &mut TcpStream) -> Vec<u8> {
     body
 }
 
-async fn server(replies: Vec<Reply>) -> String {
+async fn server(replies: Vec<Reply>) -> (String, tokio::task::JoinHandle<Vec<Vec<u8>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move {
+    let served = tokio::spawn(async move {
+        let mut captures = Vec::new();
         for reply in replies {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let _ = read_request(&mut socket).await;
-            let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nX-LiteLLM-Response-Cost: 0.0001\r\nConnection: close\r\n\r\n";
+            captures.push(read_request(&mut socket).await);
+            let cost = if reply.status == 200 {
+                "X-LiteLLM-Response-Cost: 0.0001\r\n"
+            } else {
+                ""
+            };
+            let head = format!(
+                "HTTP/1.1 {} Fixture\r\nContent-Type: text/event-stream; charset=utf-8\r\n{cost}Connection: close\r\n\r\n",
+                reply.status
+            );
             socket.write_all(head.as_bytes()).await.unwrap();
-            socket.write_all(&reply.0).await.unwrap();
+            socket.write_all(&reply.body).await.unwrap();
             socket.shutdown().await.unwrap();
         }
+        captures
     });
-    base
+    (base, served)
 }
 
 /// File-only backend using the real workspace tools without contacting Docker.
@@ -144,7 +157,10 @@ fn client(base: &str) -> ResponsesClient {
         )
         .unwrap(),
         Route::new(Transport::Http, &format!("{base}/responses")).unwrap(),
-        Limits::default(),
+        Limits {
+            max_attempts: 1,
+            ..Limits::default()
+        },
     )
     .unwrap()
 }
@@ -210,7 +226,11 @@ async fn child_reads_the_workspace_records_a_job_and_submits_a_valid_result() {
         .start_request(session, request, "probe".into(), Default::default(), policy)
         .unwrap();
     // Turn 1: the child reads the workspace; turn 2: it submits its result.
-    let base = server(vec![
+    let (base, served) = server(vec![
+        Reply {
+            status: 429,
+            body: Vec::new(),
+        },
         Reply::sse(completed(function_call_item(
             "call-1",
             "read_file",
@@ -327,16 +347,46 @@ async fn child_reads_the_workspace_records_a_job_and_submits_a_valid_result() {
         .iter()
         .filter(|span| span["span"]["kind"] == "model_dispatch")
         .collect::<Vec<_>>();
-    assert_eq!(dispatches.len(), 2);
+    assert_eq!(dispatches.len(), 3);
     assert!(dispatches.iter().all(|span| span["span"]["child"] == agent));
+    let captures = served.await.unwrap();
+    assert_eq!(captures.len(), 3);
+    assert_eq!(
+        captures[0], captures[1],
+        "a fresh call retries the same body"
+    );
+    let mut calls = std::collections::BTreeSet::new();
+    for (dispatch, captured) in dispatches.iter().zip(captures) {
+        let dispatch = &dispatch["span"];
+        assert!(calls.insert(dispatch["call"].as_str().unwrap()));
+        assert_eq!(dispatch["payload_kind"], "logical_http_template");
+        let response = replay
+            .spans
+            .iter()
+            .find(|span| {
+                span["span"]["kind"] == "model_response" && span["span"]["call"] == dispatch["call"]
+            })
+            .unwrap();
+        let response = &response["span"];
+        for field in ["session", "request", "task", "child", "call"] {
+            assert_eq!(response[field], dispatch[field]);
+        }
+        let prepared = &response["outcome"]["request"];
+        assert_eq!(prepared["status"], "prepared");
+        assert_eq!(prepared["transport"], "http");
+        assert_eq!(prepared["dialect"], "open_ai");
+        assert_eq!(prepared["body"].as_str().unwrap().as_bytes(), captured);
+        assert!(!response.to_string().contains("test-key"));
+    }
+
     let tool = replay
         .spans
         .iter()
         .find(|span| span["span"]["kind"] == "tool_dispatch")
         .unwrap();
     assert_eq!(tool["span"]["tool_call"], "call-1");
-    assert_eq!(tool["span"]["call"], dispatches[0]["span"]["call"]);
-    assert_eq!(replay.cost.calls, 2);
+    assert_eq!(tool["span"]["call"], dispatches[1]["span"]["call"]);
+    assert_eq!(replay.cost.calls, 3);
     assert!(replay.cost.complete);
     assert_eq!(replay.cost.total_tokens, Some(20));
     assert!(dispatches[0]["span"]["source_revision"].is_string());
@@ -345,10 +395,10 @@ async fn child_reads_the_workspace_records_a_job_and_submits_a_valid_result() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(prefixes.len(), 2);
+    assert_eq!(prefixes.len(), 3);
     for prefix in prefixes {
         assert_eq!(prefix.prefix.through + 1, prefix.before_sequence);
-        assert!(prefix.decision["request_payload"]["input"].is_array());
+        assert!(prefix.decision["logical_request_payload"]["input"].is_array());
         let replay = prefix.prefix.replay().unwrap();
         assert!(
             replay
@@ -394,7 +444,7 @@ async fn child_reads_the_workspace_records_a_job_and_submits_a_valid_result() {
         .collect::<Vec<_>>();
     assert_eq!(
         costs.len(),
-        2,
+        3,
         "each child model call has a durable cost receipt"
     );
     assert_eq!(
@@ -451,7 +501,7 @@ async fn schema_invalid_submissions_are_rejected() {
 
     // The child submits a result missing the required field, then a plain
     // message ends its turn without a valid submission.
-    let base = server(vec![
+    let (base, _served) = server(vec![
         Reply::sse(completed(function_call_item(
             "call-1",
             "submit_result",
