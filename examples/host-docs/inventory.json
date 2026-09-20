@@ -203,6 +203,20 @@
     "reason": "Configuration fragment; does not drive child admission or outcomes."
   },
   {
+    "guide": "docs/trace-bundles.md",
+    "block": 1,
+    "sha256": "1e7f40a3ef2db59860cef1bb7a5533b3c15c35a666a14ca2f32abdf281042733",
+    "kind": "illustrative",
+    "reason": "Commands require a real private host journal or bundle. Isolated trace tests provide those fixtures; these path placeholders are not standalone scenarios."
+  },
+  {
+    "guide": "docs/trace-bundles.md",
+    "block": 2,
+    "sha256": "a63ebf062cfef24f9d4e913c2736d5165856f7359fa43a6def50f90604e955f3",
+    "kind": "external-service",
+    "reason": "Experimental reexecution needs configured provider credentials and can run tools or incur cost in a fresh workspace."
+  },
+  {
     "guide": "docs/tui-scrolling.md",
     "block": 1,
     "sha256": "298c5e0a0f791cf1c5256288e73966510d1adb8df3d6565421a988abfdc0c8dc",
