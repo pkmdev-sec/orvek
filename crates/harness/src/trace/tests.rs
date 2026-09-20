@@ -572,3 +572,67 @@ fn fencing_does_not_rewrite_an_unknown_tool_settlement_as_success() {
     assert_eq!(tool.settlement_status, Some(JobStatus::Unknown));
     assert!(!replay.causality.complete);
 }
+
+#[test]
+fn recorded_responses_cannot_cross_parent_child_or_session_boundaries() {
+    let mut accepted_foreign = Vec::new();
+    for boundary in ["same", "child", "session"] {
+        let child = (boundary == "child").then(Uuid::new_v4);
+        let mut fixture = Fixture::new(child);
+        fixture.dispatch();
+        let outcome = fixture.proposal_outcome();
+        let items = outcome.response.as_ref().unwrap().history_items.clone();
+        record_span(
+            &mut fixture.store,
+            fixture.session,
+            fixture.request,
+            json!({"version":1,"kind":"model_response","session":fixture.session,
+                "request":fixture.request,"task":fixture.task,"child":child,
+                "call":fixture.call,"outcome":outcome}),
+        )
+        .unwrap();
+        let (session, request) = if boundary == "session" {
+            let session = SessionId::new();
+            let config = fixture.store.load_session(fixture.session).unwrap().config;
+            fixture.store.create_session(session, config, None).unwrap();
+            let request = Uuid::new_v4();
+            let policy = fixture.store.load(fixture.task).unwrap().intake.unwrap();
+            fixture
+                .store
+                .start_request(
+                    session,
+                    request,
+                    "another request".into(),
+                    Default::default(),
+                    policy,
+                )
+                .unwrap();
+            (session, request)
+        } else {
+            (fixture.session, fixture.request)
+        };
+        let revision = fixture.store.load_session(session).unwrap().revision;
+        fixture
+            .store
+            .session_command(
+                session,
+                revision,
+                Uuid::new_v5(&fixture.call, b"response"),
+                SessionCommand::Response { request, items },
+            )
+            .unwrap();
+        let result = fixture.export();
+        if boundary == "same" {
+            assert!(
+                result.is_ok(),
+                "same parent response should remain replayable: {result:?}"
+            );
+        } else if result.is_ok() {
+            accepted_foreign.push(boundary);
+        }
+    }
+    assert!(
+        accepted_foreign.is_empty(),
+        "accepted foreign responses as parent history: {accepted_foreign:?}"
+    );
+}

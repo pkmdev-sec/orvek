@@ -934,7 +934,18 @@ fn validate_events(
                         audit.gaps.insert(CausalGap::ToolLinkUnavailable);
                     }
                 }
-                SessionCommand::Response { items, .. } => {
+                SessionCommand::Response { request, items } => {
+                    if let Some(call) = responses.get(operation) {
+                        let owner = &audit.calls[call];
+                        if owner.child.is_some()
+                            || owner.session.is_some_and(|session| session != id)
+                            || owner.request.is_some_and(|owner| owner != *request)
+                        {
+                            return Err(invalid(
+                                "session response belongs to another session, request or child",
+                            ));
+                        }
+                    }
                     if !responses.contains_key(operation) {
                         audit.gaps.insert(CausalGap::ResponseLinkUnavailable);
                     }
