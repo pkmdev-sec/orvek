@@ -6,7 +6,7 @@ use crate::{
         RequestProvenance, RequestRoute, ResponseDialect, ResponseStatus, ToolProposal, Usage,
     },
     session::SessionConfig,
-    state::{JobInvocation, JobStatus, ModelCallReceipt, ModelCallStatus},
+    state::{JobInvocation, JobStatus, ModelCallReceipt, ModelCallStatus, RequestKind},
 };
 
 struct Fixture {
@@ -634,5 +634,474 @@ fn recorded_responses_cannot_cross_parent_child_or_session_boundaries() {
     assert!(
         accepted_foreign.is_empty(),
         "accepted foreign responses as parent history: {accepted_foreign:?}"
+    );
+}
+
+// Imported bundles can be rewritten wholesale. Recompute the envelope and journal
+// hashes without calling write/export, so rejection must come from read/replay.
+fn read_import(bundle: &TraceBundle) -> Result<TraceBundle, TraceError> {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("import.json");
+    let envelope = json!({"digest": Digest::of_value(bundle).unwrap(), "bundle": bundle});
+    fs::write(&path, serde_json::to_vec(&envelope).unwrap()).unwrap();
+    TraceBundle::read(&path)
+}
+
+fn assert_invalid_import(bundle: &TraceBundle, expected: &str) {
+    for error in [
+        bundle.replay().unwrap_err(),
+        read_import(bundle).unwrap_err(),
+    ] {
+        assert!(
+            matches!(&error, TraceError::Invalid(message) if message == expected),
+            "expected {expected:?}, got {error:?}"
+        );
+    }
+}
+
+fn append_import_event(
+    bundle: &mut TraceBundle,
+    kind: &str,
+    aggregate: Uuid,
+    event: &impl Serialize,
+) {
+    let previous = bundle
+        .records
+        .iter()
+        .rev()
+        .find(|record| record.kind == kind && record.aggregate == aggregate);
+    let revision = previous.map_or(1, |record| record.revision + 1);
+    let bytes = serde_json::to_vec(event).unwrap();
+    let hash = crate::store::aggregate_hash(
+        kind,
+        aggregate,
+        revision,
+        previous.map(|record| record.hash),
+        &bytes,
+    )
+    .unwrap();
+    bundle.through += 1;
+    bundle.records.push(TraceRecord {
+        sequence: bundle.through,
+        aggregate,
+        kind: kind.into(),
+        revision,
+        event_base64: STANDARD.encode(bytes),
+        hash,
+    });
+}
+
+fn import_artifact(bundle: &mut TraceBundle, value: &Value) -> Digest {
+    let bytes = serde_json::to_vec(value).unwrap();
+    let digest = Digest::of(&bytes);
+    bundle
+        .artifacts
+        .insert(digest, Payload::Present(STANDARD.encode(bytes)));
+    digest
+}
+
+fn append_import_span(bundle: &mut TraceBundle, fixture: &Fixture, span: &Value) {
+    let digest = import_artifact(bundle, span);
+    let operation = Uuid::new_v5(&fixture.session.0, &bundle.through.to_le_bytes());
+    append_import_event(
+        bundle,
+        "session",
+        fixture.session.0,
+        &json!({"type":"command", "data":{
+            "operation":operation,
+            "command":SessionCommand::TraceRecorded { request: fixture.request, record: digest },
+            "at_ms":0
+        }}),
+    );
+}
+
+#[test]
+fn import_rejects_extreme_cursors_and_invalid_creation_order() {
+    let fixture = Fixture::new(None);
+    let bundle = fixture.export().unwrap();
+    for sequence in [0, u64::MAX] {
+        let mut forged = bundle.clone();
+        forged.records[0].sequence = sequence;
+        assert_invalid_import(&forged, "global journal cursor gap");
+    }
+    let mut forged = bundle.clone();
+    forged.records[0].revision = u64::MAX;
+    assert_invalid_import(&forged, "aggregate revision gap");
+    for kind in ["session", "task"] {
+        let creation = bundle
+            .records
+            .iter()
+            .find(|record| record.kind == kind)
+            .unwrap();
+        let mut forged = bundle.clone();
+        append_import_event(
+            &mut forged,
+            kind,
+            creation.aggregate,
+            &decode_json(&creation.event_base64).unwrap(),
+        );
+        assert_invalid_import(&forged, &format!("{kind} creation sequence"));
+    }
+    for (kind, event) in [
+        (
+            "session",
+            json!({"type":"command","data":{
+                "operation":Uuid::nil(),"command":SessionCommand::TraceRecorded {
+                    request: fixture.request, record: Digest::of(b"absent")
+                },"at_ms":0
+            }}),
+        ),
+        ("task", json!(TaskEvent::CancellationRequested)),
+    ] {
+        let mut forged = bundle.clone();
+        append_import_event(&mut forged, kind, Uuid::nil(), &event);
+        assert_invalid_import(&forged, &format!("{kind} creation sequence"));
+    }
+}
+
+#[test]
+fn import_rejects_malformed_base64_and_event_shapes() {
+    let fixture = Fixture::new(None);
+    let bundle = fixture.export().unwrap();
+    for encoded in ["A", "====", "AA=A"] {
+        let mut forged = bundle.clone();
+        forged.records[0].event_base64 = encoded.into();
+        assert_invalid_import(&forged, "invalid base64 payload");
+    }
+    for event in [Value::Null, json!([]), json!({"type":"unknown"})] {
+        let mut forged = bundle.clone();
+        append_import_event(&mut forged, "session", fixture.session.0, &event);
+        assert!(matches!(forged.replay(), Err(TraceError::Json(_))));
+        assert!(matches!(read_import(&forged), Err(TraceError::Json(_))));
+    }
+}
+
+#[test]
+fn import_rejects_receipts_that_disagree_with_journal_links() {
+    let fixture = Fixture::new(Some(Uuid::nil()));
+    let bundle = fixture.export().unwrap();
+    for kind in [
+        "model_dispatch",
+        "model_response",
+        "child_terminal",
+        "tool_dispatch",
+    ] {
+        for field in ["session", "request"] {
+            let mut forged = bundle.clone();
+            let mut span = fixture.dispatch.clone();
+            span["kind"] = json!(kind);
+            span["sequence"] = json!(u64::MAX);
+            span[field] = json!(Uuid::nil());
+            append_import_span(&mut forged, &fixture, &span);
+            assert_invalid_import(
+                &forged,
+                &format!("recorded {field} disagrees with causal source"),
+            );
+        }
+    }
+}
+
+#[test]
+fn import_keeps_missing_child_dependencies_as_gaps() {
+    let child = Uuid::nil();
+    let mut fixture = Fixture::new(Some(child));
+    fixture.dispatch();
+    let next = Uuid::new_v5(&child, b"next");
+    record_dispatch(
+        &mut fixture.store,
+        fixture.session,
+        fixture.request,
+        fixture.task,
+        Some(child),
+        next,
+        &fixture.inference,
+    )
+    .unwrap();
+    let bundle = fixture.export().unwrap();
+    for missing in ["outcome", "input", "dispatch"] {
+        let mut incomplete = bundle.clone();
+        if missing != "outcome" {
+            let digest = if missing == "input" {
+                serde_json::from_value(fixture.dispatch["input"].clone()).unwrap()
+            } else {
+                Digest::of_value(&fixture.dispatch).unwrap()
+            };
+            assert!(incomplete.artifacts.remove(&digest).is_some());
+            incomplete.exact = false;
+        }
+        for report in [
+            incomplete.replay().unwrap(),
+            read_import(&incomplete).unwrap().replay().unwrap(),
+        ] {
+            assert!(!report.causality.complete);
+            let call = &report.causality.calls[&next];
+            assert!(call.gaps.contains(&CausalGap::OutcomeMissing));
+            if missing == "dispatch" {
+                assert!(!report.causality.calls.contains_key(&fixture.call));
+            } else {
+                assert!(call.gaps.contains(&CausalGap::ChildContextUnavailable));
+            }
+        }
+    }
+}
+
+#[test]
+fn import_rejects_child_inputs_shorter_than_the_recorded_prefix_or_history() {
+    let child = Uuid::nil();
+    let mut fixture = Fixture::new(Some(child));
+    fixture.dispatch();
+    let outcome = fixture.proposal_outcome();
+    record_span(
+        &mut fixture.store,
+        fixture.session,
+        fixture.request,
+        json!({"kind":"model_response","session":fixture.session,"request":fixture.request,
+            "task":fixture.task,"child":child,"call":fixture.call,"outcome":outcome}),
+    )
+    .unwrap();
+    let bundle = fixture.export().unwrap();
+    for (input, error) in [
+        (
+            json!([]),
+            "child dispatch dropped or changed its recorded input prefix",
+        ),
+        (
+            fixture.inference.wire(Transport::Http)["input"].clone(),
+            "child dispatch disagrees with recorded provider output",
+        ),
+    ] {
+        let mut forged = bundle.clone();
+        let mut dispatch = fixture.dispatch.clone();
+        dispatch["call"] = json!(Uuid::new_v5(&child, b"next"));
+        dispatch["input"] = json!(import_artifact(&mut forged, &input));
+        // A missing template is a supported gap, not a reason to skip child continuity.
+        dispatch["payload"] = json!(Digest::of(b"unavailable template"));
+        append_import_span(&mut forged, &fixture, &dispatch);
+        assert_invalid_import(&forged, error);
+    }
+}
+
+#[test]
+fn import_keeps_unavailable_context_sources_as_gaps() {
+    let mut fixture = Fixture::new(None);
+    fixture.dispatch();
+    let outcome = fixture.outcome(Transport::Http, ResponseDialect::OpenAi);
+    let mut report = fixture.report(&outcome);
+    report["context"]["source"]["revision"] = json!(u64::MAX);
+    fixture.record_outcome(report, Some(0));
+    let bundle = fixture.export().unwrap();
+    let imported = read_import(&bundle).unwrap().replay().unwrap();
+    assert!(imported.exact);
+    assert!(!imported.causality.complete);
+    assert!(
+        imported.causality.calls[&fixture.call]
+            .gaps
+            .contains(&CausalGap::ContextSourceUnavailable)
+    );
+}
+
+#[test]
+fn import_rejects_forged_context_ranges_before_slicing() {
+    let mut fixture = Fixture::new(None);
+    fixture.dispatch();
+    let outcome = fixture.outcome(Transport::Http, ResponseDialect::OpenAi);
+    let bundle = fixture.export().unwrap();
+    for field in ["stable_input_items", "range", "input_range"] {
+        let mut forged = bundle.clone();
+        let mut report = fixture.report(&outcome);
+        if field == "stable_input_items" {
+            report["context"][field] = json!(usize::MAX);
+        } else {
+            report["context"]["segments"][0][field] = json!({"start":u64::MAX,"end":0});
+        }
+        let report = import_artifact(&mut forged, &report);
+        append_import_event(
+            &mut forged,
+            "task",
+            fixture.task.0,
+            &TaskEvent::ModelCallRecorded {
+                operation: fixture.call,
+                receipt: ModelCallReceipt {
+                    status: ModelCallStatus::Failed,
+                    tokens: Some(0),
+                    report,
+                },
+            },
+        );
+        assert_invalid_import(&forged, "report context disagrees with recorded source");
+    }
+}
+
+#[test]
+fn import_binds_tool_outputs_to_existing_proposals() {
+    let mut fixture = Fixture::new(None);
+    fixture.dispatch();
+    let outcome = fixture.proposal_outcome();
+    record_span(
+        &mut fixture.store,
+        fixture.session,
+        fixture.request,
+        json!({"kind":"model_response","session":fixture.session,"request":fixture.request,
+            "task":fixture.task,"child":null,"call":fixture.call,"outcome":outcome}),
+    )
+    .unwrap();
+    let state = fixture.store.load_session(fixture.session).unwrap();
+    fixture
+        .store
+        .session_command(
+            fixture.session,
+            state.revision,
+            Uuid::new_v5(&fixture.call, b"response"),
+            SessionCommand::Response {
+                request: fixture.request,
+                items: outcome.response.unwrap().history_items,
+            },
+        )
+        .unwrap();
+    let prefix = fixture.export().unwrap();
+    let mut forged = prefix.clone();
+    append_import_event(
+        &mut forged,
+        "session",
+        fixture.session.0,
+        &SessionEvent::Command {
+            operation: Uuid::nil(),
+            command: SessionCommand::ToolResult {
+                request: Uuid::nil(),
+                call_id: "tool".into(),
+                output: "recorded output".into(),
+            },
+            at_ms: 0,
+        },
+    );
+    assert_invalid_import(
+        &forged,
+        "tool output request disagrees with provider proposal",
+    );
+
+    let state = fixture.store.load_session(fixture.session).unwrap();
+    fixture
+        .store
+        .session_command(
+            fixture.session,
+            state.revision,
+            Uuid::nil(),
+            SessionCommand::ToolResult {
+                request: fixture.request,
+                call_id: "tool".into(),
+                output: "recorded output".into(),
+            },
+        )
+        .unwrap();
+    let bundle = fixture.export().unwrap();
+    let imported = read_import(&bundle).unwrap().replay().unwrap();
+    assert_eq!(
+        imported.causality.calls[&fixture.call].tool_outputs["tool"],
+        Digest::of(b"recorded output")
+    );
+
+    let mut missing = bundle;
+    let response = prefix
+        .artifacts
+        .iter()
+        .find_map(|(digest, payload)| {
+            let Payload::Present(encoded) = payload else {
+                return None;
+            };
+            let value = decode_json(encoded).ok()?;
+            (value["kind"] == "model_response").then_some(*digest)
+        })
+        .unwrap();
+    missing.artifacts.remove(&response);
+    missing.exact = false;
+    let imported = read_import(&missing).unwrap().replay().unwrap();
+    assert!(
+        imported
+            .causality
+            .gaps
+            .contains(&CausalGap::ToolLinkUnavailable)
+    );
+}
+
+#[test]
+fn import_keeps_materialized_context_as_an_explicit_gap() {
+    let mut fixture = Fixture::new(None);
+    let state = fixture.store.load_session(fixture.session).unwrap();
+    let state = fixture
+        .store
+        .session_command(
+            fixture.session,
+            state.revision,
+            Uuid::new_v5(&fixture.request, b"settled"),
+            SessionCommand::TurnSettled {
+                request: fixture.request,
+                outcome: None,
+                error: None,
+            },
+        )
+        .unwrap();
+    fixture.request = Uuid::nil();
+    let state = fixture
+        .store
+        .session_command(
+            fixture.session,
+            state.revision,
+            fixture.request,
+            SessionCommand::Input {
+                kind: RequestKind::Task,
+                content: vec![json!({"role":"user","content":[{"type":"tact_image"}]})],
+            },
+        )
+        .unwrap();
+    let state = fixture
+        .store
+        .session_command(
+            fixture.session,
+            state.revision,
+            Uuid::new_v5(&fixture.request, b"task"),
+            SessionCommand::TaskLinked {
+                request: fixture.request,
+                task: fixture.task,
+            },
+        )
+        .unwrap();
+    fixture.projection = context::project(&state, 1024 * 1024).unwrap();
+    let mut input = fixture.projection.input.clone();
+    input.last_mut().unwrap()["content"] =
+        json!([{"type":"input_image","image_url":"data:image/png;base64,AA=="}]);
+    let live = input.split_off(fixture.projection.manifest.stable_input_items);
+    let segments = fixture
+        .projection
+        .manifest
+        .segments
+        .iter()
+        .filter(|segment| segment.role == ContextSegmentRole::StableHistory)
+        .map(|segment| segment.input)
+        .collect();
+    fixture.inference = InferenceRequest::new_segmented(
+        ModelSettings::default(),
+        PromptInput::segmented(input, live, segments).unwrap(),
+        vec![],
+        "recorded instructions".into(),
+        fixture.session.to_string(),
+        100,
+    )
+    .unwrap();
+    let wire = fixture.inference.wire(Transport::Http);
+    fixture.replace_artifact("input", &wire["input"]);
+    fixture.replace_artifact("tools", &wire["tools"]);
+    fixture.replace_artifact("payload", &wire);
+    fixture.dispatch["cache"] = json!(fixture.inference.cache_identity());
+    fixture.dispatch["request"] = json!(fixture.request);
+    fixture.dispatch();
+    let outcome = fixture.outcome(Transport::Http, ResponseDialect::OpenAi);
+    fixture.record_outcome(fixture.report(&outcome), Some(0));
+    let bundle = fixture.export().unwrap();
+    let imported = read_import(&bundle).unwrap().replay().unwrap();
+    assert!(imported.exact);
+    assert!(
+        imported.causality.calls[&fixture.call]
+            .gaps
+            .contains(&CausalGap::ContextMaterializationUnavailable)
     );
 }
