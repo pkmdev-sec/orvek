@@ -4,8 +4,10 @@
 
 use orvek_harness::{
     Digest, Store,
+    capabilities::{ToolContext, ToolRun, WorkspaceTools},
     controller::subagents::{ChildRun, ChildToolBackend, SubagentEvent, Subagents},
     inference::{Limits, Model, ModelSettings, ResponsesClient, Route, Transport, UsdCost},
+    runtime::ExecutionEnvironment,
     session::{SessionCommand, SessionEvent},
 };
 use serde_json::{Value, json};
@@ -68,7 +70,7 @@ async fn server(replies: Vec<Reply>) -> String {
     base
 }
 
-/// Deterministic read-only backend: real definitions, canned file content.
+/// File-only backend using the real workspace tools without contacting Docker.
 struct StubTools;
 
 impl ChildToolBackend for StubTools {
@@ -86,22 +88,52 @@ impl ChildToolBackend for StubTools {
         })]
     }
 
+    fn environment(&self) -> ExecutionEnvironment {
+        fixture_environment()
+    }
+
     fn execute(
         &self,
         name: String,
-        _arguments: Value,
-        workspace: std::path::PathBuf,
-        _cancellation: tokio_util::sync::CancellationToken,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send + 'static>>
-    {
+        arguments: Value,
+        context: ToolContext,
+        cancellation: CancellationToken,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ToolRun> + Send + 'static>> {
         Box::pin(async move {
-            if name != "read_file" {
-                return Err("tool is not admitted for a subagent".into());
+            ToolRun {
+                result: WorkspaceTools::execute_file_tool(
+                    &name,
+                    arguments,
+                    &context,
+                    &cancellation,
+                ),
+                execution: None,
+                diagnostic: None,
             }
-            let content =
-                std::fs::read_to_string(workspace.join("answer.txt")).map_err(|e| e.to_string())?;
-            Ok(json!({"content": content}))
         })
+    }
+}
+
+fn fixture_environment() -> ExecutionEnvironment {
+    ExecutionEnvironment {
+        daemon_id: "fixture-daemon".into(),
+        endpoint: "unix:///fixture/docker.sock".into(),
+        protocol_version: 1,
+        image_id: "sha256:fixture".into(),
+        memory_bytes: 1024,
+        pids: 32,
+        cpus: 1,
+        network: "none".into(),
+        helper_digest: Digest::of(b"fixture helper"),
+        architecture: "aarch64".into(),
+        workspace_bytes: 1024,
+        workspace_inodes: 32,
+        cache_bytes: 1024,
+        cache_inodes: 32,
+        temporary_bytes: 1024,
+        temporary_inodes: 32,
+        source_transport: "fixture".into(),
+        writable_mount_options: String::new(),
     }
 }
 

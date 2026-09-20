@@ -9,12 +9,13 @@
 
 use crate::{
     Store,
-    capabilities::{ToolContext, WorkspaceTools},
+    capabilities::{ToolContext, ToolError, ToolRun, WorkspaceTools},
     inference::{
         ArgumentValidity, InferenceRequest, Model, ModelSettings, OutputItem, ResponsesClient,
     },
+    runtime::{ExecutionEnvironment, ExecutionStatus},
     session::SessionId,
-    state::TaskId,
+    state::{JobStatus, TaskId},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -144,14 +145,16 @@ pub struct ChildRun {
 pub trait ChildToolBackend: Send + Sync {
     /// Read-only tool definitions offered to the child model.
     fn definitions(&self) -> Vec<Value>;
-    /// Executes one admitted read-only tool call.
+    /// Original protected backend identity, retained for recovery.
+    fn environment(&self) -> ExecutionEnvironment;
+    /// Executes one admitted read-only tool call without replacing its identity.
     fn execute(
         &self,
         name: String,
         arguments: Value,
-        workspace: PathBuf,
+        context: ToolContext,
         cancellation: CancellationToken,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send + 'static>>;
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ToolRun> + Send + 'static>>;
 }
 
 pub struct WorkspaceChildTools {
@@ -177,34 +180,36 @@ impl ChildToolBackend for WorkspaceChildTools {
         tools
     }
 
+    fn environment(&self) -> ExecutionEnvironment {
+        self.inner.protected_environment()
+    }
+
     fn execute(
         &self,
         name: String,
         arguments: Value,
-        workspace: PathBuf,
+        context: ToolContext,
         cancellation: CancellationToken,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send + 'static>>
-    {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ToolRun> + Send + 'static>> {
         let inner = self.inner.clone();
         Box::pin(async move {
             if !READONLY_TOOLS.contains(&name.as_str()) {
-                return Err("tool is not admitted for a subagent".into());
+                return ToolRun {
+                    result: Err(ToolError::UnknownTool),
+                    execution: None,
+                    diagnostic: None,
+                };
             }
-            let context = ToolContext {
-                workspace,
-                task_id: Uuid::new_v4(),
-                generation: 0,
-                job_id: Uuid::new_v4(),
-                readonly: true,
-                can_write: false,
-                max_output_bytes: CHILD_OUTPUT_BYTES,
-                timeout_ms: CHILD_TOOL_TIMEOUT_MS,
-            };
+            if !context.readonly || context.can_write {
+                return ToolRun {
+                    result: Err(ToolError::Readonly),
+                    execution: None,
+                    diagnostic: None,
+                };
+            }
             inner
                 .execute_recorded(&name, arguments, context, cancellation)
                 .await
-                .result
-                .map_err(|error| error.to_string())
         })
     }
 }
@@ -952,7 +957,7 @@ Rules:
             Ok(value) => value,
             Err(error) => return json!({"error": format!("tool arguments are invalid: {error}")}),
         };
-        let (generation, job) = {
+        let (generation, job, environment) = {
             let mut store = self.store.lock().await;
             let state = match store.load(self.task) {
                 Ok(state) => state,
@@ -973,7 +978,7 @@ Rules:
                 }
             };
             let environment = match store.artifacts().put(
-                &serde_json::to_vec(&json!({"runner":"subagent"})).expect("environment serializes"),
+                &serde_json::to_vec(&self.tools.environment()).expect("environment serializes"),
             ) {
                 Ok(environment) => environment,
                 Err(error) => {
@@ -998,49 +1003,81 @@ Rules:
                 CHILD_TOOL_TIMEOUT_MS,
                 invocation,
             ) {
-                Ok((state, job)) => (state.generation, job),
+                Ok((state, job)) => (state.generation, job, environment),
                 Err(error) => return json!({"error": format!("job is not admissible: {error}")}),
             }
         };
-        let _ = generation;
-        let result = self
+        let context = ToolContext {
+            workspace: self.working.clone(),
+            task_id: self.task.0,
+            generation,
+            job_id: job,
+            readonly: true,
+            can_write: false,
+            max_output_bytes: CHILD_OUTPUT_BYTES,
+            timeout_ms: CHILD_TOOL_TIMEOUT_MS,
+        };
+        let run = self
             .tools
-            .execute(
-                name.to_owned(),
-                arguments,
-                self.working.clone(),
-                token.clone(),
-            )
+            .execute(name.to_owned(), arguments, context, token.clone())
             .await;
-        let output = match result {
-            Ok(value) => value,
-            Err(error) => json!({"error": error}),
-        };
-        let status = if output.get("error").is_some() {
-            crate::state::JobStatus::Failed
-        } else {
-            crate::state::JobStatus::Succeeded
-        };
+        // Uncertainty outranks cancellation: a cancelled caller does not prove
+        // that the original container stopped or that its effects are known.
+        let status = if run
+            .result
+            .as_ref()
+            .is_err_and(ToolError::requires_reconciliation)
+            || run
+                .execution
+                .as_ref()
+                .is_some_and(|execution| matches!(execution.status, ExecutionStatus::Unknown(_)))
         {
-            let mut store = self.store.lock().await;
-            let receipt = store.artifacts().put(
-                &serde_json::to_vec(&json!({
-                    "version": 1,
-                    "task": self.task,
-                    "job": job,
-                    "session": self.session,
-                    "request": self.request,
-                    "subagent": self.id,
-                    "status": status,
-                    "tool_result": output,
-                }))
-                .expect("receipt serializes"),
-            );
-            if let Ok(receipt) = receipt
-                && let Err(error) = store.settle_execution_job(self.task, job, status, receipt)
-            {
-                return json!({"error": format!("job settlement failed: {error}"), "partial": output});
+            JobStatus::Unknown
+        } else if token.is_cancelled() {
+            JobStatus::Cancelled
+        } else if run.result.is_err()
+            || run
+                .execution
+                .as_ref()
+                .is_some_and(|execution| execution.status != ExecutionStatus::Exited(0))
+        {
+            JobStatus::Failed
+        } else {
+            JobStatus::Succeeded
+        };
+        let output = match run.result {
+            Ok(value) => value,
+            Err(error) => json!({"error": error.to_string()}),
+        };
+        let mut store = self.store.lock().await;
+        let receipt = match store.artifacts().put(
+            &serde_json::to_vec(&json!({
+                "version": 1,
+                "task": self.task,
+                "job": job,
+                "generation": generation,
+                "session": self.session,
+                "request": self.request,
+                "subagent": self.id,
+                "backend": "docker",
+                "environment": environment,
+                "status": status,
+                "execution": run.execution,
+                "diagnostic": run.diagnostic,
+                "tool_result": output,
+            }))
+            .expect("receipt serializes"),
+        ) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                return json!({
+                    "error": format!("job receipt is not recordable: {error}"),
+                    "job_id": job, "outcome": "unknown", "partial": output,
+                });
             }
+        };
+        if let Err(error) = store.settle_execution_job(self.task, job, status, receipt) {
+            return json!({"error": format!("job settlement failed: {error}"), "job_id": job, "partial": output});
         }
         output
     }
@@ -1199,5 +1236,1226 @@ mod retention_tests {
         let child = &children[&agent];
         assert!(child.inbox.is_empty());
         assert!(!child.token.is_cancelled());
+    }
+}
+
+#[cfg(test)]
+mod execution_tests {
+    use super::*;
+    use crate::{
+        capabilities::ToolError,
+        inference::{
+            Limits, Route, Transport,
+            auth::{Auth, SecretString},
+        },
+        runtime::{DockerExecutor, ExecutionEnvironment},
+        session::SessionConfig,
+        state::{Job, JobStatus},
+    };
+
+    fn offline_provider() -> ResponsesClient {
+        ResponsesClient::new(
+            Auth::api_key(SecretString::new("fixture".into())).unwrap(),
+            Route::new(Transport::Http, "http://127.0.0.1:1/responses").unwrap(),
+            Limits {
+                max_attempts: 1,
+                ..Limits::default()
+            },
+        )
+        .unwrap()
+    }
+
+    struct Fixture {
+        root: tempfile::TempDir,
+        child: ChildLoop,
+        environment: ExecutionEnvironment,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            Self::with_root(tempfile::tempdir().unwrap())
+        }
+
+        fn with_root(root: tempfile::TempDir) -> Self {
+            let working = root.path().join("workspace");
+            std::fs::create_dir(&working).unwrap();
+            std::fs::write(working.join("answer.txt"), "42").unwrap();
+            let mut store = Store::open(&root.path().join("state")).unwrap();
+            let session = SessionId::new();
+            store
+                .create_session(
+                    session,
+                    SessionConfig {
+                        workspace: working.clone(),
+                        model: ModelSettings::default(),
+                        instructions: String::new(),
+                        context_window_tokens: crate::context::DEFAULT_WINDOW_TOKENS,
+                    },
+                    None,
+                )
+                .unwrap();
+            let request = Uuid::new_v4();
+            let policy = store
+                .artifacts()
+                .put(
+                    &serde_json::to_vec(&json!({
+                        "version": 1, "delivery": "source",
+                        "profile": {"version": 1, "name": "fixture", "checks": {}}
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+            let (_, state, _) = store
+                .start_request(
+                    session,
+                    request,
+                    "inspect".into(),
+                    Default::default(),
+                    policy,
+                )
+                .unwrap();
+            let state = store
+                .invalidate_candidate(
+                    state.id,
+                    state.revision,
+                    "exercise nonzero generation".into(),
+                )
+                .unwrap();
+            assert!(state.generation > 0);
+            let executor = Arc::new(DockerExecutor::test_fixture());
+            let environment = executor.environment();
+            let provider = offline_provider();
+            Self {
+                root,
+                environment,
+                child: ChildLoop {
+                    id: Uuid::new_v4(),
+                    session,
+                    request,
+                    task: state.id,
+                    scope_revision: state.scope_revision,
+                    working,
+                    model: ModelSettings::default(),
+                    role: "reader".into(),
+                    task_text: "inspect".into(),
+                    validator: compile_schema(&json!({"type":"object"})).unwrap(),
+                    provider: Arc::new(provider),
+                    tools: Arc::new(WorkspaceChildTools::new(WorkspaceTools::new(executor))),
+                    store: Arc::new(tokio::sync::Mutex::new(store)),
+                },
+            }
+        }
+
+        async fn job(&self) -> (Job, Value) {
+            let store = self.child.store.lock().await;
+            let state = store.load(self.child.task).unwrap();
+            assert_eq!(state.jobs.len(), 1);
+            let job = state.jobs.values().next().unwrap().clone();
+            let receipt = serde_json::from_slice(
+                &store
+                    .artifacts()
+                    .read(job.execution_receipt.unwrap())
+                    .unwrap(),
+            )
+            .unwrap();
+            (job, receipt)
+        }
+    }
+
+    #[tokio::test]
+    async fn child_identity_matches_journal_and_receipt() {
+        let fixture = Fixture::new();
+        let output = fixture
+            .child
+            .run_tool(
+                "read_file",
+                r#"{"path":"answer.txt"}"#,
+                &CancellationToken::new(),
+            )
+            .await;
+        let (job, receipt) = fixture.job().await;
+        assert_eq!(
+            output["job_id"],
+            json!(job.id),
+            "adapter must not replace the admitted job"
+        );
+        assert_eq!(output["task_id"], json!(fixture.child.task));
+        assert_eq!(output["generation"], json!(job.generation));
+        assert_eq!(receipt["job"], output["job_id"]);
+        assert_eq!(receipt["task"], output["task_id"]);
+        assert_eq!(receipt["generation"], output["generation"]);
+    }
+
+    #[tokio::test]
+    async fn child_retains_original_backend_environment() {
+        let fixture = Fixture::new();
+        fixture
+            .child
+            .run_tool(
+                "read_file",
+                r#"{"path":"answer.txt"}"#,
+                &CancellationToken::new(),
+            )
+            .await;
+        let (job, _) = fixture.job().await;
+        let store = fixture.child.store.lock().await;
+        let environment = store
+            .artifacts()
+            .read(job.invocation.unwrap().environment)
+            .unwrap();
+        let environment: ExecutionEnvironment = serde_json::from_slice(&environment)
+            .expect("recovery must parse the original Docker backend");
+        assert_eq!(
+            serde_json::to_value(environment).unwrap(),
+            serde_json::to_value(fixture.environment).unwrap()
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    enum Fault {
+        None,
+        Cancel,
+        ReceiptWrite,
+        ReceiptCommit,
+        Fence,
+    }
+
+    struct ScriptedCommand {
+        store: Arc<tokio::sync::Mutex<Store>>,
+        task: TaskId,
+        status: ExecutionStatus,
+        fault: Fault,
+        artifacts: PathBuf,
+        dispatches: Arc<AtomicUsize>,
+    }
+
+    impl Fixture {
+        fn command(&mut self, status: ExecutionStatus, fault: Fault) -> Arc<AtomicUsize> {
+            let dispatches = Arc::new(AtomicUsize::new(0));
+            self.child.tools = Arc::new(ScriptedCommand {
+                store: self.child.store.clone(),
+                task: self.child.task,
+                status,
+                fault,
+                artifacts: self.root.path().join("state/artifacts"),
+                dispatches: dispatches.clone(),
+            });
+            dispatches
+        }
+    }
+
+    impl ChildToolBackend for ScriptedCommand {
+        fn definitions(&self) -> Vec<Value> {
+            vec![]
+        }
+        fn environment(&self) -> ExecutionEnvironment {
+            DockerExecutor::test_fixture().environment()
+        }
+        fn execute(
+            &self,
+            _: String,
+            _: Value,
+            context: ToolContext,
+            token: CancellationToken,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ToolRun> + Send + 'static>>
+        {
+            let store = self.store.clone();
+            let task = self.task;
+            let status = self.status.clone();
+            let fault = self.fault;
+            let artifacts = self.artifacts.clone();
+            let dispatches = self.dispatches.clone();
+            Box::pin(async move {
+                dispatches.fetch_add(1, Ordering::Relaxed);
+                {
+                    let mut store = store.lock().await;
+                    let state = store.load(task).unwrap();
+                    let job = &state.jobs[&context.job_id];
+                    assert_eq!(job.status, JobStatus::Running, "intent precedes dispatch");
+                    assert_eq!(context.task_id, task.0);
+                    assert_eq!(context.generation, job.generation);
+                    assert!(context.readonly && !context.can_write);
+                    let invocation = job.invocation.as_ref().unwrap();
+                    store.artifacts().read(invocation.input).unwrap();
+                    let environment: ExecutionEnvironment = serde_json::from_slice(
+                        &store.artifacts().read(invocation.environment).unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(environment.daemon_id, "fixture-daemon");
+                    assert!(store.journal_page(0, 256).unwrap().iter().any(|record| {
+                        matches!(serde_json::from_value::<crate::state::TaskEvent>(record.event.clone()),
+                            Ok(crate::state::TaskEvent::JobStarted(job)) if job.id == context.job_id)
+                    }), "intent must be durably journaled before execution");
+                    match fault {
+                        Fault::None => {}
+                        Fault::Cancel => token.cancel(),
+                        Fault::ReceiptWrite => {
+                            std::fs::rename(&artifacts, artifacts.with_extension("saved")).unwrap();
+                            std::fs::write(&artifacts, b"receipt fault").unwrap();
+                        }
+                        Fault::ReceiptCommit => {
+                            let database = rusqlite::Connection::open(
+                                artifacts.parent().unwrap().join("v1.sqlite3"),
+                            )
+                            .unwrap();
+                            database
+                                .execute_batch(
+                                    "CREATE TRIGGER fail_receipt_commit BEFORE INSERT ON events
+                                WHEN json_extract(CAST(NEW.event AS TEXT), '$.type') = 'job_settled'
+                                BEGIN SELECT RAISE(ABORT, 'injected receipt commit failure'); END;",
+                                )
+                                .unwrap();
+                        }
+                        Fault::Fence => {
+                            let receipt = store
+                                .artifacts()
+                                .put(b"fixture termination evidence")
+                                .unwrap();
+                            store.fence_job(task, context.job_id, receipt).unwrap();
+                        }
+                    }
+                }
+                let result = if matches!(status, ExecutionStatus::Unknown(_)) {
+                    Err(ToolError::OutcomeUnknown)
+                } else {
+                    Ok(
+                        json!({"task_id":context.task_id,"generation":context.generation,"job_id":context.job_id,
+                        "result":{"status":{"kind":"exited","code":match status { ExecutionStatus::Exited(code) => Some(code), _ => None }},"stdout":"PASS"}}),
+                    )
+                };
+                ToolRun {
+                    result,
+                    execution: Some(crate::runtime::ExecutionResult {
+                        job_id: context.job_id,
+                        status,
+                        stdout: b"PASS".to_vec(),
+                        stderr: vec![],
+                        elapsed_ms: 1,
+                        image_id: "sha256:fixture".into(),
+                        container_name: format!("tact-job-{}", context.job_id),
+                    }),
+                    diagnostic: Some("fixture execution diagnostic".into()),
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn child_nonzero_exit_is_not_a_succeeded_job() {
+        let mut fixture = Fixture::new();
+        fixture.command(ExecutionStatus::Exited(23), Fault::None);
+        fixture
+            .child
+            .run_tool(
+                "exec_command",
+                r#"{"command":"exit 23"}"#,
+                &CancellationToken::new(),
+            )
+            .await;
+        let (job, receipt) = fixture.job().await;
+        assert_eq!(job.status, JobStatus::Failed);
+        assert_eq!(receipt["execution"]["job_id"], json!(job.id));
+        assert_eq!(
+            receipt["execution"]["status"],
+            json!({"kind":"exited","detail":23})
+        );
+        assert_eq!(receipt["diagnostic"], "fixture execution diagnostic");
+    }
+
+    #[tokio::test]
+    async fn child_unknown_outcome_remains_unresolved() {
+        let mut fixture = Fixture::new();
+        let calls = fixture.command(
+            ExecutionStatus::Unknown("lost Docker acknowledgement".into()),
+            Fault::None,
+        );
+        fixture
+            .child
+            .run_tool(
+                "exec_command",
+                r#"{"command":"uncertain"}"#,
+                &CancellationToken::new(),
+            )
+            .await;
+        let (job, receipt) = fixture.job().await;
+        assert_eq!(job.status, JobStatus::Unknown);
+        assert_eq!(receipt["execution"]["status"]["kind"], "unknown");
+        drop(fixture.child);
+        let mut store = Store::open(&fixture.root.path().join("state")).unwrap();
+        let tasks = store.recover_interrupted().unwrap();
+        let recovered = store.load(tasks[0]).unwrap();
+        assert_eq!(recovered.jobs[&job.id].status, JobStatus::Unknown);
+        assert_eq!(
+            recovered.jobs[&job.id].execution_receipt,
+            job.execution_receipt
+        );
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "restart never replays an uncertain command"
+        );
+    }
+
+    #[tokio::test]
+    async fn child_cancellation_does_not_hide_an_unknown_outcome() {
+        for (execution, expected) in [
+            (ExecutionStatus::Exited(0), JobStatus::Cancelled),
+            (
+                ExecutionStatus::Unknown("termination not confirmed".into()),
+                JobStatus::Unknown,
+            ),
+        ] {
+            let mut fixture = Fixture::new();
+            fixture.command(execution, Fault::Cancel);
+            fixture
+                .child
+                .run_tool(
+                    "exec_command",
+                    r#"{"command":"cancelled"}"#,
+                    &CancellationToken::new(),
+                )
+                .await;
+            assert_eq!(fixture.job().await.0.status, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn child_receipt_failure_is_visible_and_never_replays_execution() {
+        let mut fixture = Fixture::new();
+        let calls = fixture.command(ExecutionStatus::Exited(0), Fault::ReceiptWrite);
+        let output = fixture
+            .child
+            .run_tool(
+                "exec_command",
+                r#"{"command":"once"}"#,
+                &CancellationToken::new(),
+            )
+            .await;
+        assert!(
+            output["error"]
+                .as_str()
+                .unwrap()
+                .contains("receipt is not recordable")
+        );
+        assert_eq!(output["outcome"], "unknown");
+        let state = fixture
+            .child
+            .store
+            .lock()
+            .await
+            .load(fixture.child.task)
+            .unwrap();
+        let job = state.jobs.values().next().unwrap();
+        assert_eq!(job.status, JobStatus::Running);
+        assert!(job.execution_receipt.is_none());
+        let artifacts = fixture.root.path().join("state/artifacts");
+        std::fs::remove_file(&artifacts).unwrap();
+        std::fs::rename(artifacts.with_extension("saved"), &artifacts).unwrap();
+        drop(fixture.child);
+        let mut store = Store::open(&fixture.root.path().join("state")).unwrap();
+        store.recover_interrupted().unwrap();
+        assert_eq!(
+            store.load(state.id).unwrap().jobs[&job.id].status,
+            JobStatus::Unknown
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn child_receipt_commit_failure_keeps_the_original_job_unknown_after_restart() {
+        let mut fixture = Fixture::new();
+        let calls = fixture.command(ExecutionStatus::Exited(0), Fault::ReceiptCommit);
+        let output = fixture
+            .child
+            .run_tool(
+                "exec_command",
+                r#"{"command":"once"}"#,
+                &CancellationToken::new(),
+            )
+            .await;
+        assert!(
+            output["error"]
+                .as_str()
+                .unwrap()
+                .contains("job settlement failed")
+        );
+        let state = fixture
+            .child
+            .store
+            .lock()
+            .await
+            .load(fixture.child.task)
+            .unwrap();
+        let job = state.jobs.values().next().unwrap();
+        assert_eq!(job.status, JobStatus::Running);
+        assert!(
+            job.execution_receipt.is_none(),
+            "failed commit cannot publish a success receipt"
+        );
+        drop(fixture.child);
+        let mut store = Store::open(&fixture.root.path().join("state")).unwrap();
+        store.recover_interrupted().unwrap();
+        assert_eq!(
+            store.load(state.id).unwrap().jobs[&job.id].status,
+            JobStatus::Unknown
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn child_cannot_settle_a_job_after_it_was_fenced() {
+        let mut fixture = Fixture::new();
+        fixture.command(ExecutionStatus::Exited(0), Fault::Fence);
+        let output = fixture
+            .child
+            .run_tool(
+                "exec_command",
+                r#"{"command":"late"}"#,
+                &CancellationToken::new(),
+            )
+            .await;
+        assert!(
+            output["error"]
+                .as_str()
+                .unwrap()
+                .contains("job settlement failed")
+        );
+        let state = fixture
+            .child
+            .store
+            .lock()
+            .await
+            .load(fixture.child.task)
+            .unwrap();
+        let job = state.jobs.values().next().unwrap();
+        assert_eq!(job.status, JobStatus::Fenced);
+        assert!(job.execution_receipt.is_none());
+        assert!(job.fence_receipt.is_some());
+    }
+
+    #[tokio::test]
+    async fn child_known_tool_error_is_failed_not_unknown() {
+        let fixture = Fixture::new();
+        fixture
+            .child
+            .run_tool(
+                "read_file",
+                r#"{"path":"missing"}"#,
+                &CancellationToken::new(),
+            )
+            .await;
+        let (job, receipt) = fixture.job().await;
+        assert_eq!(job.status, JobStatus::Failed);
+        assert!(receipt["execution"].is_null());
+        assert!(receipt["tool_result"]["error"].is_string());
+    }
+    #[derive(Clone, Copy, Debug)]
+    enum Backend {
+        Native,
+        Sandbox,
+        Child,
+    }
+
+    struct Scenario {
+        name: &'static str,
+        tool: &'static str,
+        arguments: Value,
+        cancelled: bool,
+        expected: JobStatus,
+    }
+
+    fn scenarios(commands: bool) -> Vec<Scenario> {
+        let mut cases = vec![
+            Scenario {
+                name: "read",
+                tool: "read_file",
+                arguments: json!({"path":"answer.txt"}),
+                cancelled: false,
+                expected: JobStatus::Succeeded,
+            },
+            Scenario {
+                name: "missing",
+                tool: "read_file",
+                arguments: json!({"path":"missing"}),
+                cancelled: false,
+                expected: JobStatus::Failed,
+            },
+            Scenario {
+                name: "invalid command",
+                tool: "exec_command",
+                arguments: json!({"command":""}),
+                cancelled: false,
+                expected: JobStatus::Failed,
+            },
+            Scenario {
+                name: "cancelled read",
+                tool: "read_file",
+                arguments: json!({"path":"answer.txt"}),
+                cancelled: true,
+                expected: JobStatus::Cancelled,
+            },
+        ];
+        if !commands {
+            cases.push(Scenario {
+                name: "lost backend acknowledgement",
+                tool: "exec_command",
+                arguments: json!({"command":"printf uncertain"}),
+                cancelled: false,
+                expected: JobStatus::Unknown,
+            });
+        }
+        if commands {
+            cases.extend([
+                Scenario {
+                    name: "zero exit",
+                    tool: "exec_command",
+                    arguments: json!({"command":"printf PASS; exit 0"}),
+                    cancelled: false,
+                    expected: JobStatus::Succeeded,
+                },
+                Scenario {
+                    name: "nonzero exit",
+                    tool: "exec_command",
+                    arguments: json!({"command":"printf PASS; exit 23"}),
+                    cancelled: false,
+                    expected: JobStatus::Failed,
+                },
+            ]);
+        }
+        cases
+    }
+
+    async fn conformance(backend: Backend, scenario: Scenario, docker: Option<DockerExecutor>) {
+        use crate::{
+            controller::{Host, TaskWorkspace},
+            inference::ToolProposal,
+            session::SessionCommand,
+            workspace::{Snapshot, SnapshotPolicy},
+        };
+        let mut fixture = if docker.is_some() {
+            Fixture::with_root(docker_workspace())
+        } else {
+            Fixture::new()
+        };
+        let token = CancellationToken::new();
+        if scenario.cancelled {
+            token.cancel();
+        }
+        let (store, task, output) = match backend {
+            Backend::Child => {
+                if let Some(executor) = docker {
+                    fixture.child.tools = Arc::new(WorkspaceChildTools::new(WorkspaceTools::new(
+                        Arc::new(executor),
+                    )));
+                }
+                let output = fixture
+                    .child
+                    .run_tool(scenario.tool, &scenario.arguments.to_string(), &token)
+                    .await;
+                (fixture.child.store.clone(), fixture.child.task, output)
+            }
+            Backend::Native | Backend::Sandbox => {
+                let provider = offline_provider();
+                let root = fixture.root.path().join("parent-state");
+                let host = match backend {
+                    Backend::Native => {
+                        Host::open_native(&root, provider, crate::Digest::of(b"fixture")).unwrap()
+                    }
+                    Backend::Sandbox => Host::open(
+                        &root,
+                        provider,
+                        docker.unwrap_or_else(DockerExecutor::test_fixture),
+                    )
+                    .unwrap(),
+                    Backend::Child => unreachable!(),
+                };
+                let (task, workspace) = {
+                    let source = fixture.child.store.lock().await;
+                    let mut store = host.store.lock().await;
+                    let session = source.load_session(fixture.child.session).unwrap();
+                    store
+                        .create_session(session.id, session.config.clone(), None)
+                        .unwrap();
+                    let policy = source.load(fixture.child.task).unwrap().intake.unwrap();
+                    let policy = store
+                        .artifacts()
+                        .put(&source.artifacts().read(policy).unwrap())
+                        .unwrap();
+                    let (_, task, _) = store
+                        .start_request(
+                            session.id,
+                            fixture.child.request,
+                            "conformance".into(),
+                            Default::default(),
+                            policy,
+                        )
+                        .unwrap();
+                    let state = store.load_session(session.id).unwrap();
+                    store.session_command(session.id, state.revision, Uuid::new_v4(), SessionCommand::Response {
+                        request: fixture.child.request,
+                        items: vec![json!({"type":"function_call","id":"fc_conformance","call_id":"conformance","name":scenario.tool,"arguments":scenario.arguments.to_string()})],
+                    }).unwrap();
+                    let workspace = match backend {
+                        Backend::Native => TaskWorkspace::Native {
+                            cwd: fixture.child.working.clone(),
+                        },
+                        Backend::Sandbox => TaskWorkspace::Isolated {
+                            working: fixture.child.working.clone(),
+                            baseline: Snapshot::capture(
+                                &fixture.child.working,
+                                SnapshotPolicy::default(),
+                                store.artifacts(),
+                            )
+                            .unwrap(),
+                            baseline_path: fixture.child.working.clone(),
+                        },
+                        Backend::Child => unreachable!(),
+                    };
+                    (task, workspace)
+                };
+                let proposal = ToolProposal {
+                    item_id: "fc_conformance".into(),
+                    call_id: "conformance".into(),
+                    name: scenario.tool.into(),
+                    arguments: scenario.arguments.to_string(),
+                    validity: ArgumentValidity::JsonObject,
+                };
+                let output = host
+                    .dispatch(
+                        fixture.child.session,
+                        fixture.child.request,
+                        task.id,
+                        task.scope_revision,
+                        &proposal,
+                        scenario.arguments,
+                        &workspace,
+                        token,
+                    )
+                    .await
+                    .unwrap();
+                (host.store.clone(), task.id, output)
+            }
+        };
+        let mut store = store.lock().await;
+        let state = store.load(task).unwrap();
+        assert_eq!(state.jobs.len(), 1, "{backend:?}: {}", scenario.name);
+        let job = state.jobs.values().next().unwrap();
+        assert_eq!(
+            job.status, scenario.expected,
+            "{backend:?}: {}",
+            scenario.name
+        );
+        let receipt: Value = serde_json::from_slice(
+            &store
+                .artifacts()
+                .read(job.execution_receipt.unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(receipt["job"], json!(job.id));
+        assert_eq!(receipt["task"], json!(task));
+        assert_eq!(receipt["tool_result"], output);
+        if output.get("error").is_none() {
+            assert_eq!(output["job_id"], json!(job.id));
+            assert_eq!(output["task_id"], json!(task));
+            assert_eq!(output["generation"], json!(job.generation));
+        }
+        if !receipt["execution"].is_null() {
+            assert_eq!(receipt["execution"]["job_id"], json!(job.id));
+        }
+        let environment: Value = serde_json::from_slice(
+            &store
+                .artifacts()
+                .read(job.invocation.as_ref().unwrap().environment)
+                .unwrap(),
+        )
+        .unwrap();
+        match backend {
+            Backend::Native => assert_eq!(environment["backend"], "native_host"),
+            Backend::Sandbox => assert_eq!(environment["network"], "bridge"),
+            Backend::Child => assert_eq!(environment["network"], "none"),
+        }
+        let events: Vec<_> = store
+            .journal_page(0, 256)
+            .unwrap()
+            .into_iter()
+            .filter_map(|record| {
+                serde_json::from_value::<crate::state::TaskEvent>(record.event).ok()
+            })
+            .collect();
+        let started = events.iter().position(|event| matches!(event, crate::state::TaskEvent::JobStarted(started) if started.id == job.id)).unwrap();
+        let settled = events.iter().position(|event| matches!(event, crate::state::TaskEvent::JobSettled { id, .. } if *id == job.id)).unwrap();
+        assert!(started < settled);
+        if job.status.unresolved() {
+            assert_eq!(job.status, JobStatus::Unknown);
+            assert!(receipt["diagnostic"].is_string());
+            store.recover_interrupted().unwrap();
+            let recovered = store.load(task).unwrap();
+            assert_eq!(recovered.jobs.len(), 1);
+            assert_eq!(recovered.jobs[&job.id].status, JobStatus::Unknown);
+        } else {
+            assert!(
+                store
+                    .settle_execution_job(
+                        task,
+                        job.id,
+                        JobStatus::Succeeded,
+                        job.execution_receipt.unwrap()
+                    )
+                    .is_err(),
+                "no late settlement may overwrite the first outcome"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn child_and_parent_backends_share_recording_invariants() {
+        // Native executes real local commands. No-contact Docker fixtures cover
+        // only file calls and pre-dispatch validation/cancellation here.
+        for backend in [Backend::Native, Backend::Sandbox, Backend::Child] {
+            for scenario in scenarios(matches!(backend, Backend::Native)) {
+                conformance(backend, scenario, None).await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Docker, debian:bookworm-slim and ORVEK_EXECUTOR_HELPER"]
+    async fn real_docker_parent_and_child_share_command_invariants() {
+        for backend in [Backend::Sandbox, Backend::Child] {
+            for scenario in scenarios(true) {
+                conformance(
+                    backend,
+                    scenario,
+                    Some(
+                        DockerExecutor::connect("debian:bookworm-slim")
+                            .await
+                            .unwrap(),
+                    ),
+                )
+                .await;
+            }
+        }
+    }
+    fn docker_workspace() -> tempfile::TempDir {
+        let directory =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.orvek/docker-test-workspaces");
+        std::fs::create_dir_all(&directory).unwrap();
+        tempfile::tempdir_in(directory.canonicalize().unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore = "kills its own child host process; requires local Docker, debian:bookworm-slim and ORVEK_EXECUTOR_HELPER"]
+    async fn real_docker_child_host_crash_fences_only_the_original_job() {
+        use crate::controller::Host;
+        const REPORT: &str = "ORVEK_TEST_CHILD_CRASH_REPORT";
+        if let Some(report) = std::env::var_os(REPORT) {
+            // This subprocess owns the host store and authoritative child loop.
+            // The parent kills it only after Docker reports this job running.
+            let mut fixture = Fixture::with_root(docker_workspace());
+            let executor = DockerExecutor::connect("debian:bookworm-slim")
+                .await
+                .unwrap();
+            let environment = executor.environment();
+            fixture.child.tools = Arc::new(WorkspaceChildTools::new(WorkspaceTools::new(
+                Arc::new(executor),
+            )));
+            let child = Arc::new(fixture.child);
+            let executing = {
+                let child = child.clone();
+                tokio::spawn(async move {
+                    child
+                        .run_tool(
+                            "exec_command",
+                            r#"{"command":"sleep 120"}"#,
+                            &CancellationToken::new(),
+                        )
+                        .await
+                })
+            };
+            let job = tokio::time::timeout(Duration::from_secs(20), async {
+                loop {
+                    let state = child.store.lock().await.load(child.task).unwrap();
+                    if let Some(job) = state.jobs.values().next() {
+                        break job.clone();
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            std::fs::write(
+                report,
+                serde_json::to_vec(&json!({
+                    "root": fixture.root.path(), "task": child.task, "job": job.id,
+                    "generation": job.generation, "environment": environment,
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let output = executing.await.unwrap();
+            panic!("crash fixture completed before host kill: {output}");
+        }
+
+        let control = tempfile::tempdir().unwrap();
+        let report = control.path().join("dispatch.json");
+        let mut process = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "controller::subagents::execution_tests::real_docker_child_host_crash_fences_only_the_original_job", "--ignored", "--nocapture"])
+            .env(REPORT, &report)
+            .kill_on_drop(true)
+            .spawn().unwrap();
+        let dispatched: Value = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if let Ok(bytes) = std::fs::read(&report)
+                    && let Ok(value) = serde_json::from_slice(&bytes)
+                {
+                    break value;
+                }
+                assert!(
+                    process.try_wait().unwrap().is_none(),
+                    "child host exited before dispatch"
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("child dispatch was not observed");
+        let root = PathBuf::from(dispatched["root"].as_str().unwrap());
+        let task: TaskId = serde_json::from_value(dispatched["task"].clone()).unwrap();
+        let job: Uuid = serde_json::from_value(dispatched["job"].clone()).unwrap();
+        let original: ExecutionEnvironment =
+            serde_json::from_value(dispatched["environment"].clone()).unwrap();
+        let name = format!("tact-job-{job}");
+        let running = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let inspection = tokio::process::Command::new("docker")
+                    .args([
+                        "--host",
+                        &original.endpoint,
+                        "inspect",
+                        "--format",
+                        "{{.State.Running}}",
+                        &name,
+                    ])
+                    .output()
+                    .await
+                    .unwrap();
+                if inspection.status.success() && inspection.stdout.starts_with(b"true") {
+                    break;
+                }
+                assert!(
+                    process.try_wait().unwrap().is_none(),
+                    "child host exited before container start"
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+        process.kill().await.unwrap();
+        process.wait().await.unwrap();
+        let executor = DockerExecutor::connect("debian:bookworm-slim")
+            .await
+            .unwrap();
+        if running.is_err() {
+            executor
+                .reconcile_job(task.0, dispatched["generation"].as_u64().unwrap(), job)
+                .await
+                .unwrap();
+            panic!("original child container never became observable");
+        }
+        let unrelated_name = format!("tact-job-{}", Uuid::new_v4());
+        let created = tokio::process::Command::new("docker")
+            .args([
+                "--host",
+                &original.endpoint,
+                "create",
+                "--name",
+                &unrelated_name,
+                "debian:bookworm-slim",
+                "true",
+            ])
+            .output()
+            .await
+            .unwrap();
+        assert!(created.status.success(), "{created:?}");
+        let provider = offline_provider();
+        let host = Host::open(&root.join("state"), provider, executor).unwrap();
+        assert_eq!(
+            host.task(task).await.unwrap().jobs[&job].status,
+            JobStatus::Unknown
+        );
+        host.reconcile_unresolved(task, CancellationToken::new())
+            .await
+            .unwrap();
+        let state = host.task(task).await.unwrap();
+        assert_eq!(
+            state.jobs.len(),
+            1,
+            "recovery must not dispatch another command"
+        );
+        assert_eq!(state.jobs[&job].status, JobStatus::Fenced);
+        let store = host.store.lock().await;
+        let receipt: Value = serde_json::from_slice(
+            &store
+                .artifacts()
+                .read(state.jobs[&job].fence_receipt.unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(receipt["generation"], dispatched["generation"]);
+        assert_eq!(receipt["fences"][0]["job_id"], json!(job));
+        assert_eq!(receipt["fences"][0]["container_name"], name);
+        assert_eq!(receipt["fences"][0]["daemon_id"], original.daemon_id);
+        assert_eq!(receipt["fences"][0]["endpoint"], original.endpoint);
+        assert_eq!(receipt["fences"][0]["observed_absent"], true);
+        let unrelated = tokio::process::Command::new("docker")
+            .args(["--host", &original.endpoint, "inspect", &unrelated_name])
+            .output()
+            .await
+            .unwrap();
+        let removed = tokio::process::Command::new("docker")
+            .args(["--host", &original.endpoint, "rm", &unrelated_name])
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            unrelated.status.success(),
+            "recovery removed an unrelated container"
+        );
+        assert!(removed.status.success(), "{removed:?}");
+        drop(store);
+        host.reconcile_unresolved(task, CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(host.task(task).await.unwrap().revision, state.revision);
+        drop(host);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    struct LoseLiveReceipt {
+        inner: WorkspaceChildTools,
+        database: PathBuf,
+        dispatches: Arc<AtomicUsize>,
+    }
+
+    impl ChildToolBackend for LoseLiveReceipt {
+        fn definitions(&self) -> Vec<Value> {
+            self.inner.definitions()
+        }
+
+        fn environment(&self) -> ExecutionEnvironment {
+            self.inner.environment()
+        }
+
+        fn execute(
+            &self,
+            name: String,
+            arguments: Value,
+            context: ToolContext,
+            token: CancellationToken,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ToolRun> + Send + 'static>>
+        {
+            let run = self.inner.execute(name, arguments, context, token);
+            let database = self.database.clone();
+            let dispatches = self.dispatches.clone();
+            Box::pin(async move {
+                dispatches.fetch_add(1, Ordering::Relaxed);
+                let output = run.await;
+                assert_eq!(
+                    output.execution.as_ref().unwrap().status,
+                    ExecutionStatus::Exited(0)
+                );
+                rusqlite::Connection::open(database)
+                    .unwrap()
+                    .execute_batch(
+                        "CREATE TRIGGER fail_live_receipt BEFORE INSERT ON events
+                     WHEN json_extract(CAST(NEW.event AS TEXT), '$.type') = 'job_settled'
+                     BEGIN SELECT RAISE(ABORT, 'injected live receipt loss'); END;",
+                    )
+                    .unwrap();
+                output
+            })
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Docker, debian:bookworm-slim and ORVEK_EXECUTOR_HELPER"]
+    async fn real_docker_child_receipt_commit_loss_does_not_reexecute() {
+        let mut fixture = Fixture::with_root(docker_workspace());
+        let executor = DockerExecutor::connect("debian:bookworm-slim")
+            .await
+            .unwrap();
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let database = fixture.root.path().join("state/v1.sqlite3");
+        fixture.child.tools = Arc::new(LoseLiveReceipt {
+            inner: WorkspaceChildTools::new(WorkspaceTools::new(Arc::new(executor))),
+            database: database.clone(),
+            dispatches: dispatches.clone(),
+        });
+        let task = fixture.child.task;
+        let output = fixture
+            .child
+            .run_tool(
+                "exec_command",
+                r#"{"command":"printf once"}"#,
+                &CancellationToken::new(),
+            )
+            .await;
+        assert!(
+            output["error"]
+                .as_str()
+                .unwrap()
+                .contains("job settlement failed")
+        );
+        assert_eq!(output["partial"]["result"]["stdout"]["data"], "once");
+        let job = {
+            let store = fixture.child.store.lock().await;
+            let state = store.load(task).unwrap();
+            assert_eq!(state.jobs.len(), 1);
+            let job = state.jobs.values().next().unwrap().clone();
+            assert_eq!(job.status, JobStatus::Running);
+            assert!(job.execution_receipt.is_none());
+            job.id
+        };
+        rusqlite::Connection::open(database)
+            .unwrap()
+            .execute_batch("DROP TRIGGER fail_live_receipt")
+            .unwrap();
+        drop(fixture.child);
+        let executor = DockerExecutor::connect("debian:bookworm-slim")
+            .await
+            .unwrap();
+        let host = crate::controller::Host::open(
+            &fixture.root.path().join("state"),
+            offline_provider(),
+            executor,
+        )
+        .unwrap();
+        assert_eq!(
+            host.task(task).await.unwrap().jobs[&job].status,
+            JobStatus::Unknown
+        );
+        host.reconcile_unresolved(task, CancellationToken::new())
+            .await
+            .unwrap();
+        let state = host.task(task).await.unwrap();
+        assert_eq!(state.jobs[&job].status, JobStatus::Fenced);
+        assert_eq!(state.jobs.len(), 1);
+        assert_eq!(dispatches.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Docker, debian:bookworm-slim and ORVEK_EXECUTOR_HELPER"]
+    async fn real_docker_running_child_cancellation_is_recorded() {
+        let mut fixture = Fixture::with_root(docker_workspace());
+        let executor = DockerExecutor::connect("debian:bookworm-slim")
+            .await
+            .unwrap();
+        let environment = executor.environment();
+        fixture.child.tools = Arc::new(WorkspaceChildTools::new(WorkspaceTools::new(Arc::new(
+            executor,
+        ))));
+        let child = Arc::new(fixture.child);
+        let token = CancellationToken::new();
+        let running = {
+            let child = child.clone();
+            let token = token.clone();
+            tokio::spawn(async move {
+                child
+                    .run_tool("exec_command", r#"{"command":"sleep 120"}"#, &token)
+                    .await
+            })
+        };
+        let job = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let job = {
+                    let store = child.store.lock().await;
+                    store.load(child.task).unwrap().jobs.keys().next().copied()
+                };
+                if let Some(job) = job {
+                    let inspection = tokio::process::Command::new("docker")
+                        .args([
+                            "--host",
+                            &environment.endpoint,
+                            "inspect",
+                            "--format",
+                            "{{.State.Running}}",
+                            &format!("tact-job-{job}"),
+                        ])
+                        .output()
+                        .await
+                        .unwrap();
+                    if inspection.status.success() && inspection.stdout.starts_with(b"true") {
+                        break job;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+        token.cancel();
+        let output = running.await.unwrap();
+        let job = job.expect("child container did not become observable");
+        let store = child.store.lock().await;
+        let state = store.load(child.task).unwrap();
+        assert_eq!(state.jobs[&job].status, JobStatus::Cancelled, "{output}");
+        let receipt: Value = serde_json::from_slice(
+            &store
+                .artifacts()
+                .read(state.jobs[&job].execution_receipt.unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(receipt["execution"]["job_id"], json!(job));
+        assert_eq!(receipt["execution"]["status"]["kind"], "cancelled");
+        let inspection = tokio::process::Command::new("docker")
+            .args([
+                "--host",
+                &environment.endpoint,
+                "inspect",
+                &format!("tact-job-{job}"),
+            ])
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            !inspection.status.success(),
+            "cancelled child container still exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn child_recovery_refuses_a_different_backend_without_replay() {
+        let mut fixture = Fixture::new();
+        let calls = fixture.command(
+            ExecutionStatus::Unknown("lost acknowledgement".into()),
+            Fault::None,
+        );
+        fixture
+            .child
+            .run_tool(
+                "exec_command",
+                r#"{"command":"uncertain"}"#,
+                &CancellationToken::new(),
+            )
+            .await;
+        let (job, _) = fixture.job().await;
+        let task = fixture.child.task;
+        drop(fixture.child);
+        let host = crate::controller::Host::open_native(
+            &fixture.root.path().join("state"),
+            offline_provider(),
+            crate::Digest::of(b"native"),
+        )
+        .unwrap();
+        let error = host
+            .reconcile_unresolved(task, CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("original Docker backend"));
+        let state = host.task(task).await.unwrap();
+        assert_eq!(state.jobs.len(), 1);
+        assert_eq!(state.jobs[&job.id].status, JobStatus::Unknown);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
     }
 }

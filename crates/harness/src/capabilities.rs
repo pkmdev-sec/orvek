@@ -14,8 +14,8 @@ pub mod host;
 use crate::{
     Digest,
     runtime::{
-        DockerExecutor, ExecutionPolicy, ExecutionRequest, ExecutionResult, ExecutionStatus,
-        RuntimeError,
+        DockerExecutor, ExecutionEnvironment, ExecutionPolicy, ExecutionRequest, ExecutionResult,
+        ExecutionStatus, RuntimeError,
     },
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -180,6 +180,10 @@ pub struct ToolRun {
 impl WorkspaceTools {
     pub fn new(executor: Arc<DockerExecutor>) -> Self {
         Self { executor }
+    }
+
+    pub(crate) fn protected_environment(&self) -> ExecutionEnvironment {
+        self.executor.environment()
     }
 
     pub fn definitions() -> Vec<Value> {

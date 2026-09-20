@@ -1121,3 +1121,22 @@ fn validate_elf(bytes: &[u8], arch: &str) -> Result<(), RuntimeError> {
 fn bounded_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).into_owned()
 }
+
+#[cfg(test)]
+impl DockerExecutor {
+    pub(crate) fn test_fixture() -> Self {
+        Self {
+            image_id: "sha256:fixture".into(),
+            architecture: "aarch64".into(),
+            helper: PathBuf::from("/fixture/helper"),
+            helper_digest: Digest::of(b"fixture helper"),
+            limits: ExecutionLimits::default(),
+            docker: Arc::new(Docker {
+                program: PathBuf::from("/fixture/no-docker"),
+                endpoint: "unix:///fixture/docker.sock".into(),
+                daemon_id: "fixture-daemon".into(),
+                config: tempfile::tempdir().unwrap(),
+            }),
+        }
+    }
+}
