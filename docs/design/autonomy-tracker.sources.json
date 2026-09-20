@@ -1,0 +1,717 @@
+{
+  "schema_version": 1,
+  "reviewed_at_utc": "2026-09-20T04:05:53+00:00",
+  "orvek_revision": "720210c0cbceebe89c123038049e9aebf77ba47d",
+  "tracker": "docs/design/autonomy-tracker.md",
+  "scope": {
+    "supplied_direct_articles": 15,
+    "supplied_social_links": 2,
+    "supplied_repositories": 1,
+    "note": "Both social links also have matching LangChain articles; all supplied links are covered."
+  },
+  "external_sources": [
+    {
+      "id": "L01",
+      "title": "The Art of Loop Engineering",
+      "url": "https://www.langchain.com/blog/the-art-of-loop-engineering",
+      "status": "read",
+      "text_sha256": "f57ad548cb78a58c840b9969a45eee7170489286bfd73d253f7952ac7d8f1bbc"
+    },
+    {
+      "id": "L02",
+      "title": "How to Build a Custom Agent Harness",
+      "url": "https://www.langchain.com/blog/how-to-build-a-custom-agent-harness",
+      "status": "read",
+      "text_sha256": "cd490477a6e106da0ac9cb339f7a2592d382c73b95078566c1f3e7758a2ce39e"
+    },
+    {
+      "id": "L03",
+      "title": "Interpreters in Deep Agents: Code Between Tool Calls and Sandboxes",
+      "url": "https://www.langchain.com/blog/give-your-agents-an-interpreter",
+      "status": "read",
+      "text_sha256": "50791884e5e31a15b06246c95572df9c234c5d5ded55eee5ea8d501e3b1ddf35"
+    },
+    {
+      "id": "L04",
+      "title": "The Agent Development Lifecycle: Build, Test, Deploy & Monitor AI Agents | LangChain",
+      "url": "https://www.langchain.com/blog/the-agent-development-lifecycle",
+      "status": "read",
+      "text_sha256": "8d2cf25690e3b764e4261420fa9a8a4e55bd4049e4e3d361903a5fd9766d9111"
+    },
+    {
+      "id": "L05",
+      "title": "How We Made Our Docs Test Themselves",
+      "url": "https://www.langchain.com/blog/our-docs-test-themselves",
+      "status": "read",
+      "text_sha256": "7ed69a91a9c9cd535fef5d87558f1c6ede9c38f8c08f0ad9e9943d5ca8ef096b"
+    },
+    {
+      "id": "L06",
+      "title": "Your harness, your memory",
+      "url": "https://www.langchain.com/blog/your-harness-your-memory",
+      "status": "read",
+      "text_sha256": "7107572d420ccbda2c9ee90ce04a5c53eb62e7342ede6bdb172b6735625be37f"
+    },
+    {
+      "id": "L07",
+      "title": "How My Agents Self-Heal in Production",
+      "url": "https://www.langchain.com/blog/how-my-agents-self-heal-in-production",
+      "status": "read",
+      "text_sha256": "9adbc2040af7b25397227c18aa36e42612209d7ccc13dea93e57ce511936a1db"
+    },
+    {
+      "id": "L08",
+      "title": "The Agent Improvement Loop Starts with a Trace",
+      "url": "https://www.langchain.com/blog/traces-start-agent-improvement-loop",
+      "status": "read",
+      "text_sha256": "eeded9c31de8dbe92bcb02af989d94f4a520d488050c3fabdefe80f3d41eef6d"
+    },
+    {
+      "id": "L09",
+      "title": "Agent Evaluation Readiness Checklist",
+      "url": "https://www.langchain.com/blog/agent-evaluation-readiness-checklist",
+      "status": "read",
+      "text_sha256": "32e11ed4532ba724261940dadf2cc70795832ba5335b9e9ae11b4d9373bfc8db"
+    },
+    {
+      "id": "L10",
+      "title": "Autonomous context compression",
+      "url": "https://www.langchain.com/blog/autonomous-context-compression",
+      "status": "read",
+      "text_sha256": "830c1908ad16956be274d8a376d5825c075ead92b29a6c8ddb83bca6c405911a"
+    },
+    {
+      "id": "L11",
+      "title": "The Anatomy of an Agent Harness",
+      "url": "https://www.langchain.com/blog/the-anatomy-of-an-agent-harness",
+      "status": "read",
+      "text_sha256": "5df7f1730b0256ba626fe427ec1e510c489b5c08da648a2628ee11fdaa1f0b2b"
+    },
+    {
+      "id": "L12",
+      "title": "How Coding Agents Are Reshaping Engineering, Product and Design",
+      "url": "https://www.langchain.com/blog/how-coding-agents-are-reshaping-engineering-product-and-design",
+      "status": "read",
+      "text_sha256": "078b0f9d1908b3bdf14d0b012210290fd9ec887b12363299d09b46ff35458a7c"
+    },
+    {
+      "id": "L13",
+      "title": "How to Monitor AI Agents in Production",
+      "url": "https://www.langchain.com/blog/production-monitoring",
+      "status": "read",
+      "text_sha256": "0d84bed0ad65914b39c3f7a2a9d3f4bcf20f87f2750da1f7692c0d1af34776a0"
+    },
+    {
+      "id": "L14",
+      "title": "How we built Agent Builder\u2019s memory system",
+      "url": "https://www.langchain.com/blog/how-we-built-agent-builders-memory-system",
+      "status": "read",
+      "text_sha256": "73944591ec09c127ab60b6d5323592b1758f761f7a4437d67d906b6f1e212742"
+    },
+    {
+      "id": "L15",
+      "title": "In software, the code documents the app. In AI, the traces do.",
+      "url": "https://www.langchain.com/blog/in-software-the-code-documents-the-app-in-ai-the-traces-do",
+      "status": "read",
+      "text_sha256": "874b39cbccccd4bd61f73edeeafa57cb02b0b476379b0da7122c523ab8bf14b2"
+    },
+    {
+      "id": "X01",
+      "title": "Organizing Context in a Multi-Agent Harness",
+      "url": "https://x.com/LangChain_OSS/status/2097372136247902519",
+      "article_url": "https://www.langchain.com/blog/organizing-context-in-a-multi-agent-harness",
+      "status": "read_both",
+      "text_sha256": "392735f2b75f05a25b99a0ec8c92dfcdca980fef6edff355145d682f3462d199"
+    },
+    {
+      "id": "X02",
+      "title": "Building Self-Correcting Memory in OpenWiki",
+      "url": "https://x.com/colifran_/status/2092280107033616451",
+      "article_url": "https://www.langchain.com/blog/self-correcting-memory-openwiki",
+      "status": "read_both",
+      "text_sha256": "a2252525901ff407d8a8c532d5cbd6bfabca62e22076415c064029484e66d94e"
+    },
+    {
+      "id": "D01",
+      "title": "Deep Agents",
+      "url": "https://github.com/langchain-ai/deepagents/tree/c3a041e3d8f593e4e4c9bfc273d52264ceff165b",
+      "revision": "c3a041e3d8f593e4e4c9bfc273d52264ceff165b",
+      "status": "source_inspected",
+      "files": [
+        {
+          "path": "libs/deepagents/deepagents/graph.py",
+          "sha256": "e6c57390b37a9fb54e9388e5b9d439d335eebd5fb69e271e10eef1b96defe57d"
+        },
+        {
+          "path": "libs/deepagents/deepagents/middleware/memory.py",
+          "sha256": "425d9927a0874a0ea55a23182875eb1f3dc1b7452e0a74feb7ca3f994d37a1ee"
+        },
+        {
+          "path": "libs/deepagents/deepagents/middleware/subagents.py",
+          "sha256": "f717b4ef88a3cfb0da6b934e977a14272a6f015340b2d140169fb81bb2acd1bb"
+        },
+        {
+          "path": "libs/deepagents/deepagents/middleware/summarization.py",
+          "sha256": "54d93bd17a417180174c1810aca9720efefaf68a8b43fbd607ea5eb8ef081882"
+        },
+        {
+          "path": "libs/partners/quickjs/langchain_quickjs/middleware.py",
+          "sha256": "d6cdbe2ed06e7e54828b2e34adcce07363f5968324563bc671a91411c67b2643"
+        },
+        {
+          "path": "libs/partners/quickjs/langchain_quickjs/_snapshot.py",
+          "sha256": "4ddfdcca574bf42faadd37ebc600e27fe30167e1646791587fc9bd20d6584986"
+        },
+        {
+          "path": "libs/partners/quickjs/langchain_quickjs/_ptc.py",
+          "sha256": "a47bd44d609125f0290c09fed1803435c74813129d4c10e568d64c5625220492"
+        }
+      ]
+    }
+  ],
+  "code_evidence": [
+    {
+      "id": "O01",
+      "path": "bin/orvek/src/core/mod.rs",
+      "anchor": "configured_memory_store(config, &workspace)?;",
+      "line": 71,
+      "sha256": "65132a824d25bc045a12b7f3128b8e191857ca4886af627d4e8c57bdee880ded"
+    },
+    {
+      "id": "O02",
+      "path": "bin/orvek/src/core/extensions/skills.rs",
+      "anchor": "pub(crate) fn rendered_instructions",
+      "line": 188,
+      "sha256": "19d47fbd68c5e10ffd07f6ef7e297ad1350b53d41efbe49c694c85b82aecb5a2"
+    },
+    {
+      "id": "O03",
+      "path": "crates/harness/src/controller.rs",
+      "anchor": "fn tool_definitions(discovery: bool)",
+      "line": 3421,
+      "sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03"
+    },
+    {
+      "id": "O04",
+      "path": "crates/memory/src/model.rs",
+      "anchor": "pub struct MemoryRecord",
+      "line": 47,
+      "sha256": "9e23956e1343f83f1d92a792ea488079ae706ee4a02661a49ae8ad7164ef6f7c"
+    },
+    {
+      "id": "O05",
+      "path": "crates/memory/src/store/local.rs",
+      "anchor": "pub async fn merge_remote_export(",
+      "line": 278,
+      "sha256": "f0d773407935f9fa15429c7afa76820a2314ac238d9dfdeefc720bc449accc65"
+    },
+    {
+      "id": "O06",
+      "path": "crates/harness/src/context.rs",
+      "anchor": "pub fn project(",
+      "line": 298,
+      "sha256": "c8fa549e89e2a431647871658490123ebe8b67712f758fc12e6148d7b986bde8"
+    },
+    {
+      "id": "O07",
+      "path": "crates/harness/src/context.rs",
+      "anchor": "pub fn read_text_page(",
+      "line": 199,
+      "sha256": "c8fa549e89e2a431647871658490123ebe8b67712f758fc12e6148d7b986bde8"
+    },
+    {
+      "id": "O08",
+      "path": "crates/harness/src/context_cost.rs",
+      "anchor": "pub fn recommendation(",
+      "line": 156,
+      "sha256": "464bd16d6b08a8d676f8c08ee74454becb2b8af5c65979085926602f127683d0"
+    },
+    {
+      "id": "O09",
+      "path": "crates/harness/src/controller/subagents.rs",
+      "anchor": "async fn spawn(",
+      "line": 448,
+      "sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0"
+    },
+    {
+      "id": "O10",
+      "path": "crates/harness/src/capabilities.rs",
+      "anchor": "pub fn requires_reconciliation(",
+      "line": 90,
+      "sha256": "47eb5d171b5ff2a1e55a30475226dc4f10aab88f2a989e370fd75acd26560160"
+    },
+    {
+      "id": "O11",
+      "path": "crates/harness/src/store.rs",
+      "anchor": "pub struct Store",
+      "line": 99,
+      "sha256": "6596b46f427eef5e69d2019223ac8784c3968ac0f2e871f76ae0c117338c1fc0"
+    },
+    {
+      "id": "O12",
+      "path": "crates/harness/src/completion.rs",
+      "anchor": "pub fn evaluate(",
+      "line": 15,
+      "sha256": "eb9d7ea9a9cc6241b871b28794b3d65c4babd4dc2ccc9edc0d54b49aae3d0554"
+    },
+    {
+      "id": "O13",
+      "path": "crates/harness/src/verification.rs",
+      "anchor": "pub struct CheckProgram",
+      "line": 17,
+      "sha256": "74a6afe697a8f73457d414a2d06f9ec5d9f87197dd2840b18be1ed7e073e75ee"
+    },
+    {
+      "id": "O14",
+      "path": "evals/harbor_adapter/evidence.py",
+      "anchor": "def populate_context(",
+      "line": 62,
+      "sha256": "09a245d983a13ee75e117a4da797478c86ab7e71b7f9ec0f2bccd2a8c5a1f116"
+    },
+    {
+      "id": "O15",
+      "path": "evals/incident_replay/generate.py",
+      "anchor": "def generate_tasks(",
+      "line": 381,
+      "sha256": "fa8ecc58179675be46297380f1755a3fd2e88ade8f39a5df1288f5d3ab716301"
+    },
+    {
+      "id": "O16",
+      "path": "scripts/check-docs.py",
+      "anchor": "without running them",
+      "line": 2,
+      "sha256": "4a893b6ecc5faf406d5494e5c00a4be6a051c4a20a22adc1e7d263c883daaab8"
+    },
+    {
+      "id": "O17",
+      "path": "bin/orvek/src/app/headless.rs",
+      "anchor": "orvek.host",
+      "line": 26,
+      "sha256": "9d52237760763c0564b5f57b07eb6b7c6bdef2270f4ece958b1f143d9610bebf"
+    },
+    {
+      "id": "O18",
+      "path": "crates/harness/src/controller/auxiliary.rs",
+      "anchor": "let instructions = format!(",
+      "line": 279,
+      "sha256": "ad4b8293512a7d9fc352d0ca59769a33311e4be40860312f08a7f70000bc1469"
+    },
+    {
+      "id": "O19",
+      "path": "crates/harness/src/admission_profile.rs",
+      "anchor": "pub struct HarnessBinding",
+      "line": 87,
+      "sha256": "52ebd470528d7badf29f10b0364257821c6841304ded3661b6941a3fdea74b73"
+    },
+    {
+      "id": "O20",
+      "path": "crates/harness/src/controller.rs",
+      "anchor": "fn native_tool_definitions(",
+      "line": 3370,
+      "sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03"
+    },
+    {
+      "id": "O21",
+      "path": "crates/harness/src/controller/subagents.rs",
+      "anchor": "async fn run_tool(",
+      "line": 950,
+      "sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0"
+    },
+    {
+      "id": "O22",
+      "path": "crates/harness/src/controller.rs",
+      "anchor": "async fn reconcile_unresolved(",
+      "line": 3023,
+      "sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03"
+    },
+    {
+      "id": "O23",
+      "path": "evals/snapcompact/run_paired.py",
+      "anchor": "def parse_log(",
+      "line": 32,
+      "sha256": "9836e4bf03241ef4ed714e8c70b129bb10244cac587fa794615184f466086847"
+    },
+    {
+      "id": "O24",
+      "path": "evals/snapcompact/paired_report.py",
+      "anchor": "def validate(",
+      "line": 20,
+      "sha256": "22188f70a9839a279d5a631bf31f65020afdc8dfa5e07794ebf25701d967918d"
+    },
+    {
+      "id": "O25",
+      "path": "bin/orvek/src/app/config.rs",
+      "anchor": "fn completion_hook_can_be_configured(",
+      "line": 2072,
+      "sha256": "ec7a62e87483f15ee65bb10dee88e3b7922d22fdff0fd60120387e39026b549a"
+    },
+    {
+      "id": "O26",
+      "path": "bin/orvek/src/app/host.rs",
+      "anchor": "config.agent().completion_hook()",
+      "line": 422,
+      "sha256": "99ef0f522c905c812719d2e1e11668349a0c646b5eb374534a990cc075289e1e"
+    },
+    {
+      "id": "O27",
+      "path": "crates/harness/tests/native_host.rs",
+      "anchor": "restart_keeps_unknown_native_jobs_unfenced_and_never_replays_them",
+      "line": 813,
+      "sha256": "c06974a427a25ddd1e15bda8928f4b7e2c98a992db91fc4e916a70ca84d1d319"
+    },
+    {
+      "id": "O28",
+      "path": "crates/harness/src/controller/subagents.rs",
+      "anchor": "\"submitted\": false",
+      "line": 927,
+      "sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0"
+    },
+    {
+      "id": "O29",
+      "path": "crates/harness/src/controller/subagents.rs",
+      "anchor": "fn child_definitions(",
+      "line": 1061,
+      "sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0"
+    }
+  ],
+  "competitor_context": [
+    {
+      "id": "C01",
+      "url": "https://github.com/openai/codex",
+      "status": "read_readme",
+      "text_sha256": "ba4e1f69ff48386e72a9c5e1edaf76aad64a475c2d51af79ccba6d1128261ba7",
+      "limitation": "developers.openai.com/codex/cli returned a Zscaler security interstitial; not used as evidence."
+    },
+    {
+      "id": "C02",
+      "url": "https://code.claude.com/docs/en/hooks",
+      "status": "read",
+      "text_sha256": "d08c02b695d4ce9597ec79493e28d3f33e26c37bd9b88bc62698fb4a7015548c"
+    },
+    {
+      "id": "C03",
+      "url": "https://opencode.ai/docs/plugins/",
+      "status": "read",
+      "text_sha256": "f2d8c1bbf0ea3e62ee58f0e03f89d778703781546cc6dd56e187c41bffe0ecb5"
+    }
+  ],
+  "work_items": [
+    {
+      "id": "T01",
+      "title": "Host-visible memory and skills",
+      "rank": 1,
+      "status": "ready",
+      "depends_on": [],
+      "sources": [
+        "L02",
+        "L06",
+        "L11",
+        "L14",
+        "D01"
+      ],
+      "code_evidence": [
+        "O01",
+        "O02",
+        "O03",
+        "O04",
+        "O18",
+        "O20"
+      ],
+      "owner": null,
+      "implementation_revision": null,
+      "results": [],
+      "next_action": "Add host IPC provider-capture regression for enabled memory and skills."
+    },
+    {
+      "id": "T02",
+      "title": "Child execution identity",
+      "rank": 2,
+      "status": "ready_for_reproduction",
+      "depends_on": [],
+      "sources": [
+        "L04",
+        "L09"
+      ],
+      "code_evidence": [
+        "O09",
+        "O10",
+        "O21",
+        "O22"
+      ],
+      "owner": null,
+      "implementation_revision": null,
+      "results": [],
+      "next_action": "Reproduce mismatch between recorded child job ID and executor job ID."
+    },
+    {
+      "id": "T03",
+      "title": "Honest evaluation records",
+      "rank": 3,
+      "status": "ready",
+      "depends_on": [],
+      "sources": [
+        "L08",
+        "L09",
+        "L13"
+      ],
+      "code_evidence": [
+        "O23",
+        "O24"
+      ],
+      "owner": null,
+      "implementation_revision": null,
+      "results": [],
+      "next_action": "Add parse_log regression asserting null usage stays unknown."
+    },
+    {
+      "id": "T04",
+      "title": "Causal trace bundles and replay",
+      "rank": 4,
+      "status": "planned",
+      "depends_on": [
+        "T02",
+        "T03"
+      ],
+      "sources": [
+        "L08",
+        "L09",
+        "L12",
+        "L15"
+      ],
+      "code_evidence": [
+        "O11",
+        "O14",
+        "O15",
+        "O17"
+      ],
+      "owner": null,
+      "implementation_revision": null,
+      "results": [],
+      "next_action": "Complete dependencies, then implement the first unchecked step in the work card."
+    },
+    {
+      "id": "T05",
+      "title": "Evidence-backed memory",
+      "rank": 5,
+      "status": "planned",
+      "depends_on": [
+        "T01",
+        "T04"
+      ],
+      "sources": [
+        "L06",
+        "L14",
+        "X02"
+      ],
+      "code_evidence": [
+        "O04",
+        "O05"
+      ],
+      "owner": null,
+      "implementation_revision": null,
+      "results": [],
+      "next_action": "Complete dependencies, then implement the first unchecked step in the work card."
+    },
+    {
+      "id": "T06",
+      "title": "Host-admitted interpreter",
+      "rank": 6,
+      "status": "planned",
+      "depends_on": [
+        "T02",
+        "T04"
+      ],
+      "sources": [
+        "L03",
+        "D01"
+      ],
+      "code_evidence": [
+        "O03",
+        "O10",
+        "O21"
+      ],
+      "owner": null,
+      "implementation_revision": null,
+      "results": [],
+      "next_action": "Complete dependencies, then implement the first unchecked step in the work card."
+    },
+    {
+      "id": "T07",
+      "title": "Model-directed context",
+      "rank": 7,
+      "status": "planned",
+      "depends_on": [
+        "T03",
+        "T04"
+      ],
+      "sources": [
+        "L10",
+        "D01"
+      ],
+      "code_evidence": [
+        "O06",
+        "O07",
+        "O08"
+      ],
+      "owner": null,
+      "implementation_revision": null,
+      "results": [],
+      "next_action": "Complete dependencies, then implement the first unchecked step in the work card."
+    },
+    {
+      "id": "T08",
+      "title": "Durable context-aware children",
+      "rank": 8,
+      "status": "planned",
+      "depends_on": [
+        "T02",
+        "T04"
+      ],
+      "sources": [
+        "X01",
+        "D01"
+      ],
+      "code_evidence": [
+        "O09",
+        "O21",
+        "O28",
+        "O29"
+      ],
+      "owner": null,
+      "implementation_revision": null,
+      "results": [],
+      "next_action": "Complete dependencies, then implement the first unchecked step in the work card."
+    },
+    {
+      "id": "T09",
+      "title": "Terminal hooks and event intake",
+      "rank": 9,
+      "status": "ready_for_hook_fix",
+      "depends_on": [],
+      "sources": [
+        "L01",
+        "L02"
+      ],
+      "code_evidence": [
+        "O25",
+        "O26",
+        "O17"
+      ],
+      "owner": null,
+      "implementation_revision": null,
+      "results": [],
+      "next_action": "Add headless/TUI terminal-hook delivery regression.",
+      "phase_dependencies": {
+        "hook_fix": [],
+        "event_intake": [
+          "T02",
+          "T04"
+        ]
+      }
+    },
+    {
+      "id": "T10",
+      "title": "Quality monitoring and repair experiments",
+      "rank": 10,
+      "status": "planned",
+      "depends_on": [
+        "T03",
+        "T04",
+        "T09"
+      ],
+      "sources": [
+        "L01",
+        "L04",
+        "L07",
+        "L08",
+        "L09",
+        "L13"
+      ],
+      "code_evidence": [
+        "O14",
+        "O15",
+        "O19"
+      ],
+      "owner": null,
+      "implementation_revision": null,
+      "results": [],
+      "next_action": "Complete dependencies, then implement the first unchecked step in the work card."
+    },
+    {
+      "id": "T11",
+      "title": "Executable capability docs",
+      "rank": 11,
+      "status": "ready_for_inventory",
+      "depends_on": [
+        "T01",
+        "T09"
+      ],
+      "sources": [
+        "L05",
+        "L12"
+      ],
+      "code_evidence": [
+        "O01",
+        "O02",
+        "O16",
+        "O25"
+      ],
+      "owner": null,
+      "implementation_revision": null,
+      "results": [],
+      "next_action": "Inventory runnable versus illustrative examples.",
+      "phase_dependencies": {
+        "inventory": [],
+        "end_to_end_examples": [
+          "T01",
+          "T09"
+        ]
+      }
+    }
+  ],
+  "research_checks": [
+    {
+      "command": "cargo test -p orvek-harness --test subagents --test native_host --test session_journal",
+      "result": "20 passed",
+      "scope": "Existing tests, not proposed behavior"
+    },
+    {
+      "command": "cargo test -p orvek-harness --test completion_contract",
+      "result": "26 passed",
+      "scope": "Existing sandbox completion behavior"
+    },
+    {
+      "command": "python3 -B -m unittest discover -s evals/snapcompact -p 'test_*.py'",
+      "result": "6 passed",
+      "scope": "Existing tests do not cover parse_log null handling"
+    },
+    {
+      "target": "evals/snapcompact/run_paired.py::parse_log",
+      "fixture_usage": {
+        "input_tokens": 7,
+        "output_tokens": 3,
+        "cached_input_tokens": null,
+        "reasoning_tokens": null
+      },
+      "observed_usage": {
+        "input_tokens": 7,
+        "output_tokens": 3,
+        "cached_input_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "result": "Reproduced unknown-to-zero defect; not fixed"
+    },
+    {
+      "command": "python3 scripts/check-autonomy-tracker.py",
+      "result": "18 supplied sources, 29 code anchors, 11 work items validated after independent review"
+    },
+    {
+      "target": "scripts/check-autonomy-tracker.py::check",
+      "result": "Valid manifest accepted; six mutated manifests rejected: changed source hash, missing anchor, later dependency, done without evidence, missing source URL, unknown source ID"
+    },
+    {
+      "target": "independent tracker source review",
+      "result": "Applied both corrections: output schema delivered before first child response; repeatable result reads with deduplicated terminal transitions."
+    }
+  ]
+}

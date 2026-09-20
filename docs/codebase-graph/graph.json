@@ -1889,6 +1889,16 @@
     {
       "kind": "contains",
       "source": "directory:docs/design",
+      "target": "file:docs/design/autonomy-tracker.md"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:docs/design",
+      "target": "file:docs/design/autonomy-tracker.sources.json"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:docs/design",
       "target": "file:docs/design/context-cost.md"
     },
     {
@@ -2290,6 +2300,11 @@
       "kind": "contains",
       "source": "directory:scripts",
       "target": "file:scripts/audit-component-wiring.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:scripts",
+      "target": "file:scripts/check-autonomy-tracker.py"
     },
     {
       "kind": "contains",
@@ -3755,6 +3770,126 @@
       "kind": "links_to",
       "source": "file:docs/configuration.md",
       "target": "file:evals/README.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:bin/orvek/src/app/config.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:bin/orvek/src/app/headless.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:bin/orvek/src/app/host.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:bin/orvek/src/core/extensions/skills.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:bin/orvek/src/core/mod.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/harness/src/admission_profile.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/harness/src/capabilities.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/harness/src/completion.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/harness/src/context.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/harness/src/context_cost.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/harness/src/controller.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/harness/src/controller/auxiliary.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/harness/src/controller/subagents.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/harness/src/store.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/harness/src/verification.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/harness/tests/native_host.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/memory/src/model.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/memory/src/store/local.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:docs/design/autonomy-tracker.sources.json"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:evals/harbor_adapter/evidence.py"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:evals/incident_replay/generate.py"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:evals/snapcompact/paired_report.py"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:evals/snapcompact/run_paired.py"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:scripts/check-docs.py"
     },
     {
       "kind": "links_to",
@@ -14347,6 +14482,22 @@
       "path": "docs/configuration.md"
     },
     {
+      "file_kind": "documentation",
+      "id": "file:docs/design/autonomy-tracker.md",
+      "kind": "file",
+      "label": "autonomy-tracker.md",
+      "lines": 342,
+      "path": "docs/design/autonomy-tracker.md"
+    },
+    {
+      "file_kind": "configuration",
+      "id": "file:docs/design/autonomy-tracker.sources.json",
+      "kind": "file",
+      "label": "autonomy-tracker.sources.json",
+      "lines": 717,
+      "path": "docs/design/autonomy-tracker.sources.json"
+    },
+    {
       "file_kind": "web-asset",
       "id": "file:docs/design/components/actions-v1.html",
       "kind": "file",
@@ -14985,6 +15136,14 @@
       "label": "audit-component-wiring.py",
       "lines": 279,
       "path": "scripts/audit-component-wiring.py"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:scripts/check-autonomy-tracker.py",
+      "kind": "file",
+      "label": "check-autonomy-tracker.py",
+      "lines": 86,
+      "path": "scripts/check-autonomy-tracker.py"
     },
     {
       "file_kind": "python-script",
@@ -19560,26 +19719,26 @@
     ]
   },
   "statistics": {
-    "edges": 2228,
+    "edges": 2255,
     "files_by_kind": {
       "automation": 4,
       "binary-asset": 5,
       "cargo-manifest": 8,
       "ci-workflow": 4,
-      "configuration": 17,
-      "documentation": 51,
-      "python-script": 32,
+      "configuration": 18,
+      "documentation": 52,
+      "python-script": 33,
       "rust-source": 352,
       "supporting-file": 21,
       "typescript-source": 36,
       "web-asset": 20
     },
-    "nodes": 1163,
+    "nodes": 1166,
     "nodes_by_kind": {
       "component": 14,
       "dependency": 72,
       "directory": 116,
-      "file": 550,
+      "file": 553,
       "module": 356,
       "package": 7,
       "repository": 1,
