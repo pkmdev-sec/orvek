@@ -257,7 +257,9 @@ detach. Keep notification handlers short and do not launch background services f
 
 Intent, claim, and result are separate `completion_hook` session-journal events. A failed command
 cannot change the task outcome or its verification certificate. Reconnect does not run hooks again.
-Restart resumes unclaimed intents after settlement, using their pinned command. A claim is written
+Restart resumes unclaimed intents after settlement, using their pinned command. Recovery runs
+in the background so slow notifications do not block IPC startup. Host shutdown cancels recovery;
+a claimed notification without a recorded result stays unknown. A claim is written
 before the process starts. Timeout, signal termination, or restart without acknowledgement leaves
 an **unknown** delivery; Orvek never retries it automatically. Even a failed command may have made
 external changes. Arbitrary shell effects cannot provide exactly-once delivery; receiver-side

@@ -93,6 +93,76 @@ impl Fixture {
         }
     }
 
+    fn seed_unclaimed(&self, command: &str) {
+        use orvek_harness::{
+            Store,
+            controller::notification::DeliveryEvent,
+            session::{SessionCommand, SessionConfig},
+            state::Outcome,
+        };
+        let session = SessionId::new();
+        let request = Uuid::new_v4();
+        {
+            // Crash cut: intent and terminal task are durable, but TurnSettled and
+            // the notification claim have not been written. Startup must finish both.
+            let mut store = Store::open(self.socket.parent().unwrap()).unwrap();
+            let state = store
+                .create_session(
+                    session,
+                    SessionConfig {
+                        workspace: self.workspace.canonicalize().unwrap(),
+                        model: ModelSettings::default(),
+                        instructions: String::new(),
+                        context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+                    },
+                    None,
+                )
+                .unwrap();
+            store
+                .session_command(
+                    session,
+                    state.revision,
+                    Uuid::new_v4(),
+                    SessionCommand::CompletionHook(DeliveryEvent::Armed {
+                        request,
+                        command: command.into(),
+                    }),
+                )
+                .unwrap();
+            let policy = RequestPolicy {
+                version: 1,
+                delivery: DeliveryKind::Source,
+                profile: RepositoryProfile {
+                    version: 1,
+                    name: "fixture".into(),
+                    checks: Default::default(),
+                },
+            };
+            let intake = store
+                .public_artifacts()
+                .write(&serde_json::to_vec(&policy).unwrap())
+                .unwrap()
+                .digest();
+            let (_, task, _) = store
+                .start_request(
+                    session,
+                    request,
+                    "Finish the task".into(),
+                    Limits::default(),
+                    intake,
+                )
+                .unwrap();
+            store
+                .stop(
+                    task.id,
+                    task.revision,
+                    Outcome::BudgetExhausted,
+                    "fixture allowance exhausted".into(),
+                )
+                .unwrap();
+        }
+    }
+
     fn command(&self) -> Process {
         let mut command = Process::new(env!("CARGO_BIN_EXE_orvek"));
         command
@@ -478,77 +548,24 @@ async fn sandbox_headless_and_terminal_ipc_use_the_same_host_hook() {
 
 #[tokio::test]
 async fn restart_delivers_an_unclaimed_intent_after_recovering_settlement() {
-    use orvek_harness::{
-        Store,
-        controller::notification::DeliveryEvent,
-        session::{SessionCommand, SessionConfig},
-        state::Outcome,
-    };
     let endpoint = provider(done()).await;
     let mut fixture = Fixture::new(&endpoint, "exit 99", false);
-    let session = SessionId::new();
-    let request = Uuid::new_v4();
-    {
-        // Crash cut: intent and terminal task are durable, but TurnSettled and
-        // the notification claim have not been written. Startup must finish both.
-        let mut store = Store::open(fixture.socket.parent().unwrap()).unwrap();
-        let state = store
-            .create_session(
-                session,
-                SessionConfig {
-                    workspace: fixture.workspace.canonicalize().unwrap(),
-                    model: ModelSettings::default(),
-                    instructions: String::new(),
-                    context_window_tokens: orvek_harness::context::DEFAULT_WINDOW_TOKENS,
-                },
-                None,
-            )
-            .unwrap();
-        store
-            .session_command(
-                session,
-                state.revision,
-                Uuid::new_v4(),
-                SessionCommand::CompletionHook(DeliveryEvent::Armed {
-                    request,
-                    command: "printf '%s' \"$ORVEK_OUTCOME\" >> deliveries".into(),
-                }),
-            )
-            .unwrap();
-        let policy = RequestPolicy {
-            version: 1,
-            delivery: DeliveryKind::Source,
-            profile: RepositoryProfile {
-                version: 1,
-                name: "fixture".into(),
-                checks: Default::default(),
-            },
-        };
-        let intake = store
-            .public_artifacts()
-            .write(&serde_json::to_vec(&policy).unwrap())
-            .unwrap()
-            .digest();
-        let (_, task, _) = store
-            .start_request(
-                session,
-                request,
-                "Finish the task".into(),
-                Limits::default(),
-                intake,
-            )
-            .unwrap();
-        store
-            .stop(
-                task.id,
-                task.revision,
-                Outcome::BudgetExhausted,
-                "fixture allowance exhausted".into(),
-            )
-            .unwrap();
-    }
+    fixture.seed_unclaimed(r#"printf '%s' "$ORVEK_OUTCOME" >> deliveries"#);
     fixture.start().await;
-    let events = fixture.hook_events().await;
+    let events = timeout(Duration::from_secs(10), async {
+        loop {
+            let events = fixture.hook_events().await;
+            if events
+                .last()
+                .is_some_and(|event| event["type"] == "finished")
+            {
+                break events;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
     assert_eq!(
         events.last().unwrap()["data"]["result"],
         json!({"type":"succeeded"})
@@ -629,5 +646,42 @@ async fn controller_failure_settles_before_its_notification() {
         .position(|r| r.event["data"]["command"]["data"]["type"] == "claimed")
         .unwrap();
     assert!(settled < claimed);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn recovering_a_blocked_hook_keeps_ipc_responsive() {
+    let endpoint = provider(done()).await;
+    let mut fixture = Fixture::new(&endpoint, "exit 99", false);
+    fixture.seed_unclaimed("printf ready > hook-started; sleep 30");
+    let socket = fixture.socket.clone();
+    let started = fixture.workspace.join("hook-started");
+    let observer = async {
+        timeout(Duration::from_secs(30), async {
+            while !started.exists() {
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let stream = UnixStream::connect(&socket).await;
+        assert!(stream.is_ok(), "a pending hook blocked the IPC listener");
+        let mut stream = stream.unwrap();
+        ipc::write_frame(&mut stream, &Request::new(Command::Info))
+            .await
+            .unwrap();
+        let response: Response = timeout(Duration::from_secs(2), ipc::read_frame(&mut stream))
+            .await
+            .expect("a pending hook blocked host queries")
+            .unwrap();
+        assert!(matches!(response, Response::Info(_)));
+    };
+    tokio::join!(fixture.start(), observer);
+    // Shutdown cancels recovery. The durable pre-spawn claim remains unknown.
+    fixture.stop().await;
+    fixture.start().await;
+    let events = fixture.hook_events().await;
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1]["type"], "claimed");
     fixture.stop().await;
 }

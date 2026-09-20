@@ -384,9 +384,6 @@ pub enum Response {
 }
 
 pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<()> {
-    host.recover_completion_hooks()
-        .await
-        .map_err(io::Error::other)?;
     host.start_queued().await.map_err(io::Error::other)?;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let root = host.state_directory();
@@ -409,6 +406,18 @@ pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<(
     let runs = Arc::new(Semaphore::new(4));
     let watchers = Arc::new(Semaphore::new(8));
     let mut handlers = JoinSet::new();
+    let recovery_host = host.clone();
+    let recovery_shutdown = shutdown.child_token();
+    handlers.spawn(async move {
+        tokio::select! {
+            () = recovery_shutdown.cancelled() => {},
+            result = recovery_host.recover_completion_hooks() => {
+                if let Err(error) = result {
+                    eprintln!("completion hook recovery failed: {error}");
+                }
+            }
+        }
+    });
     loop {
         tokio::select! {
             () = shutdown.cancelled() => break,
