@@ -1179,10 +1179,10 @@ mod tests {
         timeout(Duration::from_secs(3), async {
             loop {
                 let frame: WatchFrame = read_frame(stream).await.unwrap();
-                if let WatchFrame::Warnings { warnings } = frame {
-                    if warnings == expected {
-                        return;
-                    }
+                if let WatchFrame::Warnings { warnings } = frame
+                    && warnings == expected
+                {
+                    return;
                 }
             }
         })
