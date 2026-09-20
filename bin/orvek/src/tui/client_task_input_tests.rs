@@ -236,3 +236,33 @@ fn subagent_spawn_preserves_session_and_parent_identity() {
     assert_eq!(child.session_id, session.to_string());
     assert_eq!(child.parent, Some(ChildId(parent)));
 }
+
+/// The host error and the terminal hint must not both state draft retention.
+#[tokio::test]
+async fn submission_notices_state_each_recovery_hint_once() {
+    let unreachable = tempfile::tempdir().unwrap();
+    let rejected = SubmitFailure {
+        uncertain: false,
+        error: Box::new(
+            submissions::intent(&HostClient::fixture(unreachable.path()), SessionId::new())
+                .await
+                .unwrap_err(),
+        ),
+    };
+    let notice = submission_notice(&rejected);
+    assert!(notice.ends_with(" · Draft retained"), "notice: {notice}");
+    assert_eq!(
+        notice.to_lowercase().matches("draft retained").count(),
+        1,
+        "notice repeated draft retention: {notice}"
+    );
+
+    let uncertain = SubmitFailure {
+        uncertain: true,
+        error: Box::new(Error::HostRequest("lost reply".into())),
+    };
+    assert_eq!(
+        submission_notice(&uncertain),
+        "host request: lost reply · Enter retries the same request"
+    );
+}
