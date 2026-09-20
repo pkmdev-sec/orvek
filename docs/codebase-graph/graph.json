@@ -1829,6 +1829,11 @@
     {
       "kind": "contains",
       "source": "directory:docs",
+      "target": "file:docs/executable-examples.md"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:docs",
       "target": "file:docs/harness-host.md"
     },
     {
@@ -2224,7 +2229,42 @@
     {
       "kind": "contains",
       "source": "directory:examples",
+      "target": "directory:examples/host-docs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples",
       "target": "directory:examples/orvek-memory-cloudflare"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/host-docs",
+      "target": "file:examples/host-docs/completion_hook.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/host-docs",
+      "target": "file:examples/host-docs/fixture.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/host-docs",
+      "target": "file:examples/host-docs/inventory.json"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/host-docs",
+      "target": "file:examples/host-docs/native.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/host-docs",
+      "target": "file:examples/host-docs/reconnect.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/host-docs",
+      "target": "file:examples/host-docs/sandbox.py"
     },
     {
       "kind": "contains",
@@ -2339,6 +2379,11 @@
     {
       "kind": "contains",
       "source": "directory:scripts",
+      "target": "file:scripts/check-doc-examples.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:scripts",
       "target": "file:scripts/check-docs.py"
     },
     {
@@ -2375,6 +2420,11 @@
       "kind": "contains",
       "source": "directory:scripts/tests",
       "target": "file:scripts/tests/test_check_source_tree.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:scripts/tests",
+      "target": "file:scripts/tests/test_doc_examples.py"
     },
     {
       "kind": "contains",
@@ -3679,6 +3729,11 @@
     {
       "kind": "links_to",
       "source": "file:README.md",
+      "target": "file:docs/executable-examples.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:README.md",
       "target": "file:docs/memory.md"
     },
     {
@@ -4115,6 +4170,86 @@
       "kind": "links_to",
       "source": "file:docs/design/tui-references.md",
       "target": "file:docs/design/tui-references.html"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:README.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:docs/compaction.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:docs/configuration.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:docs/harness-host.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:docs/harness-integration.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:docs/memory.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:docs/performance.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:docs/sessions.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:docs/subagents.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:docs/tui-scrolling.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:docs/workspace-execution.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:examples/host-docs/completion_hook.py"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:examples/host-docs/fixture.py"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:examples/host-docs/native.py"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:examples/host-docs/reconnect.py"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:examples/host-docs/sandbox.py"
     },
     {
       "kind": "links_to",
@@ -12259,6 +12394,12 @@
       "path": "examples"
     },
     {
+      "id": "directory:examples/host-docs",
+      "kind": "directory",
+      "label": "host-docs",
+      "path": "examples/host-docs"
+    },
+    {
       "id": "directory:examples/orvek-memory-cloudflare",
       "kind": "directory",
       "label": "orvek-memory-cloudflare",
@@ -12629,7 +12770,7 @@
       "id": "file:.github/workflows/ci.yaml",
       "kind": "file",
       "label": "ci.yaml",
-      "lines": 273,
+      "lines": 283,
       "path": ".github/workflows/ci.yaml"
     },
     {
@@ -12709,7 +12850,7 @@
       "id": "file:README.md",
       "kind": "file",
       "label": "README.md",
-      "lines": 104,
+      "lines": 105,
       "path": "README.md"
     },
     {
@@ -14704,7 +14845,7 @@
       "id": "file:docs/design/autonomy-tracker.sources.json",
       "kind": "file",
       "label": "autonomy-tracker.sources.json",
-      "lines": 898,
+      "lines": 932,
       "path": "docs/design/autonomy-tracker.sources.json"
     },
     {
@@ -14882,6 +15023,14 @@
       "label": "tui-references.md",
       "lines": 58,
       "path": "docs/design/tui-references.md"
+    },
+    {
+      "file_kind": "documentation",
+      "id": "file:docs/executable-examples.md",
+      "kind": "file",
+      "label": "executable-examples.md",
+      "lines": 285,
+      "path": "docs/executable-examples.md"
     },
     {
       "file_kind": "documentation",
@@ -15204,6 +15353,54 @@
       "path": "evals/uv.lock"
     },
     {
+      "file_kind": "python-script",
+      "id": "file:examples/host-docs/completion_hook.py",
+      "kind": "file",
+      "label": "completion_hook.py",
+      "lines": 34,
+      "path": "examples/host-docs/completion_hook.py"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:examples/host-docs/fixture.py",
+      "kind": "file",
+      "label": "fixture.py",
+      "lines": 235,
+      "path": "examples/host-docs/fixture.py"
+    },
+    {
+      "file_kind": "configuration",
+      "id": "file:examples/host-docs/inventory.json",
+      "kind": "file",
+      "label": "inventory.json",
+      "lines": 226,
+      "path": "examples/host-docs/inventory.json"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:examples/host-docs/native.py",
+      "kind": "file",
+      "label": "native.py",
+      "lines": 22,
+      "path": "examples/host-docs/native.py"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:examples/host-docs/reconnect.py",
+      "kind": "file",
+      "label": "reconnect.py",
+      "lines": 43,
+      "path": "examples/host-docs/reconnect.py"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:examples/host-docs/sandbox.py",
+      "kind": "file",
+      "label": "sandbox.py",
+      "lines": 57,
+      "path": "examples/host-docs/sandbox.py"
+    },
+    {
       "file_kind": "cargo-manifest",
       "id": "file:examples/orvek-memory-cloudflare/Cargo.toml",
       "kind": "file",
@@ -15365,6 +15562,14 @@
     },
     {
       "file_kind": "python-script",
+      "id": "file:scripts/check-doc-examples.py",
+      "kind": "file",
+      "label": "check-doc-examples.py",
+      "lines": 150,
+      "path": "scripts/check-doc-examples.py"
+    },
+    {
+      "file_kind": "python-script",
       "id": "file:scripts/check-docs.py",
       "kind": "file",
       "label": "check-docs.py",
@@ -15426,6 +15631,14 @@
       "label": "test_check_source_tree.py",
       "lines": 76,
       "path": "scripts/tests/test_check_source_tree.py"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:scripts/tests/test_doc_examples.py",
+      "kind": "file",
+      "label": "test_doc_examples.py",
+      "lines": 87,
+      "path": "scripts/tests/test_doc_examples.py"
     },
     {
       "file_kind": "python-script",
@@ -19986,26 +20199,26 @@
     ]
   },
   "statistics": {
-    "edges": 2289,
+    "edges": 2316,
     "files_by_kind": {
       "automation": 4,
       "binary-asset": 5,
       "cargo-manifest": 8,
       "ci-workflow": 4,
-      "configuration": 18,
-      "documentation": 52,
-      "python-script": 35,
+      "configuration": 19,
+      "documentation": 53,
+      "python-script": 42,
       "rust-source": 357,
       "supporting-file": 21,
       "typescript-source": 36,
       "web-asset": 20
     },
-    "nodes": 1179,
+    "nodes": 1189,
     "nodes_by_kind": {
       "component": 14,
       "dependency": 72,
-      "directory": 116,
-      "file": 560,
+      "directory": 117,
+      "file": 569,
       "module": 361,
       "package": 7,
       "repository": 1,

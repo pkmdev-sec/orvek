@@ -835,10 +835,41 @@
         "O16",
         "O25"
       ],
-      "owner": "resume-executable-docs",
-      "implementation_revision": null,
-      "results": [],
-      "next_action": "Implement runnable native/sandbox/reconnect/hook examples and inventory; memory/skills and trace links follow integrated T01/T04.",
+      "owner": "finish-context-doc-examples",
+      "implementation_revision": "89011b5",
+      "results": [
+        {
+          "phase": "native_examples",
+          "command": "python3 -B examples/host-docs/native.py /tmp/orvek-autonomy-integrated-target/debug/orvek",
+          "result": "passed",
+          "log": ".agent-map/autonomy/t11-native.log"
+        },
+        {
+          "phase": "native_examples",
+          "command": "python3 -B examples/host-docs/reconnect.py /tmp/orvek-autonomy-integrated-target/debug/orvek",
+          "result": "passed",
+          "log": ".agent-map/autonomy/t11-reconnect.log"
+        },
+        {
+          "phase": "native_examples",
+          "command": "python3 -B examples/host-docs/completion_hook.py /tmp/orvek-autonomy-integrated-target/debug/orvek",
+          "result": "passed",
+          "log": ".agent-map/autonomy/t11-completion_hook.log"
+        },
+        {
+          "phase": "native_examples",
+          "command": "python3 -B examples/host-docs/sandbox.py /tmp/orvek-autonomy-integrated-target/debug/orvek",
+          "result": "passed",
+          "log": ".agent-map/autonomy/t11-sandbox.log"
+        },
+        {
+          "phase": "inventory",
+          "command": "python3 -B -m unittest discover -s scripts/tests -p \"test_*.py\"",
+          "passed": 25,
+          "log": ".agent-map/autonomy/t11-checker-tests.log"
+        }
+      ],
+      "next_action": "Add short memory/skill example; sanitized trace links remain pending T04.",
       "phase_dependencies": {
         "inventory": [],
         "end_to_end_examples": [
@@ -846,8 +877,11 @@
           "T09"
         ]
       },
-      "worktree": "/tmp/orvek-autonomy-t11",
-      "branch": "work/autonomy-t11"
+      "worktree": "/tmp/orvek-autonomy-t11-context",
+      "branch": "work/autonomy-t11-context",
+      "followup_revisions": [
+        "2a40464"
+      ]
     }
   ],
   "research_checks": [
