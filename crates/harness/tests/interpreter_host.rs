@@ -748,3 +748,40 @@ async fn interpreter_search_and_context_reads_keep_session_authorization() {
     assert_eq!(output["calls"].as_array().unwrap().len(), 3);
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn interpreter_encoding_never_runs_inherited_accessors() {
+    let fixture = Fixture::new();
+    fs::write(fixture.workspace.join("note"), "hidden-getter-read").unwrap();
+    let script = r#"
+      globalThis.hits = 0;
+      Object.defineProperty(Object.prototype, 'get', {get() {
+        hits++;
+        delete Object.prototype.get;
+        host.call('read_file', {path: 'note'});
+        return undefined;
+      }, configurable: true});
+      let error = '';
+      try { host.checkpoint({safe: 1}); } catch (e) { error = String(e); }
+      delete Object.prototype.get;
+      return {hits, error};
+    "#;
+    let (endpoint, server) = provider(vec![eval("poison", script), done()]).await;
+    let host = fixture.native(&endpoint);
+    let session = fixture.session(&host).await;
+    let result = run(
+        &host,
+        session,
+        "Checkpoint plain data without invoking accessors",
+    )
+    .await;
+    let out = output(&host, session, "poison").await;
+    assert_eq!(out["output"]["value"]["hits"], 0, "{out}");
+    assert_eq!(out["output"]["value"]["error"], "");
+    assert!(
+        result.task.jobs.is_empty(),
+        "an inherited accessor executed a host job: {:?}",
+        result.task.jobs
+    );
+    server.await.unwrap();
+}

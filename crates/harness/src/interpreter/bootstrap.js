@@ -43,7 +43,14 @@
                     throw new DataError("symbol, accessor or hidden property is not JSON data");
                 if (array && ((string(number(key)) !== key || number(key) < 0 || !isInteger(number(key))) || number(key) >= value.length))
                     throw new DataError("array has non-index properties");
-                defineProperty(result, key, {value:copy(props[key].value), enumerable:true, writable:true, configurable:true});
+                // A plain descriptor literal inherits Object.prototype, so a poisoned
+                // `get` accessor there would run script during encoding.
+                const descriptor = create(null);
+                descriptor.value = copy(props[key].value);
+                descriptor.enumerable = true;
+                descriptor.writable = true;
+                descriptor.configurable = true;
+                defineProperty(result, key, descriptor);
             }
             if (array && ownKeys(props).length !== value.length + 1) throw new DataError("sparse array is not lossless JSON data");
             remove(seen,value);
