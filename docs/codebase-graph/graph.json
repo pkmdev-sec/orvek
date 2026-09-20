@@ -1669,6 +1669,11 @@
     {
       "kind": "contains",
       "source": "directory:crates/harness/tests",
+      "target": "file:crates/harness/tests/store_owner.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/tests",
       "target": "file:crates/harness/tests/subagents.rs"
     },
     {
@@ -7368,6 +7373,16 @@
     },
     {
       "kind": "implemented_by",
+      "source": "module:orvek-harness:test:store_owner::tests::store_owner",
+      "target": "file:crates/harness/tests/store_owner.rs"
+    },
+    {
+      "kind": "imports",
+      "source": "module:orvek-harness:test:store_owner::tests::store_owner",
+      "target": "package:orvek-harness"
+    },
+    {
+      "kind": "implemented_by",
       "source": "module:orvek-harness:test:subagents::tests::subagents",
       "target": "file:crates/harness/tests/subagents.rs"
     },
@@ -9899,6 +9914,11 @@
     {
       "kind": "defines",
       "source": "package:orvek-harness",
+      "target": "target:orvek-harness:test:store_owner"
+    },
+    {
+      "kind": "defines",
+      "source": "package:orvek-harness",
       "target": "target:orvek-harness:test:subagents"
     },
     {
@@ -11435,6 +11455,11 @@
       "kind": "contains",
       "source": "target:orvek-harness:test:session_journal",
       "target": "module:orvek-harness:test:session_journal::tests::session_journal"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:test:store_owner",
+      "target": "module:orvek-harness:test:store_owner::tests::store_owner"
     },
     {
       "kind": "contains",
@@ -14967,7 +14992,7 @@
       "id": "file:crates/harness/src/store.rs",
       "kind": "file",
       "label": "store.rs",
-      "lines": 3604,
+      "lines": 3614,
       "path": "crates/harness/src/store.rs"
     },
     {
@@ -15201,6 +15226,14 @@
       "label": "session_journal.rs",
       "lines": 469,
       "path": "crates/harness/tests/session_journal.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/harness/tests/store_owner.rs",
+      "kind": "file",
+      "label": "store_owner.rs",
+      "lines": 201,
+      "path": "crates/harness/tests/store_owner.rs"
     },
     {
       "file_kind": "rust-source",
@@ -19819,6 +19852,13 @@
       "target": "target:orvek-harness:test:session_journal"
     },
     {
+      "id": "module:orvek-harness:test:store_owner::tests::store_owner",
+      "kind": "module",
+      "label": "orvek-harness:test:store_owner::tests::store_owner",
+      "path": "crates/harness/tests/store_owner.rs",
+      "target": "target:orvek-harness:test:store_owner"
+    },
+    {
       "id": "module:orvek-harness:test:subagents::tests::subagents",
       "kind": "module",
       "label": "orvek-harness:test:subagents::tests::subagents",
@@ -21107,6 +21147,12 @@
       "package": "orvek-harness"
     },
     {
+      "id": "target:orvek-harness:test:store_owner",
+      "kind": "target",
+      "label": "orvek-harness test:store_owner",
+      "package": "orvek-harness"
+    },
+    {
       "id": "target:orvek-harness:test:subagents",
       "kind": "target",
       "label": "orvek-harness test:subagents",
@@ -21274,7 +21320,7 @@
     ]
   },
   "statistics": {
-    "edges": 2438,
+    "edges": 2443,
     "files_by_kind": {
       "automation": 4,
       "binary-asset": 5,
@@ -21283,21 +21329,21 @@
       "configuration": 25,
       "documentation": 55,
       "python-script": 47,
-      "rust-source": 376,
+      "rust-source": 377,
       "supporting-file": 23,
       "typescript-source": 36,
       "web-asset": 20
     },
-    "nodes": 1252,
+    "nodes": 1255,
     "nodes_by_kind": {
       "component": 14,
       "dependency": 72,
       "directory": 121,
-      "file": 603,
-      "module": 380,
+      "file": 604,
+      "module": 381,
       "package": 7,
       "repository": 1,
-      "target": 53,
+      "target": 54,
       "workspace": 1
     },
     "static_reference_coverage": {
