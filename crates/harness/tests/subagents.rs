@@ -386,6 +386,26 @@ async fn child_reads_the_workspace_records_a_job_and_submits_a_valid_result() {
         .unwrap();
     assert_eq!(tool["span"]["tool_call"], "call-1");
     assert_eq!(tool["span"]["call"], dispatches[1]["span"]["call"]);
+    assert_eq!(replay.causality.calls.len(), 3);
+    assert!(
+        replay
+            .causality
+            .calls
+            .values()
+            .all(|call| call.prepared_body_checked)
+    );
+    assert!(replay.causality.calls.values().all(|call| {
+        call.gaps
+            .contains(&orvek_harness::trace::CausalGap::ChildOriginUnavailable)
+    }));
+    assert_eq!(replay.causality.tools.len(), 1);
+    assert!(
+        replay
+            .causality
+            .tools
+            .values()
+            .all(|tool| matches!(tool.result, orvek_harness::trace::RecordedStatus::Served))
+    );
     assert_eq!(replay.cost.calls, 3);
     assert!(replay.cost.complete);
     assert_eq!(replay.cost.total_tokens, Some(20));

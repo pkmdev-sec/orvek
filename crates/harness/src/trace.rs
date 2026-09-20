@@ -17,6 +17,9 @@ use std::{
 };
 use uuid::Uuid;
 
+mod receipts;
+pub use receipts::{CallReplay, CausalGap, CausalReplay, RecordedStatus, ToolReplay};
+
 const VERSION: u32 = 1;
 const FILE_LIMIT: u64 = 256 * 1024 * 1024;
 
@@ -100,6 +103,8 @@ struct Envelope {
 }
 #[derive(Debug, Serialize)]
 pub struct ReplayReport {
+    /// Causal gaps are separate from journal and artifact closure consistency.
+    pub causality: CausalReplay,
     pub exact: bool,
     pub identity: ReplayIdentity,
     pub sessions: BTreeMap<SessionId, SessionState>,
@@ -649,7 +654,8 @@ impl TraceBundle {
                 None => unknown_calls += 1,
             }
         }
-        Ok(ReplayReport {
+        let mut report = ReplayReport {
+            causality: CausalReplay::default(),
             exact: false,
             identity,
             sessions,
@@ -669,7 +675,9 @@ impl TraceBundle {
                 },
             },
             unresolved: vec![],
-        })
+        };
+        report.causality = receipts::replay(self, &report, &mut materialization)?;
+        Ok(report)
     }
 
     /// Each fixture ends immediately before a recorded model dispatch (not its answer).
@@ -782,7 +790,7 @@ impl TraceBundle {
         let report = self.replay()?;
         let tasks=report.tasks.values().map(|task|json!({"task":task.id,"intent":task.request,"contract":task.contract,"candidate":task.candidate,"delivery":task.delivery,"patch":task.delivery.as_ref().filter(|delivery|delivery.kind == crate::contract::DeliveryKind::Patch).map(|delivery|json!({"digest":delivery.artifact,"payload":self.artifacts.get(&delivery.artifact)})),"verification":task.evidence,"certificates":task.certificates,"outcome":task.outcome})).collect::<Vec<_>>();
         Ok(
-            json!({"version":VERSION,"range":{"after":self.after,"through":self.through},"exporter_revision":self.exporter_revision,"exact":report.exact,"tasks":tasks,"cost":report.cost,"provenance":report.sessions.values().map(|s|json!({"session":s.id,"settings":s.model(),"admission":s.admission(),"context":s.context_view})).collect::<Vec<_>>(),"spans":report.spans,"unresolved":report.unresolved,"limitations":["Receipt replay is not fresh verification.","Native finished_unverified is not a completion certificate.","Provider-hidden reasoning and unrecorded external state are unavailable.","Historical missing call/child links are not inferred.","Dispatch payloads are logical HTTP templates, not effective provider bodies. Effective body/transport/dialect are available only in captured outcomes; missing outcomes (including crashes) leave wire provenance unavailable.","Prepared bodies and dispatched attempts do not prove remote delivery. Headers, credentials, endpoints and network framing are not captured.","Hashes detect corruption, not a malicious wholesale rewrite."]}),
+            json!({"version":VERSION,"range":{"after":self.after,"through":self.through},"exporter_revision":self.exporter_revision,"exact":report.exact,"causality":report.causality,"tasks":tasks,"cost":report.cost,"provenance":report.sessions.values().map(|s|json!({"session":s.id,"settings":s.model(),"admission":s.admission(),"context":s.context_view})).collect::<Vec<_>>(),"spans":report.spans,"unresolved":report.unresolved,"limitations":["Receipt replay is not fresh verification.","Native finished_unverified is not a completion certificate.","Provider-hidden reasoning and unrecorded external state are unavailable.","Historical missing call/child links are not inferred.","Dispatch payloads are logical HTTP templates, not effective provider bodies. Effective body/transport/dialect are available only in captured outcomes; missing outcomes (including crashes) leave wire provenance unavailable.","Prepared bodies and dispatched attempts do not prove remote delivery. Headers, credentials, endpoints and network framing are not captured.","Hashes detect corruption, not a malicious wholesale rewrite."]}),
         )
     }
 }
@@ -793,6 +801,11 @@ impl TraceBundle {
 struct MaterializationBudget(u64);
 
 impl MaterializationBudget {
+    fn charge(&mut self, value: &impl Serialize) -> Result<(), TraceError> {
+        serde_json::to_writer(self, value)?;
+        Ok(())
+    }
+
     fn consume(&mut self, bytes: u64) -> Result<(), TraceError> {
         self.0 = self
             .0
@@ -1015,3 +1028,6 @@ pub(crate) fn record_dispatch(
     )?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

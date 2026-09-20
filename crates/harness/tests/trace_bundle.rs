@@ -440,7 +440,14 @@ fn assert_shared_receipt_is_bounded(
         panic!("missing fixture receipt")
     };
     let materialized_bytes = serde_json::to_vec(&report.spans).unwrap().len()
-        + bodies.len() * STANDARD.decode(encoded).unwrap().len();
+        + bodies.len() * STANDARD.decode(encoded).unwrap().len()
+        + bundle
+            .records
+            .iter()
+            .filter(|record| record.kind == "session")
+            .map(|record| STANDARD.decode(&record.event_base64).unwrap().len())
+            .sum::<usize>()
+        + serde_json::to_vec(&report.causality).unwrap().len();
     bundle.limits.bytes = materialized_bytes as u64;
     assert!(
         bundle.replay().is_ok(),
@@ -722,4 +729,75 @@ fn legacy_usage_charged_keeps_totals_unknown() {
 #[test]
 fn mixed_linked_and_legacy_usage_charged_keeps_totals_unknown() {
     assert_legacy_usage_charged_keeps_totals_unknown(true);
+}
+
+fn append_span(store: &mut Store, session: SessionId, request: Uuid, span: serde_json::Value) {
+    let record = store
+        .public_artifacts()
+        .write(&serde_json::to_vec(&span).unwrap())
+        .unwrap()
+        .digest();
+    let state = store.load_session(session).unwrap();
+    store
+        .session_command(
+            session,
+            state.revision,
+            Uuid::new_v4(),
+            SessionCommand::TraceRecorded { request, record },
+        )
+        .unwrap();
+}
+
+#[test]
+fn hash_correct_dispatch_cannot_contradict_journal_identity() {
+    let (root, mut store, session) = fixture();
+    let task = start_task(&mut store, session);
+    let request = store.load_session(session).unwrap().active_request.unwrap();
+    let blob = store.public_artifacts().write(b"[]").unwrap().digest();
+    append_span(
+        &mut store,
+        session,
+        request,
+        json!({
+            "version":1, "kind":"model_dispatch", "session":SessionId::new(),
+            "request":request,"task":task,"child":null,"call":Uuid::new_v4(),
+            "model":ModelSettings::default(),"input":blob,"tools":blob,
+            "instructions":blob,"payload":blob,"cache":{}
+        }),
+    );
+    let error = TraceBundle::export(
+        root.path(),
+        None,
+        Default::default(),
+        &BTreeSet::new(),
+        None,
+    )
+    .expect_err("a correctly hashed dispatch with the wrong session must fail");
+    assert!(error.to_string().contains("session"), "{error}");
+}
+
+#[test]
+fn hash_correct_child_response_cannot_contradict_journal_request() {
+    let (root, mut store, session) = fixture();
+    let task = start_task(&mut store, session);
+    let request = store.load_session(session).unwrap().active_request.unwrap();
+    append_span(
+        &mut store,
+        session,
+        request,
+        json!({
+            "version":1,"kind":"model_response","session":session,"request":Uuid::new_v4(),
+            "task":task,"child":Uuid::new_v4(),"call":Uuid::new_v4(),
+            "outcome":orvek_harness::inference::CallOutcome::default()
+        }),
+    );
+    let error = TraceBundle::export(
+        root.path(),
+        None,
+        Default::default(),
+        &BTreeSet::new(),
+        None,
+    )
+    .expect_err("a correctly hashed response with the wrong request must fail");
+    assert!(error.to_string().contains("request"), "{error}");
 }

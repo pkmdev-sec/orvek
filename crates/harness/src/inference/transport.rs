@@ -547,13 +547,10 @@ impl ResponsesClient {
         let auth = override_route
             .map(|model_route| model_route.auth.as_ref())
             .unwrap_or(&self.auth);
-        let mut wire = request.wire(route.transport);
         if auth.mode() == AuthMode::ChatGpt {
             state.decoder.dialect = ResponseDialect::ChatGpt;
-            let fields = wire.as_object_mut().expect("request wire is an object");
-            fields.remove("max_output_tokens");
-            fields.remove("truncation");
         }
+        let wire = request.effective_wire(route.transport, state.decoder.dialect);
         let body = serde_json::to_string(&wire).map_err(|_| FailureKind::InvalidRequest)?;
         if body.len() > self.limits.max_request_bytes {
             return Err(FailureKind::SizeLimit);

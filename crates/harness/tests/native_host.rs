@@ -477,6 +477,14 @@ async fn native_task_retries_a_pre_generation_authentication_rejection() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     assert_eq!(prefixes.len(), 2);
+    assert!(replay.causality.complete, "{:?}", replay.causality);
+    assert!(
+        replay
+            .causality
+            .calls
+            .values()
+            .all(|call| call.prepared_body_checked)
+    );
     for prefix in prefixes {
         assert_eq!(prefix.decision["payload_kind"], "logical_http_template");
         assert_eq!(prefix.decision["wire"]["status"], "unavailable");
@@ -509,6 +517,12 @@ async fn native_task_retries_a_pre_generation_authentication_rejection() {
     )
     .unwrap();
     let interrupted = interrupted.replay().unwrap();
+    assert!(interrupted.exact);
+    assert!(!interrupted.causality.complete);
+    assert!(interrupted.causality.calls.values().any(|call| {
+        call.gaps
+            .contains(&orvek_harness::trace::CausalGap::OutcomeMissing)
+    }));
     assert!(
         !interrupted
             .spans
