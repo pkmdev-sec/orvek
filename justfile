@@ -106,10 +106,11 @@ build-harbor-agent platform='':
             exit 1
         }
         test -z "$(find "$source_tree" -type f ! -name '*.rs' \
-            ! -path 'bin/orvek/src/core/compaction/fonts/8x13-ascii.bin' \
-            ! -path 'bin/orvek/src/core/compaction/fonts/LICENSE' \
-            ! -path 'bin/orvek/src/core/compaction/fonts/README.md' \
-            ! -path 'bin/orvek/src/core/compaction/fonts/generate.py' \
+            ! -path 'crates/harness/src/context_render/fonts/8x13-ascii.bin' \
+            ! -path 'crates/harness/src/context_render/fonts/LICENSE' \
+            ! -path 'crates/harness/src/context_render/fonts/README.md' \
+            ! -path 'crates/harness/src/context_render/fonts/generate.py' \
+            ! -path 'crates/harness/src/interpreter/bootstrap.js' \
             ! -path 'crates/harness/src/runtime/IMPLEMENTATION.md' \
             ! -path 'crates/harness/src/review/README.md' -print -quit)" || {
             echo "refusing to send unrecognized source assets below $source_tree/ to the Harbor build" >&2
