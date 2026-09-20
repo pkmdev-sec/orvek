@@ -78,9 +78,9 @@ these examples control the provider and use only the temporary workspace.
 
 ## Coverage limits
 
-- **Memory scan/read and skill discovery: pending T01.** Configuration and JSON
-  shapes in the guides are illustrative, not proof that the host exposes them.
-  Add examples that inspect actual tool outputs and persistence after integration.
+- **Memory/skill examples: pending.** T01 host wiring is verified separately by
+  `scripts/test-host-context.py`. Dedicated short examples in this guide still need
+  to inspect actual memory outputs and on-demand skill bodies.
 - **Sanitized trace links: pending T04.** Journal assertions below are not portable
   trace bundles. No trace exports or offline replay claims are made here.
 - Reconnect drops an IPC acknowledgement and reconnects a journal watch. It does

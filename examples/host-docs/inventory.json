@@ -156,9 +156,23 @@
   {
     "guide": "docs/memory.md",
     "block": 6,
+    "sha256": "845d0751fa9de16ef4894d30189d9f2329e6f6bbe8475c163b839ff5ea980909",
+    "kind": "illustrative",
+    "reason": "Skill root configuration contains a user-specific path; the host-context lever tests discovery with an isolated fixture."
+  },
+  {
+    "guide": "docs/memory.md",
+    "block": 7,
+    "sha256": "e0b1a43ed7d8fd7414980c9a8169c87e1e6190cfb7be158243597797e4d83e58",
+    "kind": "illustrative",
+    "reason": "Build-and-run instructions for the standalone host-context verification script; they require a built binary rather than forming a self-contained scenario."
+  },
+  {
+    "guide": "docs/memory.md",
+    "block": 8,
     "sha256": "470e4ac1617b2f7c915992d108d9b7d2ef04fa4bf828bed3700f38954566c3fe",
     "kind": "external-service",
-    "reason": "Mutates remote/local memory and requires a configured service."
+    "reason": "Push/pull mutates remote/local memory and requires a configured service."
   },
   {
     "guide": "docs/performance.md",

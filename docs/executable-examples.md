@@ -27,9 +27,9 @@ these examples control the provider and use only the temporary workspace.
 
 ## Coverage limits
 
-- **Memory scan/read and skill discovery: pending T01.** Configuration and JSON
-  shapes in the guides are illustrative, not proof that the host exposes them.
-  Add examples that inspect actual tool outputs and persistence after integration.
+- **Memory/skill examples: pending.** T01 host wiring is verified separately by
+  `scripts/test-host-context.py`. Dedicated short examples in this guide still need
+  to inspect actual memory outputs and on-demand skill bodies.
 - **Sanitized trace links: pending T04.** Journal assertions below are not portable
   trace bundles. No trace exports or offline replay claims are made here.
 - Reconnect drops an IPC acknowledgement and reconnects a journal watch. It does
@@ -273,7 +273,9 @@ The existing `scripts/check-docs.py` still checks links and syntax separately.
 | [docs/memory.md](../docs/memory.md) #3 | illustrative | Write shape assumes an existing remote record and writer permission. |
 | [docs/memory.md](../docs/memory.md) #4 | illustrative | Delete shape assumes an existing remote record and writer permission. |
 | [docs/memory.md](../docs/memory.md) #5 | external-service | Remote endpoint, workspace and credential are placeholders. |
-| [docs/memory.md](../docs/memory.md) #6 | external-service | Mutates remote/local memory and requires a configured service. |
+| [docs/memory.md](../docs/memory.md) #6 | illustrative | Skill root configuration contains a user-specific path; the host-context lever tests discovery with an isolated fixture. |
+| [docs/memory.md](../docs/memory.md) #7 | illustrative | Build-and-run instructions for the standalone host-context verification script; they require a built binary rather than forming a self-contained scenario. |
+| [docs/memory.md](../docs/memory.md) #8 | external-service | Push/pull mutates remote/local memory and requires a configured service. |
 | [docs/performance.md](../docs/performance.md) #1 | illustrative | Benchmark command; measures performance rather than host capability. |
 | [docs/sessions.md](../docs/sessions.md) #1 | illustrative | Interactive selector and SESSION_ID need existing user state. |
 | [docs/sessions.md](../docs/sessions.md) #2 | external-service | Downloads browser dependencies and installs development assets. |
