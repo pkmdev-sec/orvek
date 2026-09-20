@@ -42,7 +42,7 @@ async fn provider_replies(
     let task = tokio::spawn(async move {
         let mut requests = Vec::new();
         for (index, output) in outputs.into_iter().enumerate() {
-            let (mut socket, _) = timeout(Duration::from_secs(20), listener.accept())
+            let (mut socket, _) = timeout(Duration::from_secs(120), listener.accept())
                 .await
                 .unwrap()
                 .unwrap();

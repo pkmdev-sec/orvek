@@ -6,6 +6,7 @@ use orvek_harness::{
     ipc::WatchFrame,
     session::{
         JournalRecord, SessionCommand, SessionConfig, SessionCursor, SessionEvent, SessionId,
+        ToolOutputBuffers,
     },
     state::{TaskEvent, TaskId},
 };
@@ -120,6 +121,7 @@ pub(crate) enum ViewChange {
 }
 
 pub(crate) struct HostProjection {
+    tool_outputs: ToolOutputBuffers,
     session: SessionId,
     sequence: u64,
     revision: u64,
@@ -134,6 +136,7 @@ pub(crate) struct HostProjection {
 impl HostProjection {
     pub(crate) fn new(session: SessionId, after: u64) -> Self {
         Self {
+            tool_outputs: ToolOutputBuffers::default(),
             session,
             sequence: after,
             revision: 0,
@@ -462,6 +465,27 @@ impl HostProjection {
                         call,
                         cost_usd,
                     }],
+                    SessionCommand::ToolResultPart {
+                        request,
+                        call_id,
+                        offset,
+                        output,
+                    } => match self.tool_outputs.append(request, &call_id, offset, &output) {
+                        Ok(()) => Vec::new(),
+                        Err(error) => vec![ViewChange::Warning(error.to_string())],
+                    },
+                    SessionCommand::ToolResultEnd {
+                        request,
+                        call_id,
+                        digest,
+                    } => match self.tool_outputs.finish(request, &call_id, digest) {
+                        Ok(output) => vec![ViewChange::ToolResult {
+                            request: Some(request),
+                            call_id,
+                            output,
+                        }],
+                        Err(error) => vec![ViewChange::Warning(error.to_string())],
+                    },
                     SessionCommand::ToolResult {
                         request,
                         call_id,
@@ -1219,5 +1243,65 @@ mod tests {
             [ViewChange::DiscardPreviews]
         ));
         assert_eq!(projection.sequence(), 4);
+    }
+    #[test]
+    fn tool_output_parts_publish_one_verified_result_and_survive_replayed_frames() {
+        let session = SessionId::new();
+        let request = Uuid::new_v4();
+        let mut projection = HostProjection::new(session, 0);
+        let first = event(
+            session,
+            1,
+            SessionCommand::ToolResultPart {
+                request,
+                call_id: "chunked".into(),
+                offset: 0,
+                output: "hello ".into(),
+            },
+        );
+        assert!(projection.apply(first.clone()).is_empty());
+        assert!(projection.apply(first).is_empty());
+        assert!(
+            projection
+                .apply(event(
+                    session,
+                    2,
+                    SessionCommand::ToolResultPart {
+                        request,
+                        call_id: "chunked".into(),
+                        offset: 6,
+                        output: "💎".into(),
+                    }
+                ))
+                .is_empty()
+        );
+        let changes = projection.apply(event(
+            session,
+            3,
+            SessionCommand::ToolResultEnd {
+                request,
+                call_id: "chunked".into(),
+                digest: Digest::of("hello 💎".as_bytes()),
+            },
+        ));
+        assert!(
+            matches!(changes.as_slice(), [ViewChange::ToolResult {output, ..}] if output == "hello 💎")
+        );
+    }
+
+    #[test]
+    fn incomplete_tool_output_is_a_warning_not_a_fabricated_result() {
+        let session = SessionId::new();
+        let mut projection = HostProjection::new(session, 0);
+        let changes = projection.apply(event(
+            session,
+            1,
+            SessionCommand::ToolResultEnd {
+                request: Uuid::new_v4(),
+                call_id: "missing".into(),
+                digest: Digest::of(b"missing"),
+            },
+        ));
+        assert!(matches!(changes.as_slice(), [ViewChange::Warning(_)]));
     }
 }

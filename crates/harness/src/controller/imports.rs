@@ -17,7 +17,6 @@ impl Host {
         source_session: String,
         request: SessionAdmissionRequest,
     ) -> Result<SessionState, HostError> {
-        let request = self.canonicalize_admission_request(request)?;
         let fingerprint = Digest::of_value(&(
             "orvek.import.request.v2",
             &database,
@@ -32,6 +31,7 @@ impl Host {
         {
             return Ok(existing);
         }
+        let request = self.canonicalize_admission_request(request)?;
         let database = database.canonicalize()?;
         if source_session.is_empty() || source_session.len() > 256 {
             return Err(HostError::Invalid("legacy import input exceeds its bounds"));

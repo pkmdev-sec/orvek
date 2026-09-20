@@ -2,6 +2,7 @@
 //! Process groups clean up ordinary descendants, not processes that escape by daemonizing.
 use super::{Expected, ReadArgs, SearchArgs, WriteArgs, encoded};
 use crate::Digest;
+use orvek_executor::MAX_COMMAND_BYTES;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -146,7 +147,7 @@ impl HostTools {
             let cwd = fs::canonicalize(&context.cwd)?;
             let result = if name == "exec_command" {
                 let args: ExecArgs = decode(arguments)?;
-                if args.command.trim().is_empty() || args.command.len() > 65536 { return Err(HostToolError::InvalidArguments); }
+                if args.command.trim().is_empty() || args.command.len() > MAX_COMMAND_BYTES { return Err(HostToolError::InvalidArguments); }
                 let actual_cwd = fs::canonicalize(resolve(&cwd, args.cwd.as_deref().unwrap_or("."))?)?;
                 let native = run_command(args.command, actual_cwd, &context, cancellation).await?;
                 let unknown = matches!(native.status, NativeExecutionStatus::Unknown(_));

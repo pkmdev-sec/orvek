@@ -401,3 +401,24 @@ async fn workspace_network_and_user_tools_do_not_change_protected_verification()
     assert_eq!(output.status, ExecutionStatus::Exited(0), "{output:?}");
     assert_eq!(output.stdout, b"installed-tool-ok");
 }
+
+#[tokio::test]
+#[ignore = "requires local Docker and a built Linux helper"]
+async fn maximum_command_json_escaping_does_not_fail_inside_the_helper() {
+    let root = workspace_tempdir();
+    let executor = DockerExecutor::connect("debian:bookworm-slim")
+        .await
+        .unwrap();
+    let prefix = "printf observed #";
+    let command = format!(
+        "{prefix}{}",
+        "\u{1}".repeat(orvek_executor::MAX_COMMAND_BYTES - prefix.len())
+    );
+    assert_eq!(command.len(), orvek_executor::MAX_COMMAND_BYTES);
+    let output = executor
+        .run(&request(root.path(), &command), CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(output.status, ExecutionStatus::Exited(0), "{output:?}");
+    assert_eq!(output.stdout, b"observed");
+}

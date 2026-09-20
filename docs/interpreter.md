@@ -111,3 +111,8 @@ provider tokens. Metrics include fixture request counts, those input bytes, and
 single-run latency. Provider cost
 stays unknown. Scripted response counts are not live-model token, quality, or cost
 savings evidence.
+
+Large returned JSON values and checkpoints remain lossless. Interpreter values use content-addressed
+artifacts. When the outer tool result exceeds one journal record, the host stores ordered UTF-8 parts
+and a digest-checked end record in one transaction. Only the complete result enters history; reconnect
+and offline replay reconstruct the same bytes. Individual journal records keep their existing ceiling.

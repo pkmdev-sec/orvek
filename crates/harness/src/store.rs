@@ -26,7 +26,7 @@ use thiserror::Error;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-const SCHEMA_VERSION: i32 = 11;
+const SCHEMA_VERSION: i32 = 12;
 const MAX_EVENT_BYTES: usize = 512 * 1024;
 const MAX_JOURNAL_PAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_HOST_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
@@ -162,11 +162,12 @@ impl Store {
                 migrate_v8_to_v9(&mut connection)?;
             }
             8 => migrate_v8_to_v9(&mut connection)?,
-            9 | 10 | SCHEMA_VERSION => {}
+            9 | 10 | 11 | SCHEMA_VERSION => {}
             unsupported => return Err(StoreError::Schema(unsupported)),
         }
         event_intake::initialize(&connection)?;
         monitor::initialize(&connection)?;
+        connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         let artifacts = ArtifactStore::open(&root.join("artifacts"), max_artifact_bytes)?;
         Ok(Self {
             connection,
@@ -1060,6 +1061,8 @@ impl Store {
             | SessionCommand::ProviderUsage { request, .. }
             | SessionCommand::WorkspaceSaved { request, .. }
             | SessionCommand::ToolResult { request, .. }
+            | SessionCommand::ToolResultPart { request, .. }
+            | SessionCommand::ToolResultEnd { request, .. }
             | SessionCommand::TaskLinked { request, .. }
             | SessionCommand::TurnSettled { request, .. }
                 if state.active_request != Some(*request) =>
@@ -1236,6 +1239,12 @@ impl Store {
                 }
             }
             SessionCommand::ToolResult {
+                request, call_id, ..
+            }
+            | SessionCommand::ToolResultPart {
+                request, call_id, ..
+            }
+            | SessionCommand::ToolResultEnd {
                 request, call_id, ..
             } => {
                 if !state
@@ -2631,6 +2640,42 @@ fn append_session_command(
     };
     let bytes = serde_json::to_vec(&event)?;
     if bytes.len() > MAX_EVENT_BYTES {
+        if let SessionCommand::ToolResult {
+            request,
+            call_id,
+            output,
+        } = command
+        {
+            let mut offset = 0;
+            while offset < output.len() {
+                // Six-byte JSON escaping still leaves room for the event envelope.
+                let end = output.floor_char_boundary((offset + 64 * 1024).min(output.len()));
+                append_session_command(
+                    transaction,
+                    state,
+                    head,
+                    Uuid::new_v5(&operation, &(offset as u64).to_le_bytes()),
+                    SessionCommand::ToolResultPart {
+                        request,
+                        call_id: call_id.clone(),
+                        offset,
+                        output: output[offset..end].to_owned(),
+                    },
+                )?;
+                offset = end;
+            }
+            return append_session_command(
+                transaction,
+                state,
+                head,
+                operation,
+                SessionCommand::ToolResultEnd {
+                    request,
+                    call_id,
+                    digest: Digest::of(output.as_bytes()),
+                },
+            );
+        }
         return Err(StoreError::Invalid("session command exceeds journal limit"));
     }
     state.apply(operation, &command)?;

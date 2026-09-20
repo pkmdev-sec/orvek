@@ -19,8 +19,8 @@ fi
 rustup target add "$target"
 cd "$repo"
 case "$arch" in
-  aarch64) CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$linker" cargo build -p orvek-executor --features stub --target "$target" --release ;;
-  x86_64) CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$linker" cargo build -p orvek-executor --features stub --target "$target" --release ;;
+  aarch64) CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$linker" cargo build --locked -p orvek-executor --features stub --target "$target" --release ;;
+  x86_64) CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$linker" cargo build --locked -p orvek-executor --features stub --target "$target" --release ;;
 esac
 out="$repo/target/executor/orvek-executor-linux-$arch"
 mkdir -p "$repo/target/executor"

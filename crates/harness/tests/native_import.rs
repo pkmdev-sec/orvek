@@ -1,5 +1,5 @@
 use orvek_harness::{
-    Channel,
+    Channel, Digest,
     controller::Host,
     inference::{
         Limits, ModelSettings, ResponsesClient, Route, Transport,
@@ -12,8 +12,17 @@ use rusqlite::{Connection, params};
 use serde_json::json;
 
 #[tokio::test]
+async fn native_import_retry_does_not_reopen_deleted_source_or_workspace() {
+    import_retry(false).await;
+}
+
+#[tokio::test]
 #[ignore = "requires local Docker and configured ORVEK_EXECUTOR_HELPER"]
 async fn legacy_import_creates_one_native_session_without_old_completion_or_execution() {
+    import_retry(true).await;
+}
+
+async fn import_retry(sandbox: bool) {
     let root = tempfile::tempdir().unwrap();
     let database = root.path().join("legacy.sqlite3");
     let connection = Connection::open(&database).unwrap();
@@ -55,13 +64,17 @@ async fn legacy_import_creates_one_native_session_without_old_completion_or_exec
     .unwrap();
     let source = root.path().join("source");
     std::fs::create_dir(&source).unwrap();
-    let host = Host::open(
-        &root.path().join("host"),
-        client,
-        DockerExecutor::connect("debian:bookworm-slim")
-            .await
-            .unwrap(),
-    )
+    let host = if sandbox {
+        Host::open(
+            &root.path().join("host"),
+            client,
+            DockerExecutor::connect("debian:bookworm-slim")
+                .await
+                .unwrap(),
+        )
+    } else {
+        Host::open_native(&root.path().join("host"), client, Digest::of(b"fixture"))
+    }
     .unwrap();
     let request = SessionAdmissionRequest::new(
         source,
@@ -104,6 +117,16 @@ async fn legacy_import_creates_one_native_session_without_old_completion_or_exec
         .await
         .unwrap();
     assert_eq!(recovered.id, first.id);
+    assert!(
+        host.import_legacy_request(
+            operation,
+            database.clone(),
+            "different".into(),
+            request.clone()
+        )
+        .await
+        .is_err()
+    );
     assert!(
         host.import_legacy_request(uuid::Uuid::new_v4(), database, "old".into(), request)
             .await

@@ -785,3 +785,48 @@ async fn interpreter_encoding_never_runs_inherited_accessors() {
     );
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn interpreter_large_checkpoint_is_artifact_backed() {
+    let fixture = Fixture::new();
+    let (endpoint, server) = provider(vec![
+        eval(
+            "checkpoint",
+            "host.checkpoint({text:'x'.repeat(600000)}); return {saved:true};",
+        ),
+        done(),
+    ])
+    .await;
+    let host = fixture.native(&endpoint);
+    let session = fixture.session(&host).await;
+    let result = run(&host, session, "Save large interpreter state").await;
+    assert_eq!(result.task.outcome, Some(Outcome::FinishedUnverified));
+    let state = host.session(session).await.unwrap();
+    let checkpoint = state.interpreter.checkpoint.expect("checkpoint was saved");
+    let value = artifact(&host, checkpoint.artifact).await;
+    assert_eq!(value["values"]["text"].as_str().unwrap().len(), 600000);
+    for record in host.journal_page(0, 256).await.unwrap() {
+        assert!(serde_json::to_vec(&record.event).unwrap().len() < 512 * 1024);
+    }
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn interpreter_large_result_does_not_fail_the_turn() {
+    let fixture = Fixture::new();
+    let (endpoint, server) = provider(vec![
+        eval("large-result", "return 'x'.repeat(600000);"),
+        done(),
+    ])
+    .await;
+    let host = fixture.native(&endpoint);
+    let session = fixture.session(&host).await;
+    let result = run(&host, session, "Return large selected interpreter evidence").await;
+    assert_eq!(
+        result.task.outcome,
+        Some(Outcome::FinishedUnverified),
+        "{}",
+        result.message
+    );
+    server.await.unwrap();
+}

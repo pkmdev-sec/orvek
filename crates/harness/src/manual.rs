@@ -1,5 +1,6 @@
 //! Explicit operator commands share the executor but never grant model authority.
 use crate::{Digest, runtime::ExecutionStatus, state::TaskId};
+use orvek_executor::MAX_COMMAND_BYTES;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -15,7 +16,7 @@ pub struct ShellSpec {
 impl ShellSpec {
     pub fn validate(&self) -> Result<(), crate::StoreError> {
         if self.command.trim().is_empty()
-            || self.command.len() > 128 * 1024
+            || self.command.len() > MAX_COMMAND_BYTES
             || self.command.contains('\0')
             || self.timeout_ms == 0
             || self.timeout_ms > 300_000

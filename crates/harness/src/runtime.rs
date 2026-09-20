@@ -4,6 +4,7 @@
 //! cache, temporary and shared-memory files live on separate quota-limited tmpfs
 //! mounts. Validated normal-exit exports are published only after quiescence and
 //! a baseline check; conflicts retain the guest result without replacing source.
+use orvek_executor::MAX_COMMAND_BYTES;
 
 mod transport;
 mod workspace;
@@ -321,7 +322,7 @@ impl DockerExecutor {
             || request.output_bytes == 0
             || request.output_bytes > 16 * 1024 * 1024
             || request.command.is_empty()
-            || request.command.len() > 65536
+            || request.command.len() > MAX_COMMAND_BYTES
         {
             return Err(RuntimeError::Request(
                 "execution request must have bounded command, deadline and output",

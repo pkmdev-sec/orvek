@@ -191,9 +191,10 @@ fn ci_runs_the_ignored_docker_security_suites() {
         job["env"]["ORVEK_WORKSPACE_TEST_IMAGE"],
         "debian:bookworm-slim"
     );
+    assert_eq!(job["env"]["ORVEK_EXECUTOR_IMAGE"], "debian:bookworm-slim");
     assert_eq!(
         job["env"]["ORVEK_EXECUTOR_HELPER"],
-        "target/debug/orvek-executor"
+        "${{ github.workspace }}/target/executor/orvek-executor-linux-x86_64"
     );
     let commands = job["steps"]
         .as_sequence()
@@ -201,27 +202,38 @@ fn ci_runs_the_ignored_docker_security_suites() {
         .iter()
         .filter_map(|step| step["run"].as_str())
         .collect::<Vec<_>>()
-        .join(
-            "
-",
-        );
+        .join("\n");
     assert_contains(&commands, "docker pull debian:bookworm-slim");
-    assert_contains(
-        &commands,
-        "cargo build --locked --package orvek-executor --bin orvek-executor",
-    );
-    for suite in [
-        "controller_execution",
-        "docker_execution",
-        "native_import",
-        "operator_protocol",
-        "protected_verification",
-        "workspace_tools",
+    assert_contains(&commands, "sh crates/executor/build-linux.sh x86_64");
+    assert_contains(&commands, "just test-docker --locked");
+    let recipe = JUSTFILE
+        .split("test-docker *args='':")
+        .nth(1)
+        .unwrap()
+        .split("\n\n")
+        .next()
+        .unwrap();
+    for option in [
+        "--workspace",
+        "--all-features",
+        "--run-ignored only",
+        "--test-threads=1",
+        "--no-fail-fast",
     ] {
-        assert_contains(
-            &commands,
-            &format!("--test {suite} -- --ignored --test-threads=1"),
+        assert_contains(recipe, option);
+    }
+    for restriction in ["--test ", "--lib", "--bin "] {
+        assert!(
+            !recipe.contains(restriction),
+            "new test targets must not be left out: {recipe}"
         );
+    }
+    for fixture in [
+        "process_owner",
+        "poisoned_configuration_child",
+        "environment_fixture_child",
+    ] {
+        assert_contains(recipe, &format!("test(={fixture})"));
     }
 }
 

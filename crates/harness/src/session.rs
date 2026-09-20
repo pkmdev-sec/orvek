@@ -1,3 +1,4 @@
+mod tool_output;
 use crate::{
     Digest,
     admission_profile::{
@@ -11,6 +12,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
+pub use tool_output::{ToolOutputBuffers, ToolOutputError};
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -404,6 +406,8 @@ pub struct SessionBranch {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionState {
+    #[serde(default, skip_serializing_if = "ToolOutputBuffers::is_empty")]
+    pub tool_output_buffers: ToolOutputBuffers,
     #[serde(
         default,
         skip_serializing_if = "crate::interpreter::InterpreterState::is_empty"
@@ -585,6 +589,17 @@ pub enum SessionCommand {
         call_id: String,
         output: String,
     },
+    ToolResultPart {
+        request: Uuid,
+        call_id: String,
+        offset: usize,
+        output: String,
+    },
+    ToolResultEnd {
+        request: Uuid,
+        call_id: String,
+        digest: Digest,
+    },
     TaskLinked {
         request: Uuid,
         task: TaskId,
@@ -674,6 +689,7 @@ impl SessionState {
             BTreeMap::new()
         };
         Self {
+            tool_output_buffers: ToolOutputBuffers::default(),
             completion_deliveries: BTreeMap::new(),
             branch,
             feedbacks: std::collections::BTreeSet::new(),
@@ -875,6 +891,50 @@ impl SessionState {
             SessionCommand::Feedback { message } => self
                 .history
                 .push(json!({"role":"developer","content":message})),
+            SessionCommand::ToolResultPart {
+                request,
+                call_id,
+                offset,
+                output,
+            } => {
+                if self.active_request != Some(*request)
+                    || !self
+                        .tool_calls
+                        .get(call_id)
+                        .is_some_and(|call| call.request == *request && call.output.is_none())
+                {
+                    return Err(serde_json::Error::io(std::io::Error::other(
+                        "tool output part has no pending call in this request",
+                    )));
+                }
+                self.tool_output_buffers
+                    .append(*request, call_id, *offset, output)
+                    .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))?;
+            }
+            SessionCommand::ToolResultEnd {
+                request,
+                call_id,
+                digest,
+            } => {
+                if self.active_request != Some(*request) {
+                    return Err(serde_json::Error::io(std::io::Error::other(
+                        "tool output end belongs to an inactive request",
+                    )));
+                }
+                let output = self
+                    .tool_output_buffers
+                    .finish(*request, call_id, *digest)
+                    .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))?;
+                // The logical command owns retry identity; fragments only frame its storage.
+                return self.apply(
+                    operation,
+                    &SessionCommand::ToolResult {
+                        request: *request,
+                        call_id: call_id.clone(),
+                        output,
+                    },
+                );
+            }
             SessionCommand::ToolResult {
                 call_id, output, ..
             } => {
@@ -895,6 +955,7 @@ impl SessionState {
                 error,
             } => {
                 self.interpreter.interrupt(*request);
+                self.tool_output_buffers = ToolOutputBuffers::default();
                 self.active_request = None;
                 self.outcome = *outcome;
                 self.error = error.clone();

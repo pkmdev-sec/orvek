@@ -863,6 +863,38 @@ fn validate_events(
             operation, command, ..
         } = &event
         {
+            let output = match command {
+                SessionCommand::ToolResult {
+                    request,
+                    call_id,
+                    output,
+                } => Some((request, call_id, Digest::of(output.as_bytes()))),
+                SessionCommand::ToolResultEnd {
+                    request,
+                    call_id,
+                    digest,
+                } => Some((request, call_id, *digest)),
+                _ => None,
+            };
+            if let Some((request, call_id, digest)) = output {
+                if let Some((call, _)) = proposals.get(&(id, None, call_id.clone())) {
+                    let owner = audit.calls.get_mut(call).unwrap();
+                    if owner.request != Some(*request) {
+                        return Err(invalid(
+                            "tool output request disagrees with provider proposal",
+                        ));
+                    }
+                    if owner
+                        .tool_outputs
+                        .insert(call_id.clone(), digest)
+                        .is_some_and(|old| old != digest)
+                    {
+                        return Err(invalid("conflicting recorded tool outputs"));
+                    }
+                } else {
+                    audit.gaps.insert(CausalGap::ToolLinkUnavailable);
+                }
+            }
             match command {
                 SessionCommand::ProviderUsage { call: None, .. } => {
                     audit.gaps.insert(CausalGap::UnattributedUsage);
@@ -908,30 +940,6 @@ fn validate_events(
                 SessionCommand::TraceRecorded { record, .. } => {
                     if !matches!(bundle.artifacts.get(record), Some(Payload::Present(_))) {
                         audit.gaps.insert(CausalGap::UnavailableTraceReceipt);
-                    }
-                }
-                SessionCommand::ToolResult {
-                    request,
-                    call_id,
-                    output,
-                } => {
-                    if let Some((call, _)) = proposals.get(&(id, None, call_id.clone())) {
-                        let owner = audit.calls.get_mut(call).unwrap();
-                        if owner.request != Some(*request) {
-                            return Err(invalid(
-                                "tool output request disagrees with provider proposal",
-                            ));
-                        }
-                        let digest = Digest::of(output.as_bytes());
-                        if owner
-                            .tool_outputs
-                            .insert(call_id.clone(), digest)
-                            .is_some_and(|old| old != digest)
-                        {
-                            return Err(invalid("conflicting recorded tool outputs"));
-                        }
-                    } else {
-                        audit.gaps.insert(CausalGap::ToolLinkUnavailable);
                     }
                 }
                 SessionCommand::Response { request, items } => {
