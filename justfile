@@ -103,6 +103,7 @@ build-harbor-agent platform='':
         bin/orvek/src \
         crates/executor/src \
         crates/harness/src \
+        crates/harness/benches \
         crates/memory/src \
         examples/orvek-memory-cloudflare/src; do
         test -z "$(find "$source_tree" -type l -print -quit)" || {
@@ -133,6 +134,7 @@ build-harbor-agent platform='':
     mkdir -p "$build_context/crates/harness"
     cp crates/harness/Cargo.toml crates/harness/build.rs "$build_context/crates/harness/"
     cp -R crates/harness/src "$build_context/crates/harness/src"
+    cp -R crates/harness/benches "$build_context/crates/harness/benches"
     mkdir -p "$build_context/crates/memory"
     cp crates/memory/Cargo.toml crates/memory/README.md "$build_context/crates/memory/"
     cp -R crates/memory/src "$build_context/crates/memory/src"
