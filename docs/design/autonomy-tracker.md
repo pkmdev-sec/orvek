@@ -1,6 +1,6 @@
 # Orvek autonomy and harness tracker
 
-Status: T01, T02, T03, and T11 implemented and verified. T09 hooks are verified; event intake is pending. T04 replay acceptance is in progress. T05, T06, and T08 implementation is underway. Baseline: `720210c0cbceebe89c123038049e9aebf77ba47d`. Sources inspected on 2026-09-20.
+Status: T01, T02, T03, T08, and T11 implemented and verified. T09 hooks are verified; event intake is underway. T04 replay acceptance is in progress. T05 audit fixes, T06, and experimental T07 implementation are underway. Baseline: `720210c0cbceebe89c123038049e9aebf77ba47d`. Sources inspected on 2026-09-20.
 
 ## Decision
 
@@ -14,7 +14,7 @@ This is an implementation tracker, not a feature announcement. Checked items and
 
 The supplied list contains **15 direct blog links, two X links, and one repository**, rather than 16 direct blog links. Both X pages were readable and have matching LangChain articles. All 18 supplied links are covered below, using L01–L15, X01–X02, and D01. The provisional source selection made before the links arrived is not used as task evidence.
 
-Navigation began with `CODEBASE.md`, `docs/codebase-graph/overview.md`, and `.agent-map/architecture.md`. The agent-map overlay is orientation, not proof of runtime wiring. Findings below follow actual callers and tool definitions. The companion [evidence manifest](autonomy-tracker.sources.json) records source URLs, content hashes, code anchors, dependencies, and statuses. Local source references O01–O35 are indexed at the end.
+Navigation began with `CODEBASE.md`, `docs/codebase-graph/overview.md`, and `.agent-map/architecture.md`. The agent-map overlay is orientation, not proof of runtime wiring. Findings below follow actual callers and tool definitions. The companion [evidence manifest](autonomy-tracker.sources.json) records source URLs, content hashes, code anchors, dependencies, and statuses. Local source references O01–O36 are indexed at the end.
 
 Deep Agents is pinned to `c3a041e3d8f593e4e4c9bfc273d52264ceff165b`. Its current implementation can differ from an older article. Article performance numbers are not Orvek results.
 
@@ -33,6 +33,7 @@ Verification at the research baseline:
 - **T09 hook phase**, `a0429a5` plus `7684a17`: all nine real CLI/IPC hook tests pass, including Docker and nonblocking startup recovery. A separate real-Docker test confirms that hook failure leaves a verified result and certificate intact. Schedule/webhook intake is still pending.
 
 - **T02**, `87bc77f`: 11 deterministic child-execution tests pass. Four additional real-Docker tests pass: parent/child command conformance, host crash and exact-container fencing, receipt-commit loss without re-execution, and running-command cancellation. Crash recovery also preserves an unrelated container.
+- **T08**, `4f9e4b9` through `ca42e5c`: caller-schema capture, invalid-result repair, typed unsubmitted outcomes, durable message/result recovery, and isolated/fork context pass. Parent validation passed 308 top-level harness tests plus eight fresh-process readers (46 opt-in tests ignored), five real-Docker child cases, and an additional exact fork-trace check. Protocol-4 watch readiness failed the new regression before the fix; protocol 5 now rejects incompatible clients. Strict all-target/all-feature Clippy and all five regenerated CLI examples pass. No child process resume, frozen workspace, or live-model quality claim.
 - **T03**, `757b6b4`: all 32 SnapCompact tests pass, including null measurements, failed/interrupted admissions, malformed logs, child failures, torn records, pairing controls, and report denominators. The original six tests were retained or migrated to schema v2; archived zero-filled records are not accepted as measured evidence.
 - **T04 integration**, `4871c93` through `668200d`: 303 default harness tests, 79 focused trace/provider tests, 20 app-host tests, and three actual-Docker repair/patch/child cases pass. Review found and reproduced receipt memory amplification, wire-payload mismatch, legacy unknown/zero accounting, and context closure defects; their integrated regressions now pass. All-feature compilation and strict Clippy pass. Portable receipt replay is implemented; controller-decision replay and per-call historical causal completeness are not established. T04 remains open for its final acceptance audit.
 - **T11 memory/skills phase**, `d154278`: the parent reran the real two-session put/scan/read and on-demand skill example, including manifest identities. Five executable examples now exist. `8975a7c` adds sanitized fixture trace links; the parent regenerated them on the merged runtime and verified offline replay/review, false-exact rejection, all 38 Python tests, and 35 classified guide fences. Every trace omits all artifact payloads and is explicitly non-exact. Later runtime changes require regeneration.
@@ -76,7 +77,7 @@ The baseline host did not expose the memory operations documented in `docs/memor
 | [L13: Production monitoring](https://www.langchain.com/blog/production-monitoring) | Monitor task quality and correction patterns, not just uptime; use sampled asynchronous evaluation and clustering. | New cross-run quality analysis in T10, over local T04 traces. Evaluator outages must not stop accepted tasks. Export remains optional. |
 | [L14: How we built Agent Builder's memory system](https://www.langchain.com/blog/how-we-built-agent-builders-memory-system) | Familiar files over durable storage, schema validation, procedural learning, and consolidation instead of endless additions. | Improve existing skills/memory in T01/T05. Keep SQLite ownership and CAS. Portable file views can be adapters; do not replace the store or import the article's approval-per-memory-write default. |
 | [L15: In software, code documents the app; in AI, traces do](https://www.langchain.com/blog/in-software-the-code-documents-the-app-in-ai-the-traces-do) | Trace bundles explain observed behavior and enable decision-point debugging. | Improve O14/O17 into T04. Traces document observable actions and available rationale, not hidden model reasoning or unproven causal explanations. |
-| [X01: Organizing context in a multi-agent harness](https://x.com/LangChain_OSS/status/2097372136247902519), [article](https://www.langchain.com/blog/organizing-context-in-a-multi-agent-harness) | Fork inherited context for continuation workers; isolate independent reviewers/researchers. | New explicit context mode in T08. Orvek children currently start without parent history. Preserve branch cutoffs and do not share a mutable conversation. |
+| [X01: Organizing context in a multi-agent harness](https://x.com/LangChain_OSS/status/2097372136247902519), [article](https://www.langchain.com/blog/organizing-context-in-a-multi-agent-harness) | Fork inherited context for continuation workers; isolate independent reviewers/researchers. | New explicit context mode in T08. At baseline, Orvek children started without parent history; isolated context remains the default. Preserve branch cutoffs and do not share a mutable conversation. |
 | [X02: Building self-correcting memory](https://x.com/colifran_/status/2092280107033616451), [article](https://www.langchain.com/blog/self-correcting-memory-openwiki) | Bind claims to versioned evidence; source changes imply stale, not false; uncertainty persists until rechecked. | New evidence freshness for O04 memory, T05. Read-frequency probation is not factual validation. Do not transfer OpenWiki's reported improvement percentages to Orvek. |
 | [D01: Deep Agents source](https://github.com/langchain-ai/deepagents/tree/c3a041e3d8f593e4e4c9bfc273d52264ceff165b) | Implemented composition, context modes, compaction tool, memory injection, interpreter state and snapshot integrity. | Concrete reference for T01/T06/T07/T08/T09. Important implementation caveats follow. |
 
@@ -86,14 +87,14 @@ All paths below are relative to the pinned D01 repository.
 
 - `libs/deepagents/deepagents/graph.py::create_deep_agent` assembles middleware. `DeepAgentState` uses delta channels for messages. Orvek already has journal/checkpoint infrastructure; do not add delta persistence merely because it appears here.
 - `middleware/memory.py::MemoryMiddleware.before_agent` loads configured files only when `memory_contents` is absent. `modify_request` injects them. Do not assume same-session refresh follows automatically from editing a file. T01 must record which context version each request actually used.
-- `middleware/subagents.py::_fork_messages` uses effective parent history and removes the final tool-calling message. T08 needs equivalent protocol-pair handling, plus Orvek's existing source-cursor authorization.
+- `middleware/subagents.py::_fork_messages` uses effective parent history and removes the final tool-calling message. T08 now filters unfinished pairs and pins the source cursor without inheriting execution authority.
 - `middleware/summarization.py::create_summarization_tool_middleware` implements model-requested compaction. Borrow the control point, not its exact storage design.
 - `libs/partners/quickjs/langchain_quickjs/middleware.py::CodeInterpreterMiddleware` distinguishes call, turn, and thread lifetimes. Its documentation explicitly says programmatic tool calls bypass the normal ToolNode path. Orvek must route each bridged call through its existing admission and receipt path instead.
 - That interpreter's timeout measures VM time, not time awaiting host tools. Snapshots can fail or be discarded. Optional snapshot HMAC binds data to a slot identity; `_snapshot.py` also implements delta snapshots. T06 must define wall-time cancellation and state-loss behavior, not promise transparent recovery of live resources.
 
 ## Ranked implementation queue
 
-T01, T02, and T03 are complete. T09 hooks are verified; event intake remains open. T04 and T11 are in progress in isolated worktrees. “Ready” means the next step is sufficiently specified, not that implementation is verified. Scores are prioritization judgments, not measurements: empowerment and competitive value each range from 1 to 5. Order also respects correctness prerequisites. Effort is relative: S is a narrow fix, M spans a subsystem, L crosses persistence/runtime boundaries.
+T01, T02, T03, T08, and T11 are complete within the limits recorded below. T09 hooks are verified; intake is in progress. T04 replay acceptance, T05 audit fixes, T06, and experimental T07 remain active. “Ready” means the next step is sufficiently specified, not that implementation is verified. Scores are prioritization judgments, not measurements: empowerment and competitive value each range from 1 to 5. Order also respects correctness prerequisites. Effort is relative: S is a narrow fix, M spans a subsystem, L crosses persistence/runtime boundaries.
 
 | Rank | ID | Deliverable | Empowerment / edge | Effort | Status | Dependencies |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -101,13 +102,13 @@ T01, T02, and T03 are complete. T09 hooks are verified; event intake remains ope
 | 2 | T02 | Consistent child execution identity and outcome accounting | 5 / 4 | M | Done | None |
 | 3 | T03 | Honest evaluation records, including failed attempts | 4 / 5 | S | Done | None |
 | 4 | T04 | Portable causal trace bundles and offline replay | 5 / 5 | L | In progress | T02, T03 |
-| 5 | T05 | Scoped, evidence-backed, self-correcting memory | 5 / 5 | L | Planned | T01, T04 |
-| 6 | T06 | Persistent interpreter over host-admitted tools | 5 / 5 | L | Planned | T02, T04 |
-| 7 | T07 | Model-directed, lossless-source context transitions | 5 / 4 | M | Planned | T03, T04 |
-| 8 | T08 | Durable child lifecycle, valid results, explicit context modes | 5 / 4 | L | Planned | T02, T04 |
-| 9 | T09 | Working terminal hooks and durable event intake | 4 / 3 | M | Hooks verified; intake pending | None for hook fix; T02, T04 for intake |
+| 5 | T05 | Scoped, evidence-backed, self-correcting memory | 5 / 5 | L | Audit fixes | T01, T04 |
+| 6 | T06 | Persistent interpreter over host-admitted tools | 5 / 5 | L | In progress | T02, T04 |
+| 7 | T07 | Model-directed, lossless-source context transitions | 5 / 4 | M | Experimental; in progress | T03, T04 |
+| 8 | T08 | Durable child lifecycle, valid results, explicit context modes | 5 / 4 | L | Done | T02, T04 |
+| 9 | T09 | Working terminal hooks and durable event intake | 4 / 3 | M | Hooks verified; intake in progress | None for hook fix; T02, T04 for intake |
 | 10 | T10 | Trace-driven quality monitoring and autonomous repair experiments | 5 / 5 | L | Planned | T03, T04, T09 |
-| 11 | T11 | Executable capability documentation | 4 / 3 | M | Examples and inventory in progress | T01, T09 for end-to-end examples |
+| 11 | T11 | Executable capability documentation | 4 / 3 | M | Done | T01, T09 for end-to-end examples |
 
 ### T01: Make configured memory and skills reach the model
 
@@ -212,17 +213,17 @@ T01, T02, and T03 are complete. T09 hooks are verified; event intake remains ope
 
 ### T08: Make delegation durable and choose context deliberately
 
-**Evidence:** O09/O21/O28/O29; X01 and D01. Child registry is in memory and starts empty after host restart. Result blobs exist without a complete durable lifecycle link. Children use the parent's selected model, run read-only in sandbox mode, and receive no parent history. Prose fallback returns `submitted: false` but is still treated as completed. The caller's output schema is compiled into a validator but is not delivered in the child instructions or generic `submit_result` tool definition.
+**Evidence:** O09/O21/O28/O29/O36; X01 and D01. At baseline, child state was ephemeral, prose could look completed, and caller schemas were not delivered. `4f9e4b9` adds durable lifecycle and context selection. `ebee40f` versions incompatible child events as operator protocol 5. `ca42e5c` verifies exact trace closure for a real-Docker fork. Source and API details are in [Subagents](../subagents.md).
 
 **Decision:** Preserve the existing child manager. Separate `schema-valid result`, `unsubmitted answer`, `interrupted`, and `failed` outcomes. Add `isolated` versus `fork_at_cursor` context choice, independent of tool permissions. Independent reviewers should default to isolated context.
 
-- [ ] Retain and deliver the caller's output schema in the child-facing tool definition or context before the first model response. Capture the provider request and assert a caller-specific required field and enum are present.
-- [ ] Fix prose-as-completed behavior and feed schema errors back as actionable observations within existing task resources. Test an invalid submission followed by a valid resubmission. Repeated failures provide diagnostic context, not a new mandatory stop heuristic.
-- [ ] Journal spawn, message acceptance/consumption, completion, and result digest. Rebuild list/wait snapshots after restart; mark interrupted work instead of blindly respawning it.
-- [ ] Test crashes after spawn, after result storage, and before terminal publication. Deduplicate by durable event identity.
-- [ ] Add a pinned parent cursor and effective context manifest for forks. Exclude unfinished tool pairs and later parent records. Test independent reviewer context contains no parent conclusions unless explicitly supplied.
-- [ ] Pin workspace evidence for child reads or disclose the observed generation. A shared live workspace is not a frozen review snapshot.
-- [ ] Compare duplicated discovery and result quality for isolated versus inherited-context workers. Keep current sandbox-only/read-only behavior in the first release. Writable worktrees and heterogeneous child models require separate evidence and designs.
+- [x] Retain and deliver the caller's output schema in the child-facing tool definition or context before the first model response. Capture the provider request and assert a caller-specific required field and enum are present.
+- [x] Fix prose-as-completed behavior and feed schema errors back as actionable observations within existing task resources. Test an invalid submission followed by a valid resubmission. Repeated failures provide diagnostic context, not a new mandatory stop heuristic.
+- [x] Journal spawn, message acceptance/consumption, completion, and result digest. Rebuild list/wait snapshots after restart; mark interrupted work instead of blindly respawning it.
+- [x] Test crashes after spawn, after result storage, and before terminal publication. Deduplicate by durable event identity.
+- [x] Add a pinned parent cursor and effective context manifest for forks. Exclude unfinished tool pairs and later parent records. Test independent reviewer context contains no parent conclusions unless explicitly supplied.
+- [x] Pin workspace evidence for child reads or disclose the observed generation. A shared live workspace is not a frozen review snapshot.
+- [x] Compare duplicated discovery and submitted results in controlled isolated/fork fixtures. These scripted-provider results do not measure live-model quality. Keep current sandbox-only/read-only behavior in the first release. Writable worktrees and heterogeneous child models require separate evidence and designs.
 
 **Done:** a completed child remains discoverable after host restart. Repeated list/wait calls return the same schema-valid result and digest, with one durable terminal transition per child. Test repeatable reads before and after restart. Fork context never grants extra execution authority. No claim of process-resumable children until that behavior is separately implemented.
 
@@ -319,13 +320,13 @@ These anchors identify the latest reviewed source, not permanent line-number API
 | --- | --- |
 | O01 | [bin/orvek/src/core/mod.rs](../../bin/orvek/src/core/mod.rs) at line 72, `configured_memory_store(config, &workspace)?;` |
 | O02 | [bin/orvek/src/core/extensions/skills.rs](../../bin/orvek/src/core/extensions/skills.rs) at line 180, `pub(crate) fn rendered_instructions` |
-| O03 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3552, `fn tool_definitions(discovery: bool)` |
+| O03 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3553, `fn tool_definitions(discovery: bool)` |
 | O04 | [crates/memory/src/model.rs](../../crates/memory/src/model.rs) at line 47, `pub struct MemoryRecord` |
 | O05 | [crates/memory/src/store/local.rs](../../crates/memory/src/store/local.rs) at line 278, `pub async fn merge_remote_export(` |
 | O06 | [crates/harness/src/context.rs](../../crates/harness/src/context.rs) at line 298, `pub fn project(` |
 | O07 | [crates/harness/src/context.rs](../../crates/harness/src/context.rs) at line 199, `pub fn read_text_page(` |
 | O08 | [crates/harness/src/context_cost.rs](../../crates/harness/src/context_cost.rs) at line 156, `pub fn recommendation(` |
-| O09 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 453, `async fn spawn(` |
+| O09 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 615, `async fn spawn(` |
 | O10 | [crates/harness/src/capabilities.rs](../../crates/harness/src/capabilities.rs) at line 90, `pub fn requires_reconciliation(` |
 | O11 | [crates/harness/src/store.rs](../../crates/harness/src/store.rs) at line 99, `pub struct Store` |
 | O12 | [crates/harness/src/completion.rs](../../crates/harness/src/completion.rs) at line 15, `pub fn evaluate(` |
@@ -336,22 +337,23 @@ These anchors identify the latest reviewed source, not permanent line-number API
 | O17 | [bin/orvek/src/app/headless.rs](../../bin/orvek/src/app/headless.rs) at line 26, `orvek.host` |
 | O18 | [crates/harness/src/controller/auxiliary.rs](../../crates/harness/src/controller/auxiliary.rs) at line 275, `let mut instructions = format!(` |
 | O19 | [crates/harness/src/admission_profile.rs](../../crates/harness/src/admission_profile.rs) at line 87, `pub struct HarnessBinding` |
-| O20 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3501, `fn native_tool_definitions(` |
-| O21 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 991, `async fn run_tool(` |
-| O22 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3154, `async fn reconcile_unresolved(` |
+| O20 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3502, `fn native_tool_definitions(` |
+| O21 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 1243, `async fn run_tool(` |
+| O22 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3155, `async fn reconcile_unresolved(` |
 | O23 | [evals/snapcompact/run_paired.py](../../evals/snapcompact/run_paired.py) at line 36, `def parse_log(` |
 | O24 | [evals/snapcompact/paired_report.py](../../evals/snapcompact/paired_report.py) at line 30, `def validate(` |
 | O25 | [bin/orvek/src/app/config.rs](../../bin/orvek/src/app/config.rs) at line 2089, `fn completion_hook_can_be_configured(` |
 | O26 | [bin/orvek/src/app/host.rs](../../bin/orvek/src/app/host.rs) at line 424, `config.agent().completion_hook()` |
 | O27 | [crates/harness/tests/native_host.rs](../../crates/harness/tests/native_host.rs) at line 896, `restart_keeps_unknown_native_jobs_unfenced_and_never_replays_them` |
-| O28 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 967, `"submitted": false` |
-| O29 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 1157, `fn child_definitions(` |
+| O28 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 1218, `Ok(ChildAnswer::Unsubmitted(last_text))` |
+| O29 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 1403, `fn child_definitions(` |
 | O30 | [crates/harness/src/services.rs](../../crates/harness/src/services.rs) at line 17, `pub trait ContextService` |
 | O31 | [bin/orvek/src/core/context.rs](../../bin/orvek/src/core/context.rs) at line 80, `impl ContextSession for ConfiguredContextSession` |
 | O32 | [crates/harness/src/controller/notification.rs](../../crates/harness/src/controller/notification.rs) at line 270, `async fn run_hook` |
 | O33 | [crates/harness/src/ipc.rs](../../crates/harness/src/ipc.rs) at line 409, `let recovery_host = host.clone();` |
 | O34 | [crates/harness/src/trace.rs](../../crates/harness/src/trace.rs) at line 318, `pub fn replay(&self)` |
 | O35 | [crates/harness/src/inference/transport.rs](../../crates/harness/src/inference/transport.rs) at line 202, `pub enum RequestProvenance` |
+| O36 | [crates/harness/src/controller/subagents/lifecycle.rs](../../crates/harness/src/controller/subagents/lifecycle.rs) at line 59, `pub enum Outcome` |
 
 ## Rerun this research check
 

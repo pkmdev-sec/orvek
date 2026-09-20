@@ -1399,6 +1399,11 @@
     {
       "kind": "contains",
       "source": "directory:crates/harness/src/controller",
+      "target": "directory:crates/harness/src/controller/subagents"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/controller",
       "target": "file:crates/harness/src/controller/auxiliary.rs"
     },
     {
@@ -1435,6 +1440,11 @@
       "kind": "contains",
       "source": "directory:crates/harness/src/controller",
       "target": "file:crates/harness/src/controller/workspace.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/controller/subagents",
+      "target": "file:crates/harness/src/controller/subagents/lifecycle.rs"
     },
     {
       "kind": "contains",
@@ -4019,6 +4029,11 @@
     {
       "kind": "links_to",
       "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:crates/harness/src/controller/subagents/lifecycle.rs"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
       "target": "file:crates/harness/src/inference/transport.rs"
     },
     {
@@ -4065,6 +4080,11 @@
       "kind": "links_to",
       "source": "file:docs/design/autonomy-tracker.md",
       "target": "file:docs/design/autonomy-tracker.sources.json"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/autonomy-tracker.md",
+      "target": "file:docs/subagents.md"
     },
     {
       "kind": "links_to",
@@ -6727,9 +6747,19 @@
       "target": "file:crates/harness/src/controller/review.rs"
     },
     {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib::controller::subagents",
+      "target": "module:orvek-harness:lib::controller::subagents::lifecycle"
+    },
+    {
       "kind": "implemented_by",
       "source": "module:orvek-harness:lib::controller::subagents",
       "target": "file:crates/harness/src/controller/subagents.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::controller::subagents::lifecycle",
+      "target": "file:crates/harness/src/controller/subagents/lifecycle.rs"
     },
     {
       "kind": "implemented_by",
@@ -10829,6 +10859,11 @@
     {
       "kind": "contains",
       "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::controller::subagents::lifecycle"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
       "target": "module:orvek-harness:lib::controller::submissions"
     },
     {
@@ -12449,6 +12484,12 @@
       "path": "crates/harness/src/controller"
     },
     {
+      "id": "directory:crates/harness/src/controller/subagents",
+      "kind": "directory",
+      "label": "subagents",
+      "path": "crates/harness/src/controller/subagents"
+    },
+    {
       "id": "directory:crates/harness/src/delivery",
       "kind": "directory",
       "label": "delivery",
@@ -13423,7 +13464,7 @@
       "id": "file:bin/orvek/src/tui/client.rs",
       "kind": "file",
       "label": "client.rs",
-      "lines": 2176,
+      "lines": 2184,
       "path": "bin/orvek/src/tui/client.rs"
     },
     {
@@ -13887,7 +13928,7 @@
       "id": "file:bin/orvek/src/tui/host_projection.rs",
       "kind": "file",
       "label": "host_projection.rs",
-      "lines": 1195,
+      "lines": 1197,
       "path": "bin/orvek/src/tui/host_projection.rs"
     },
     {
@@ -14230,7 +14271,7 @@
       "id": "file:crates/harness/src/controller.rs",
       "kind": "file",
       "label": "controller.rs",
-      "lines": 3687,
+      "lines": 3688,
       "path": "crates/harness/src/controller.rs"
     },
     {
@@ -14278,8 +14319,16 @@
       "id": "file:crates/harness/src/controller/subagents.rs",
       "kind": "file",
       "label": "subagents.rs",
-      "lines": 2565,
+      "lines": 3082,
       "path": "crates/harness/src/controller/subagents.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:crates/harness/src/controller/subagents/lifecycle.rs",
+      "kind": "file",
+      "label": "lifecycle.rs",
+      "lines": 169,
+      "path": "crates/harness/src/controller/subagents/lifecycle.rs"
     },
     {
       "file_kind": "rust-source",
@@ -14390,7 +14439,7 @@
       "id": "file:crates/harness/src/ipc.rs",
       "kind": "file",
       "label": "ipc.rs",
-      "lines": 956,
+      "lines": 1006,
       "path": "crates/harness/src/ipc.rs"
     },
     {
@@ -14502,7 +14551,7 @@
       "id": "file:crates/harness/src/session.rs",
       "kind": "file",
       "label": "session.rs",
-      "lines": 955,
+      "lines": 957,
       "path": "crates/harness/src/session.rs"
     },
     {
@@ -14750,7 +14799,7 @@
       "id": "file:crates/harness/tests/subagents.rs",
       "kind": "file",
       "label": "subagents.rs",
-      "lines": 571,
+      "lines": 1255,
       "path": "crates/harness/tests/subagents.rs"
     },
     {
@@ -15118,7 +15167,7 @@
       "id": "file:docs/design/autonomy-tracker.md",
       "kind": "file",
       "label": "autonomy-tracker.md",
-      "lines": 364,
+      "lines": 366,
       "path": "docs/design/autonomy-tracker.md"
     },
     {
@@ -15126,7 +15175,7 @@
       "id": "file:docs/design/autonomy-tracker.sources.json",
       "kind": "file",
       "label": "autonomy-tracker.sources.json",
-      "lines": 979,
+      "lines": 997,
       "path": "docs/design/autonomy-tracker.sources.json"
     },
     {
@@ -15366,7 +15415,7 @@
       "id": "file:docs/subagents.md",
       "kind": "file",
       "label": "subagents.md",
-      "lines": 67,
+      "lines": 95,
       "path": "docs/subagents.md"
     },
     {
@@ -18847,6 +18896,13 @@
       "target": "target:orvek-harness:lib"
     },
     {
+      "id": "module:orvek-harness:lib::controller::subagents::lifecycle",
+      "kind": "module",
+      "label": "orvek-harness:lib::controller::subagents::lifecycle",
+      "path": "crates/harness/src/controller/subagents/lifecycle.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
       "id": "module:orvek-harness:lib::controller::submissions",
       "kind": "module",
       "label": "orvek-harness:lib::controller::submissions",
@@ -20613,7 +20669,7 @@
     ]
   },
   "statistics": {
-    "edges": 2363,
+    "edges": 2370,
     "files_by_kind": {
       "automation": 4,
       "binary-asset": 5,
@@ -20622,18 +20678,18 @@
       "configuration": 25,
       "documentation": 54,
       "python-script": 45,
-      "rust-source": 362,
+      "rust-source": 363,
       "supporting-file": 21,
       "typescript-source": 36,
       "web-asset": 20
     },
-    "nodes": 1213,
+    "nodes": 1216,
     "nodes_by_kind": {
       "component": 14,
       "dependency": 72,
-      "directory": 118,
-      "file": 584,
-      "module": 366,
+      "directory": 119,
+      "file": 585,
+      "module": 367,
       "package": 7,
       "repository": 1,
       "target": 50,

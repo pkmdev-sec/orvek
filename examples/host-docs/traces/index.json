@@ -7,14 +7,14 @@
     "examples/host-docs/reconnect.py": "005d8f86be27d19bec74c9b332247e2e256d36edf42b3df2e4000f83ff8b928e",
     "examples/host-docs/completion_hook.py": "02d946d6333ea8b74c123692598097f30743ab8155a810aa5b371d31c24c25c6",
     "examples/host-docs/memory_skills.py": "79525bddc20155bed66d8767e41fa32ea29f5810ff8fdecf962b98629052d5db",
-    "examples/host-docs/fixture.py": "4f0be5d47099c1206934dd5cb7b00ee6b4f5035c1c3b320b9cd016bf524a8aa3",
+    "examples/host-docs/fixture.py": "cbec99f671598ffa8bec029b75643e6b4adaaa11f1b6f39719b203fd11fe17ff",
     "scripts/doc-traces.py": "1819a31877f8b3f38432478f7ab07b62af116aa1b4f5a76b9a1b40d4a60c2bdb"
   },
-  "runtime_sha256": "48384cf48bd68c7743e343c1e27a7aec72a6ae434307aef8814b985df4356c51",
-  "binary_sha256": "00018a39443ea897c1a0a6744e968b2b5d3e833b47aa249ba007c604a76698ad",
+  "runtime_sha256": "4212e66b1db8f15378827523bdb887d2ea313a8fc79014067ada630a2f91fa80",
+  "binary_sha256": "f5fffbf4cee8c05118c2104638a6afd72cebcc464d4cede0de2d47349a183aa4",
   "scenarios": {
     "native": {
-      "sha256": "8a4f41ac583a600a926bc9e01a1053962469951347f77cae454d6991d138d49c",
+      "sha256": "36ebb21af0ea9bf57e4c347a191438d282b844a1213f2812860255d83dc63108",
       "bytes": 24990,
       "records": 24,
       "replay": {
@@ -23,11 +23,11 @@
         "tasks": 1
       },
       "original_exact": true,
-      "original_digest": "06b184d04400659aedc806a9af5ef37fa38147724f2f60f0e54f7f6e7211dd0e",
-      "records_sha256": "2d3f849e47c73a05236cfbc212ac93eeff3abde92e293cf5f5409e4735577e00"
+      "original_digest": "3700081a1401e6f2dfed813c5ccd1270b7497cba2e0cf04bd60250a1285946e0",
+      "records_sha256": "287e9601d6d6db5820f8b02f29da660886a300b3306606c42b7aaa9a4faacb65"
     },
     "sandbox": {
-      "sha256": "fa295f6768cf7986aa249e51a362b9ff6e80bc5040a6db92d11d0cc406229c2c",
+      "sha256": "c9a93c55cf59608309a97add0fb2dfeb4d9ee660f1266cf0ce08e01e92961b0f",
       "bytes": 39957,
       "records": 41,
       "replay": {
@@ -36,11 +36,11 @@
         "tasks": 1
       },
       "original_exact": true,
-      "original_digest": "fe2d557c1fc55691ba30c12599d15350bdae268a4b92c5ace8000f6e9d4926bb",
-      "records_sha256": "7eb108c73ce359580211adbeb1d6f5141fe85b8144f622002302595b03aa00df"
+      "original_digest": "4ae1858a61bfc1db5b33ea8cf8e3d7ea99825896c31d135b6f695851d67b2061",
+      "records_sha256": "514325e1c53013569f6af0b4c2aa86371831f2dcd20d62991d178f1965b8b2f2"
     },
     "reconnect": {
-      "sha256": "f00a22b85dc25a4b6fd8a7654d08219a86f49646429224ab7dbd806ef01f2bb4",
+      "sha256": "001d5a8ea41892a3e10bf927dc3101b8804820c31fc07e06568e3198196ec929",
       "bytes": 25222,
       "records": 24,
       "replay": {
@@ -49,11 +49,11 @@
         "tasks": 1
       },
       "original_exact": true,
-      "original_digest": "c4e108b6829fdd68b978c1b2d30e27b0bc615c9dbe20ddc272c66c73473baa02",
-      "records_sha256": "ae911366b23e6231973db000f8eacb858492a2e7493764332ef8c6661631d19a"
+      "original_digest": "a35bda4bf169efff4ef88790b8e9133e687f0e81146f5b891f2dc1152a07e0bd",
+      "records_sha256": "2fbfdbaa322ff55355e54735a55803e4f9007eb8635df2d528753e6a8b824747"
     },
     "completion_hook": {
-      "sha256": "c5fe80ee8f02bf9b843411e9392b473bdb3f65124e34c4614eebcf27a27af219",
+      "sha256": "cc13b3ed69264d1ca47dede331175fd9f6dcffff591c9fb3d36869f9ae5f7865",
       "bytes": 19990,
       "records": 18,
       "replay": {
@@ -62,11 +62,11 @@
         "tasks": 1
       },
       "original_exact": true,
-      "original_digest": "fa580691be801a255b3d8685fbcd9c5dc2fc9eda3059b301abf8e5cad4b63808",
-      "records_sha256": "5fa64aff2641841c2bc0348e6c7b73bd8c7e366573087491df435dd9e725412c"
+      "original_digest": "56445ae311f8ee798233ff74b4bc51fd5ad3903e35b5290c80080351f323d645",
+      "records_sha256": "726b731dc09928f942b626ed8729a1bdded46370a21dbd41825ed92945553b44"
     },
     "memory_skills": {
-      "sha256": "52862e1faf3d3a4873edf4b1060541bc50e6b3c92fa9832b92aabfd51a0ef404",
+      "sha256": "cacac0c30d9b2c1511eba56e4643626b542bcc17512707ede5e682dbaba12e0f",
       "bytes": 60409,
       "records": 65,
       "replay": {
@@ -75,8 +75,8 @@
         "tasks": 2
       },
       "original_exact": true,
-      "original_digest": "a0c9ef3a7e6853c3cee4a0b3d8896c18e7f2725d2948285bbe7678d7b05b690c",
-      "records_sha256": "1b0208df39cb1389e5fe33fd39ec41f4da121dffdec241605e193ec0d1a9a689"
+      "original_digest": "6c1c8325f94662a778c6f34fd0125b0905c0d3b163569bfd3369fe158d6a422e",
+      "records_sha256": "abb9bb194d14a76fdd4d6d56fa4d149711f6617c74ada6fbe2f7a2a67f977f13"
     }
   },
   "sandbox": {
@@ -84,5 +84,5 @@
     "image": "debian:bookworm-slim",
     "image_id": "sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171"
   },
-  "exporter_revision": "668200d5adae"
+  "exporter_revision": "ca42e5c41919"
 }

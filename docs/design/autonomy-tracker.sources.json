@@ -198,13 +198,13 @@
       "id": "O03",
       "path": "crates/harness/src/controller.rs",
       "anchor": "fn tool_definitions(discovery: bool)",
-      "line": 3552,
-      "sha256": "ea4a40ffd628c5da5732653237569b79f687fc74031ea4ec6631497c72f0d175",
+      "line": 3553,
+      "sha256": "1dfb2d0b0859424a980ad7fbf035356698e1db841ae27366e1135d383fa98fe9",
       "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
       "research_line": 3421,
       "research_anchor": "fn tool_definitions(discovery: bool)",
-      "reviewed_revision": "668200d",
-      "review_note": "Reviewed T04 call recording and unchanged public tool registry; interpreter remains T06 work."
+      "reviewed_revision": "ca42e5c",
+      "review_note": "Reviewed unchanged parent tool registry plus recovered child manager installation; interpreter remains separate T06 work."
     },
     {
       "id": "O04",
@@ -245,12 +245,12 @@
       "id": "O09",
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "async fn spawn(",
-      "line": 453,
-      "sha256": "24a625f6672a6c8e4c793d87916ddb4e35460832f15d7581e2b9b074e5e47be1",
+      "line": 615,
+      "sha256": "7de8cd4a95f113d9453490e8000bfbbde84a1df73f73d3d5c0ec1614c8dfd0f8",
       "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
       "research_line": 448,
-      "reviewed_revision": "668200d",
-      "review_note": "Reviewed child dispatch/response/tool links and unchanged in-memory lifecycle; T08 remains required."
+      "reviewed_revision": "ca42e5c",
+      "review_note": "Reviewed schema delivery, bounded pinned forks, durable spawn/message/terminal receipts and startup reconstruction; child processes are not resumed."
     },
     {
       "id": "O10",
@@ -339,36 +339,36 @@
       "id": "O20",
       "path": "crates/harness/src/controller.rs",
       "anchor": "fn native_tool_definitions(",
-      "line": 3501,
-      "sha256": "ea4a40ffd628c5da5732653237569b79f687fc74031ea4ec6631497c72f0d175",
+      "line": 3502,
+      "sha256": "1dfb2d0b0859424a980ad7fbf035356698e1db841ae27366e1135d383fa98fe9",
       "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
       "research_line": 3370,
       "research_anchor": "fn native_tool_definitions(",
-      "reviewed_revision": "668200d",
-      "review_note": "Reviewed native definitions and causal recording; native outcomes remain unverified."
+      "reviewed_revision": "ca42e5c",
+      "review_note": "Reviewed native tool definitions remain unchanged; native mode does not gain child tools or Docker authority."
     },
     {
       "id": "O21",
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "async fn run_tool(",
-      "line": 991,
-      "sha256": "24a625f6672a6c8e4c793d87916ddb4e35460832f15d7581e2b9b074e5e47be1",
+      "line": 1243,
+      "sha256": "7de8cd4a95f113d9453490e8000bfbbde84a1df73f73d3d5c0ec1614c8dfd0f8",
       "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
       "research_line": 950,
-      "reviewed_revision": "668200d",
-      "review_note": "Reviewed original admitted job/environment retention plus causal child-tool receipt written before execution."
+      "reviewed_revision": "ca42e5c",
+      "review_note": "Reviewed child tools still pass original admitted task/job/generation/environment; Docker fork write attempts fail without changing the workspace."
     },
     {
       "id": "O22",
       "path": "crates/harness/src/controller.rs",
       "anchor": "async fn reconcile_unresolved(",
-      "line": 3154,
-      "sha256": "ea4a40ffd628c5da5732653237569b79f687fc74031ea4ec6631497c72f0d175",
+      "line": 3155,
+      "sha256": "1dfb2d0b0859424a980ad7fbf035356698e1db841ae27366e1135d383fa98fe9",
       "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
       "research_line": 3023,
       "research_anchor": "async fn reconcile_unresolved(",
-      "reviewed_revision": "668200d",
-      "review_note": "Reviewed unchanged reconciliation with additional trace recording; uncertain effects are not reexecuted."
+      "reviewed_revision": "ca42e5c",
+      "review_note": "Reviewed existing unknown-effect reconciliation; child lifecycle recovery interrupts work and does not replay jobs."
     },
     {
       "id": "O23",
@@ -430,24 +430,25 @@
     {
       "id": "O28",
       "path": "crates/harness/src/controller/subagents.rs",
-      "anchor": "\"submitted\": false",
-      "line": 967,
-      "sha256": "24a625f6672a6c8e4c793d87916ddb4e35460832f15d7581e2b9b074e5e47be1",
+      "anchor": "Ok(ChildAnswer::Unsubmitted(last_text))",
+      "line": 1218,
+      "sha256": "7de8cd4a95f113d9453490e8000bfbbde84a1df73f73d3d5c0ec1614c8dfd0f8",
       "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
       "research_line": 927,
-      "reviewed_revision": "668200d",
-      "review_note": "Reviewed trace receipts around the still-unsubmitted prose fallback; T08 must repair its lifecycle meaning."
+      "reviewed_revision": "ca42e5c",
+      "review_note": "Prose now becomes typed Unsubmitted, not a schema-valid completed result; old research anchor preserved.",
+      "research_anchor": "\"submitted\": false"
     },
     {
       "id": "O29",
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "fn child_definitions(",
-      "line": 1157,
-      "sha256": "24a625f6672a6c8e4c793d87916ddb4e35460832f15d7581e2b9b074e5e47be1",
+      "line": 1403,
+      "sha256": "7de8cd4a95f113d9453490e8000bfbbde84a1df73f73d3d5c0ec1614c8dfd0f8",
       "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
       "research_line": 1061,
-      "reviewed_revision": "668200d",
-      "review_note": "Reviewed unchanged caller-schema exposure gap after T04 recording; T08 implementation is now active."
+      "reviewed_revision": "ca42e5c",
+      "review_note": "Caller output schema is now embedded in submit_result before the first response; actual HTTP/Docker captures assert required field and enum."
     },
     {
       "id": "O30",
@@ -481,9 +482,9 @@
       "path": "crates/harness/src/ipc.rs",
       "anchor": "let recovery_host = host.clone();",
       "line": 409,
-      "sha256": "22f7adade020d67af6169c96563222f6474b8c191908583d77d66357b55ca562",
-      "reviewed_revision": "7684a17",
-      "review_note": "Recovery starts after socket binding and is cancelled on host shutdown; a blocked hook does not block IPC."
+      "sha256": "9a1a02a0846292016954bc9cb928baf388a964bf31572288a23f166fd5bc85f4",
+      "reviewed_revision": "ca42e5c",
+      "review_note": "Reviewed nonblocking hook recovery remains intact; IPC5 rejects old clients before new child lifecycle/outcome frames."
     },
     {
       "id": "O34",
@@ -502,6 +503,15 @@
       "sha256": "54803a5e6f3198cf46fefbffc04d1046d6d0373529a202f28eaf36d95fc8fca5",
       "reviewed_revision": "668200d",
       "review_note": "Prepared effective serialized bodies, transport, dialect and route source. Historical/uncaptured bodies remain unavailable; no remote-delivery claim."
+    },
+    {
+      "id": "O36",
+      "path": "crates/harness/src/controller/subagents/lifecycle.rs",
+      "anchor": "pub enum Outcome",
+      "line": 59,
+      "sha256": "e6fe7c3b8fee0334c42b01ed5c1dcaf12d76a07c86b82c414e7324ee513d895a",
+      "reviewed_revision": "ca42e5c",
+      "review_note": "Typed durable child outcomes and deterministic lifecycle operation IDs; context manifests pin filtered source without granting authority."
     }
   ],
   "competitor_context": [
@@ -695,10 +705,10 @@
         "O04",
         "O05"
       ],
-      "owner": "implement-evidence-memory",
-      "implementation_revision": null,
+      "owner": "fix-evidence-memory",
+      "implementation_revision": "2d8aeb1",
       "results": [],
-      "next_action": "Design and implement scoped, evidence-backed memory with honest freshness and portable provenance.",
+      "next_action": "Fix five independently reproduced transfer/proposal/source-root defects, then integrate and rerun actual Store/HTTP/CLI acceptance.",
       "worktree": "/tmp/orvek-autonomy-t05",
       "branch": "work/autonomy-t05"
     },
@@ -733,7 +743,7 @@
       "id": "T07",
       "title": "Model-directed context",
       "rank": 7,
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "T03",
         "T04"
@@ -747,16 +757,18 @@
         "O07",
         "O08"
       ],
-      "owner": null,
+      "owner": "implement-context-transitions",
       "implementation_revision": null,
       "results": [],
-      "next_action": "Complete dependencies, then implement the first unchecked step in the work card."
+      "next_action": "Implement experimental opt-in transitions and controlled paired instrumentation; do not ship enabled without live quality/full-cost evidence.",
+      "worktree": "/tmp/orvek-autonomy-t07",
+      "branch": "work/autonomy-t07"
     },
     {
       "id": "T08",
       "title": "Durable context-aware children",
       "rank": 8,
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "T02",
         "T04"
@@ -769,14 +781,22 @@
         "O09",
         "O21",
         "O28",
-        "O29"
+        "O29",
+        "O36"
       ],
-      "owner": "implement-durable-delegation",
-      "implementation_revision": null,
-      "results": [],
-      "next_action": "Implement schema delivery, durable child lifecycle, repeatable results, and permission-independent context forks.",
-      "worktree": "/tmp/orvek-autonomy-t08",
-      "branch": "work/autonomy-t08"
+      "owner": "parent-integration",
+      "implementation_revision": "ca42e5c",
+      "results": [
+        "Integrated worker39500a3 as4f9e4b9. Parent42 focused child/journal/native/trace tests pass, including fresh-process recovery readers.",
+        "Five real-Docker child tests passed (t08-integrated-docker.log), including fork write refusal and original T02 crash/fencing/receipt-loss/cancel checks.",
+        "Protocol4 watch readiness regression reproduced, then protocol5 rejection +9host version tests pass (ebee40f).",
+        "New real-Docker durable fork trace closure assertion passes (ca42e5c,t08-fork-trace.log).",
+        "No child process resume, frozen-workspace, heterogeneous-model, or live-quality claim.",
+        "Final parent harness suite with two test threads:308 top-level passes plus8 successful restart-reader subprocess runs,46ignored. Strict all-target/all-feature Clippy and rebuilt CLI pass; all5protocol5 docs scenarios/trace generations pass. See t08-full-integrated.log,t08-integrated-clippy.log,t08-doc-traces.log."
+      ],
+      "next_action": "Rerun cross-feature child/fork/recovery tests after interpreter, memory and context changes; model quality remains unmeasured.",
+      "worktree": "/Users/pumaurya/orvek",
+      "branch": "feat/autonomy-tracker"
     },
     {
       "id": "T09",
@@ -795,7 +815,7 @@
         "O32",
         "O33"
       ],
-      "owner": "parent-integration",
+      "owner": "implement-event-intake",
       "implementation_revision": "a0429a5",
       "results": [
         {
@@ -811,7 +831,7 @@
           "log": ".agent-map/autonomy/t09-integrated-certificate.log"
         }
       ],
-      "next_action": "Implement event intake after T04; terminal-hook phase is verified.",
+      "next_action": "Implement local durable schedule/webhook adapters through existing admission queue; hook phase remains verified.",
       "phase_dependencies": {
         "hook_fix": [],
         "event_intake": [
@@ -819,8 +839,8 @@
           "T04"
         ]
       },
-      "worktree": "/tmp/orvek-autonomy-t09",
-      "branch": "work/autonomy-t09",
+      "worktree": "/tmp/orvek-autonomy-event-intake",
+      "branch": "work/autonomy-event-intake",
       "followup_revisions": [
         "7684a17"
       ],
