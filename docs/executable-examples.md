@@ -417,8 +417,8 @@ The existing `scripts/check-docs.py` still checks links and syntax separately.
 | [docs/sessions.md](../docs/sessions.md) #1 | illustrative | Interactive selector and SESSION_ID need existing user state. |
 | [docs/sessions.md](../docs/sessions.md) #2 | external-service | Downloads browser dependencies and installs development assets. |
 | [docs/subagents.md](../docs/subagents.md) #1 | illustrative | Configuration fragment; does not drive child admission or outcomes. |
-| [docs/trace-bundles.md](../docs/trace-bundles.md) #1 | illustrative | Manual export/replay paths are placeholders; doc-traces.py executes the controlled fixture equivalent. |
-| [docs/trace-bundles.md](../docs/trace-bundles.md) #2 | external-service | Experimental online re-execution needs configured authentication and a chosen task; never part of offline fixture replay. |
+| [docs/trace-bundles.md](../docs/trace-bundles.md) #1 | illustrative | Commands require a real private host journal or bundle. Isolated trace tests provide those fixtures; these path placeholders are not standalone scenarios. |
+| [docs/trace-bundles.md](../docs/trace-bundles.md) #2 | external-service | Experimental reexecution needs configured provider credentials and can run tools or incur cost in a fresh workspace. |
 | [docs/trace-bundles.md](../docs/trace-bundles.md) #3 | illustrative | Regeneration and validation commands require a built CLI and local Docker; CI executes the same generator with isolated output. |
 | [docs/tui-scrolling.md](../docs/tui-scrolling.md) #1 | illustrative | Contributor test commands; no terminal interaction is driven here. |
 | [docs/workspace-execution.md](../docs/workspace-execution.md) #1 | illustrative | Workspace placeholder and interactive session; native coverage is below. |

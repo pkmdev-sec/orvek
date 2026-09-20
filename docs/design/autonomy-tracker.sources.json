@@ -662,7 +662,7 @@
         "O34",
         "O35"
       ],
-      "owner": "parent-integration",
+      "owner": "finish-receipt-replay",
       "implementation_revision": "668200d",
       "results": [
         "303 default harness tests passed;45 opt-in tests ignored (t04-full-harness-integrated.log).",
@@ -673,9 +673,9 @@
         "Portable event/receipt replay and review implemented. Exact means record/closure consistency, not full controller-decision replay or complete historical causality.",
         "Final integrated CLI 3 plus release-pipeline 22 tests passed (t04-final-cli.log); all five CLI/IPC examples and27 Python script tests passed. Acceptance distinction documented in .agent-map/autonomy/T04-INTEGRATED.md."
       ],
-      "next_action": "Finish acceptance audit for receipt-stub replay and causal gap reporting; retain explicit limitations. T04 remains open pending that audit.",
-      "worktree": "/Users/pumaurya/orvek",
-      "branch": "feat/autonomy-tracker"
+      "next_action": "Add used typed recorded provider/tool stubs and per-call causal consistency/gap reporting without claiming full controller-decision simulation.",
+      "worktree": "/tmp/orvek-autonomy-trace-receipts",
+      "branch": "work/autonomy-trace-receipts"
     },
     {
       "id": "T05",
@@ -706,7 +706,7 @@
       "id": "T06",
       "title": "Host-admitted interpreter",
       "rank": 6,
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "T02",
         "T04"
@@ -720,10 +720,14 @@
         "O10",
         "O21"
       ],
-      "owner": null,
+      "owner": "implement-persistent-interpreter",
       "implementation_revision": null,
-      "results": [],
-      "next_action": "Complete dependencies, then implement the first unchecked step in the work card."
+      "results": [
+        "Prototype only: rquickjs0.12.1 embedding, isolated retained values, memory/CPU limits, cancellation, explicit data-only checkpoint restore, and yielding promises passed seven native tests. No production integration or live-model savings claim. See .agent-map/autonomy/T06-PROTOTYPE.md and t06-interpreter-probe-final.log."
+      ],
+      "next_action": "Design and implement bounded host-owned runtime and shared dispatch bridge after seven native QuickJS prototype tests passed.",
+      "worktree": "/tmp/orvek-autonomy-t06",
+      "branch": "work/autonomy-t06"
     },
     {
       "id": "T07",
@@ -860,7 +864,7 @@
       "id": "T11",
       "title": "Executable capability docs",
       "rank": 11,
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "T01",
         "T09"
@@ -875,8 +879,8 @@
         "O16",
         "O25"
       ],
-      "owner": "finish-sanitized-doc-traces",
-      "implementation_revision": "89011b5",
+      "owner": "parent-integration",
+      "implementation_revision": "8975a7c",
       "results": [
         {
           "phase": "native_examples",
@@ -909,9 +913,10 @@
           "log": ".agent-map/autonomy/t11-checker-tests.log"
         },
         "Memory/skills example integrated as d154278; parent reproduced two-session put/scan/read, exact skill bytes/digest, and six context manifests (t11-memory-skills.log).",
-        "All five examples rerun successfully against post-wire-fix integrated CLI (t04-example-*.log);27 Python script tests and34 guide-fence checks pass. Sanitized trace links pending."
+        "All five examples rerun successfully against post-wire-fix integrated CLI (t04-example-*.log);27 Python script tests and34 guide-fence checks pass. Sanitized trace links pending.",
+        "Parent regenerated all five sanitized bundles on post-wire runtime, ran actual Docker, offline replay/review, and false-exact rejection. All38 Python tests passed;35 guide fences classified. Logs t11-integrated-trace-{generation,replay,tests}.log."
       ],
-      "next_action": "Generate sanitized fixture traces and source-linked checks; rerun five examples on final integrated CLI.",
+      "next_action": "Regenerate the source-linked fixture traces after later runtime/scenario changes; final repository-wide acceptance remains separate.",
       "phase_dependencies": {
         "inventory": [],
         "end_to_end_examples": [
@@ -919,8 +924,8 @@
           "T09"
         ]
       },
-      "worktree": "/tmp/orvek-autonomy-doc-traces",
-      "branch": "work/autonomy-doc-traces",
+      "worktree": "/Users/pumaurya/orvek",
+      "branch": "feat/autonomy-tracker",
       "followup_revisions": [
         "2a40464"
       ]

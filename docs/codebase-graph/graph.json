@@ -2269,6 +2269,11 @@
     {
       "kind": "contains",
       "source": "directory:examples/host-docs",
+      "target": "directory:examples/host-docs/traces"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/host-docs",
       "target": "file:examples/host-docs/completion_hook.py"
     },
     {
@@ -2300,6 +2305,36 @@
       "kind": "contains",
       "source": "directory:examples/host-docs",
       "target": "file:examples/host-docs/sandbox.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/host-docs/traces",
+      "target": "file:examples/host-docs/traces/completion_hook.trace.json"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/host-docs/traces",
+      "target": "file:examples/host-docs/traces/index.json"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/host-docs/traces",
+      "target": "file:examples/host-docs/traces/memory_skills.trace.json"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/host-docs/traces",
+      "target": "file:examples/host-docs/traces/native.trace.json"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/host-docs/traces",
+      "target": "file:examples/host-docs/traces/reconnect.trace.json"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:examples/host-docs/traces",
+      "target": "file:examples/host-docs/traces/sandbox.trace.json"
     },
     {
       "kind": "contains",
@@ -2429,6 +2464,11 @@
     {
       "kind": "contains",
       "source": "directory:scripts",
+      "target": "file:scripts/doc-traces.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:scripts",
       "target": "file:scripts/generate-codebase-graph.py"
     },
     {
@@ -2460,6 +2500,11 @@
       "kind": "contains",
       "source": "directory:scripts/tests",
       "target": "file:scripts/tests/test_doc_examples.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:scripts/tests",
+      "target": "file:scripts/tests/test_doc_traces.py"
     },
     {
       "kind": "contains",
@@ -4308,6 +4353,36 @@
     },
     {
       "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:examples/host-docs/traces/completion_hook.trace.json"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:examples/host-docs/traces/index.json"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:examples/host-docs/traces/memory_skills.trace.json"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:examples/host-docs/traces/native.trace.json"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:examples/host-docs/traces/reconnect.trace.json"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/executable-examples.md",
+      "target": "file:examples/host-docs/traces/sandbox.trace.json"
+    },
+    {
+      "kind": "links_to",
       "source": "file:docs/harness-integration.md",
       "target": "file:docs/harness-host.md"
     },
@@ -4330,6 +4405,16 @@
       "kind": "links_to",
       "source": "file:docs/sessions.md",
       "target": "file:docs/compaction.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/trace-bundles.md",
+      "target": "file:docs/executable-examples.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/trace-bundles.md",
+      "target": "file:examples/host-docs/traces/index.json"
     },
     {
       "kind": "imports_local",
@@ -12550,6 +12635,12 @@
       "path": "examples/host-docs"
     },
     {
+      "id": "directory:examples/host-docs/traces",
+      "kind": "directory",
+      "label": "traces",
+      "path": "examples/host-docs/traces"
+    },
+    {
       "id": "directory:examples/orvek-memory-cloudflare",
       "kind": "directory",
       "label": "orvek-memory-cloudflare",
@@ -12920,7 +13011,7 @@
       "id": "file:.github/workflows/ci.yaml",
       "kind": "file",
       "label": "ci.yaml",
-      "lines": 284,
+      "lines": 281,
       "path": ".github/workflows/ci.yaml"
     },
     {
@@ -15035,7 +15126,7 @@
       "id": "file:docs/design/autonomy-tracker.sources.json",
       "kind": "file",
       "label": "autonomy-tracker.sources.json",
-      "lines": 972,
+      "lines": 979,
       "path": "docs/design/autonomy-tracker.sources.json"
     },
     {
@@ -15219,7 +15310,7 @@
       "id": "file:docs/executable-examples.md",
       "kind": "file",
       "label": "executable-examples.md",
-      "lines": 399,
+      "lines": 425,
       "path": "docs/executable-examples.md"
     },
     {
@@ -15283,7 +15374,7 @@
       "id": "file:docs/trace-bundles.md",
       "kind": "file",
       "label": "trace-bundles.md",
-      "lines": 89,
+      "lines": 157,
       "path": "docs/trace-bundles.md"
     },
     {
@@ -15555,7 +15646,7 @@
       "id": "file:examples/host-docs/completion_hook.py",
       "kind": "file",
       "label": "completion_hook.py",
-      "lines": 34,
+      "lines": 36,
       "path": "examples/host-docs/completion_hook.py"
     },
     {
@@ -15563,7 +15654,7 @@
       "id": "file:examples/host-docs/fixture.py",
       "kind": "file",
       "label": "fixture.py",
-      "lines": 256,
+      "lines": 269,
       "path": "examples/host-docs/fixture.py"
     },
     {
@@ -15571,7 +15662,7 @@
       "id": "file:examples/host-docs/inventory.json",
       "kind": "file",
       "label": "inventory.json",
-      "lines": 240,
+      "lines": 247,
       "path": "examples/host-docs/inventory.json"
     },
     {
@@ -15579,7 +15670,7 @@
       "id": "file:examples/host-docs/memory_skills.py",
       "kind": "file",
       "label": "memory_skills.py",
-      "lines": 102,
+      "lines": 104,
       "path": "examples/host-docs/memory_skills.py"
     },
     {
@@ -15587,7 +15678,7 @@
       "id": "file:examples/host-docs/native.py",
       "kind": "file",
       "label": "native.py",
-      "lines": 22,
+      "lines": 24,
       "path": "examples/host-docs/native.py"
     },
     {
@@ -15595,7 +15686,7 @@
       "id": "file:examples/host-docs/reconnect.py",
       "kind": "file",
       "label": "reconnect.py",
-      "lines": 43,
+      "lines": 45,
       "path": "examples/host-docs/reconnect.py"
     },
     {
@@ -15603,8 +15694,56 @@
       "id": "file:examples/host-docs/sandbox.py",
       "kind": "file",
       "label": "sandbox.py",
-      "lines": 57,
+      "lines": 59,
       "path": "examples/host-docs/sandbox.py"
+    },
+    {
+      "file_kind": "configuration",
+      "id": "file:examples/host-docs/traces/completion_hook.trace.json",
+      "kind": "file",
+      "label": "completion_hook.trace.json",
+      "lines": 1,
+      "path": "examples/host-docs/traces/completion_hook.trace.json"
+    },
+    {
+      "file_kind": "configuration",
+      "id": "file:examples/host-docs/traces/index.json",
+      "kind": "file",
+      "label": "index.json",
+      "lines": 88,
+      "path": "examples/host-docs/traces/index.json"
+    },
+    {
+      "file_kind": "configuration",
+      "id": "file:examples/host-docs/traces/memory_skills.trace.json",
+      "kind": "file",
+      "label": "memory_skills.trace.json",
+      "lines": 1,
+      "path": "examples/host-docs/traces/memory_skills.trace.json"
+    },
+    {
+      "file_kind": "configuration",
+      "id": "file:examples/host-docs/traces/native.trace.json",
+      "kind": "file",
+      "label": "native.trace.json",
+      "lines": 1,
+      "path": "examples/host-docs/traces/native.trace.json"
+    },
+    {
+      "file_kind": "configuration",
+      "id": "file:examples/host-docs/traces/reconnect.trace.json",
+      "kind": "file",
+      "label": "reconnect.trace.json",
+      "lines": 1,
+      "path": "examples/host-docs/traces/reconnect.trace.json"
+    },
+    {
+      "file_kind": "configuration",
+      "id": "file:examples/host-docs/traces/sandbox.trace.json",
+      "kind": "file",
+      "label": "sandbox.trace.json",
+      "lines": 1,
+      "path": "examples/host-docs/traces/sandbox.trace.json"
     },
     {
       "file_kind": "cargo-manifest",
@@ -15771,7 +15910,7 @@
       "id": "file:scripts/check-doc-examples.py",
       "kind": "file",
       "label": "check-doc-examples.py",
-      "lines": 152,
+      "lines": 162,
       "path": "scripts/check-doc-examples.py"
     },
     {
@@ -15789,6 +15928,14 @@
       "label": "check-source-tree.py",
       "lines": 88,
       "path": "scripts/check-source-tree.py"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:scripts/doc-traces.py",
+      "kind": "file",
+      "label": "doc-traces.py",
+      "lines": 234,
+      "path": "scripts/doc-traces.py"
     },
     {
       "file_kind": "python-script",
@@ -15845,6 +15992,14 @@
       "label": "test_doc_examples.py",
       "lines": 121,
       "path": "scripts/tests/test_doc_examples.py"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:scripts/tests/test_doc_traces.py",
+      "kind": "file",
+      "label": "test_doc_traces.py",
+      "lines": 122,
+      "path": "scripts/tests/test_doc_traces.py"
     },
     {
       "file_kind": "python-script",
@@ -20458,26 +20613,26 @@
     ]
   },
   "statistics": {
-    "edges": 2346,
+    "edges": 2363,
     "files_by_kind": {
       "automation": 4,
       "binary-asset": 5,
       "cargo-manifest": 8,
       "ci-workflow": 4,
-      "configuration": 19,
+      "configuration": 25,
       "documentation": 54,
-      "python-script": 43,
+      "python-script": 45,
       "rust-source": 362,
       "supporting-file": 21,
       "typescript-source": 36,
       "web-asset": 20
     },
-    "nodes": 1204,
+    "nodes": 1213,
     "nodes_by_kind": {
       "component": 14,
       "dependency": 72,
-      "directory": 117,
-      "file": 576,
+      "directory": 118,
+      "file": 584,
       "module": 366,
       "package": 7,
       "repository": 1,

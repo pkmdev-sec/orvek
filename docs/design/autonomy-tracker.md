@@ -1,6 +1,6 @@
 # Orvek autonomy and harness tracker
 
-Status: T01, T02, and T03 implemented and verified. T09 hooks are verified; event intake is pending. T04 and T11 integration is in progress. T05 and T08 implementation has started. Baseline: `720210c0cbceebe89c123038049e9aebf77ba47d`. Sources inspected on 2026-09-20.
+Status: T01, T02, T03, and T11 implemented and verified. T09 hooks are verified; event intake is pending. T04 replay acceptance is in progress. T05, T06, and T08 implementation is underway. Baseline: `720210c0cbceebe89c123038049e9aebf77ba47d`. Sources inspected on 2026-09-20.
 
 ## Decision
 
@@ -35,7 +35,7 @@ Verification at the research baseline:
 - **T02**, `87bc77f`: 11 deterministic child-execution tests pass. Four additional real-Docker tests pass: parent/child command conformance, host crash and exact-container fencing, receipt-commit loss without re-execution, and running-command cancellation. Crash recovery also preserves an unrelated container.
 - **T03**, `757b6b4`: all 32 SnapCompact tests pass, including null measurements, failed/interrupted admissions, malformed logs, child failures, torn records, pairing controls, and report denominators. The original six tests were retained or migrated to schema v2; archived zero-filled records are not accepted as measured evidence.
 - **T04 integration**, `4871c93` through `668200d`: 303 default harness tests, 79 focused trace/provider tests, 20 app-host tests, and three actual-Docker repair/patch/child cases pass. Review found and reproduced receipt memory amplification, wire-payload mismatch, legacy unknown/zero accounting, and context closure defects; their integrated regressions now pass. All-feature compilation and strict Clippy pass. Portable receipt replay is implemented; controller-decision replay and per-call historical causal completeness are not established. T04 remains open for its final acceptance audit.
-- **T11 memory/skills phase**, `d154278`: the parent reran the real two-session put/scan/read and on-demand skill example, including manifest identities. Five executable examples now exist. Sanitized fixture trace links are in progress.
+- **T11 memory/skills phase**, `d154278`: the parent reran the real two-session put/scan/read and on-demand skill example, including manifest identities. Five executable examples now exist. `8975a7c` adds sanitized fixture trace links; the parent regenerated them on the merged runtime and verified offline replay/review, false-exact rejection, all 38 Python tests, and 35 classified guide fences. Every trace omits all artifact payloads and is explicitly non-exact. Later runtime changes require regeneration.
 - The existing Docker boundary suite also passes: 14 tests against Docker 29.7.2 with `debian:bookworm-slim` and the static ARM64 executor helper.
 
 The manifest records rerun commands. No live-model or competitor comparison has run. Repository-wide integration checks remain pending while other work lands.
@@ -264,7 +264,7 @@ T01, T02, and T03 are complete. T09 hooks are verified; event intake remains ope
 - [x] Inventory examples as runnable, illustrative, or external-service. Require an explicit reason for non-runnable examples.
 - [x] Start with memory scan/read, skill discovery, native unverified completion, sandbox verified completion, reconnect, and terminal hook delivery.
 - [x] Run examples against public CLI/IPC boundaries with setup and teardown. Assert actual resulting state, not “Done” text.
-- [ ] Generate snippets; check generated content in CI alongside existing syntax/link checks. Link each example to a sanitized trace bundle once T04 exists.
+- [x] Generate snippets; check generated content in CI alongside existing syntax/link checks. Link each example to a sanitized trace bundle once T04 exists.
 
 **Done:** documentation cannot advertise enabled memory or hook behavior when the real host does not provide it. Examples remain short enough to read and rerun.
 
