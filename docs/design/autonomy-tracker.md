@@ -1,6 +1,6 @@
 # Orvek autonomy and harness tracker
 
-Status: research complete; implementation not started. Baseline: `720210c0cbceebe89c123038049e9aebf77ba47d`. Sources inspected on 2026-09-20.
+Status: T02 and T03 implemented and verified. T01, T04, and the T09 hook phase are in progress. Baseline: `720210c0cbceebe89c123038049e9aebf77ba47d`. Sources inspected on 2026-09-20.
 
 ## Decision
 
@@ -18,13 +18,22 @@ Navigation began with `CODEBASE.md`, `docs/codebase-graph/overview.md`, and `.ag
 
 Deep Agents is pinned to `c3a041e3d8f593e4e4c9bfc273d52264ceff165b`. Its current implementation can differ from an older article. Article performance numbers are not Orvek results.
 
-Verification completed during this analysis:
+Verification at the research baseline:
 
 - `cargo test -p orvek-harness --test subagents --test native_host --test session_journal`: 20 passed.
 - `cargo test -p orvek-harness --test completion_contract`: 26 passed.
 - `python3 -B -m unittest discover -s evals/snapcompact -p 'test_*.py'`: 6 passed.
-- A local fixture calling the current `run_paired.parse_log` reproduced missing cached/reasoning token counts becoming zero. T03 records the regression target.
-- Docker crash tests and live-model comparisons were not run. Source-confirmed defects that still need those reproductions are labeled below.
+- A local fixture calling the baseline `run_paired.parse_log` reproduced missing cached/reasoning token counts becoming zero. T03 records the regression target.
+- Docker crash tests and live-model comparisons were not run during research. Subsequent implementation verification is recorded below.
+
+
+### Verified implementation results
+
+- **T02**, `87bc77f`: 11 deterministic child-execution tests pass. Four additional real-Docker tests pass: parent/child command conformance, host crash and exact-container fencing, receipt-commit loss without re-execution, and running-command cancellation. Crash recovery also preserves an unrelated container.
+- **T03**, `757b6b4`: all 32 SnapCompact tests pass, including null measurements, failed/interrupted admissions, malformed logs, child failures, torn records, pairing controls, and report denominators. The original six tests were retained or migrated to schema v2; archived zero-filled records are not accepted as measured evidence.
+- The existing Docker boundary suite also passes: 14 tests against Docker 29.7.2 with `debian:bookworm-slim` and the static ARM64 executor helper.
+
+The manifest records rerun commands. No live-model or competitor comparison has run. Repository-wide integration checks remain pending while other work lands.
 
 ## Preserve these strengths
 
@@ -79,19 +88,19 @@ All paths below are relative to the pinned D01 repository.
 
 ## Ranked implementation queue
 
-All items are open. “Ready” means the next step is sufficiently specified, not that implementation is verified. Scores are prioritization judgments, not measurements: empowerment and competitive value each range from 1 to 5. Order also respects correctness prerequisites. Effort is relative: S is a narrow fix, M spans a subsystem, L crosses persistence/runtime boundaries.
+T02 and T03 are complete. T01, T04, and the T09 hook phase are in progress in isolated worktrees. “Ready” means the next step is sufficiently specified, not that implementation is verified. Scores are prioritization judgments, not measurements: empowerment and competitive value each range from 1 to 5. Order also respects correctness prerequisites. Effort is relative: S is a narrow fix, M spans a subsystem, L crosses persistence/runtime boundaries.
 
 | Rank | ID | Deliverable | Empowerment / edge | Effort | Status | Dependencies |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | T01 | Host-visible memory and skill context | 5 / 4 | M | Ready | None |
-| 2 | T02 | Consistent child execution identity and outcome accounting | 5 / 4 | M | Ready for regression reproduction | None |
-| 3 | T03 | Honest evaluation records, including failed attempts | 4 / 5 | S | Ready | None |
-| 4 | T04 | Portable causal trace bundles and offline replay | 5 / 5 | L | Planned | T02, T03 |
+| 1 | T01 | Host-visible memory and skill context | 5 / 4 | M | In progress | None |
+| 2 | T02 | Consistent child execution identity and outcome accounting | 5 / 4 | M | Done | None |
+| 3 | T03 | Honest evaluation records, including failed attempts | 4 / 5 | S | Done | None |
+| 4 | T04 | Portable causal trace bundles and offline replay | 5 / 5 | L | In progress | T02, T03 |
 | 5 | T05 | Scoped, evidence-backed, self-correcting memory | 5 / 5 | L | Planned | T01, T04 |
 | 6 | T06 | Persistent interpreter over host-admitted tools | 5 / 5 | L | Planned | T02, T04 |
 | 7 | T07 | Model-directed, lossless-source context transitions | 5 / 4 | M | Planned | T03, T04 |
 | 8 | T08 | Durable child lifecycle, valid results, explicit context modes | 5 / 4 | L | Planned | T02, T04 |
-| 9 | T09 | Working terminal hooks and durable event intake | 4 / 3 | M | Ready for hook fix; intake later | None for hook fix; T02, T04 for intake |
+| 9 | T09 | Working terminal hooks and durable event intake | 4 / 3 | M | Hook fix in progress; intake later | None for hook fix; T02, T04 for intake |
 | 10 | T10 | Trace-driven quality monitoring and autonomous repair experiments | 5 / 5 | L | Planned | T03, T04, T09 |
 | 11 | T11 | Executable capability documentation | 4 / 3 | M | Ready for inventory | T01, T09 for end-to-end examples |
 
@@ -111,27 +120,27 @@ All items are open. “Ready” means the next step is sufficiently specified, n
 
 ### T02: Preserve one execution identity through child tools
 
-**Evidence:** O09/O10/O21/O22; L04/L09. Source-confirmed defect; real Docker crash reproduction is still required. `ChildLoop::run_tool` journals a job and an environment containing only `runner: subagent`. `WorkspaceChildTools::execute` generates different task/job IDs and generation zero. Recovery expects the original Docker environment and recorded job identity. The adapter also loses execution metadata and turns uncertainty into an ordinary error.
+**Evidence:** O09/O10/O21/O22; L04/L09. Baseline defect, fixed and tested against real Docker in `87bc77f`. `ChildLoop::run_tool` previously journaled a job and an environment containing only `runner: subagent`. `WorkspaceChildTools::execute` generated different task/job IDs and generation zero. Recovery expects the original Docker environment and recorded job identity. The adapter also lost execution metadata and turned uncertainty into an ordinary error.
 
 **Decision:** Pass the admitted `ToolContext` and backend identity into child execution. Return the same typed recorded result as parent execution. Never invent a second job identity in an adapter.
 
-- [ ] Add a deterministic identity regression before the fix. Assert journal job, executor job, receipt job, task, and generation agree.
-- [ ] Retain execution status, diagnostics, and unknown outcomes. A nonzero shell exit must not become a succeeded job merely because JSON was returned.
-- [ ] Kill the host after child dispatch; reopen against the original Docker backend; reconcile the exact original container. Test cancellation and receipt-commit failure. Never replay the uncertain command.
-- [ ] Apply a shared scenario table to parent native, parent sandbox, and child dispatch: intent-before-execution, receipt identity, error/unknown distinction, and no late settlement. Declare intentional backend differences explicitly.
+- [x] Add a deterministic identity regression before the fix. Assert journal job, executor job, receipt job, task, and generation agree.
+- [x] Retain execution status, diagnostics, and unknown outcomes. A nonzero shell exit must not become a succeeded job merely because JSON was returned.
+- [x] Kill the host after child dispatch; reopen against the original Docker backend; reconcile the exact original container. Test cancellation and receipt-commit failure. Never replay the uncertain command.
+- [x] Apply a shared scenario table to parent native, parent sandbox, and child dispatch: intent-before-execution, receipt identity, error/unknown distinction, and no late settlement. Declare intentional backend differences explicitly.
 
 **Done:** the real child command is fenced or remains explicitly unknown after restart. Unrelated containers are untouched. Native unknown jobs retain the existing no-replay behavior in O27. General native-network reconciliation is not solved by this patch.
 
 ### T03: Fix the measurement contract before hill climbing
 
-**Evidence:** O23/O24; L08/L09/L13. Reproduced: `parse_log` initializes optional token counts to zero and ignores nulls. The paired report requires numbers. Nonzero execution exits raise before a raw attempt record is written. Some child/retrieval fields are hardcoded zero.
+**Evidence:** O23/O24; L08/L09/L13. Baseline defects, fixed in `757b6b4`: `parse_log` converted null token counts to zero; reports required numbers; nonzero process exits raised before writing an attempt; some child/retrieval fields were hardcoded zero.
 
 **Decision:** Use measured value versus unknown throughout parsing, raw records, and aggregation. Preserve every attempt, including infrastructure error and interrupted run. Only derive zero from recorded absence.
 
-- [ ] Add a fixture with input/output counts present and cached/reasoning counts null. Assert null remains null in raw and aggregate output.
-- [ ] Add nonzero-exit, missing receipt, failed-child, and partial-log fixtures. Each produces a typed attempt record before the runner returns failure.
-- [ ] Version the raw schema and migrate report readers together. Do not quietly reinterpret historical zero-filled data as measured evidence.
-- [ ] Report completed, failed, interrupted, and invalid-evaluation denominators separately. Pair trials by dataset, task digest, model/settings, harness build, tool access, and environment.
+- [x] Add a fixture with input/output counts present and cached/reasoning counts null. Assert null remains null in raw and aggregate output.
+- [x] Add nonzero-exit, missing receipt, failed-child, and partial-log fixtures. Each produces a typed attempt record before the runner returns failure.
+- [x] Version the raw schema and migrate report readers together. Do not quietly reinterpret historical zero-filled data as measured evidence.
+- [x] Report completed, failed, interrupted, and invalid-evaluation denominators separately. Pair trials by dataset, task digest, model/settings, harness build, tool access, and environment.
 
 **Done:** deterministic tests prove unknown is not zero and failed attempts cannot disappear from a comparison. Existing six SnapCompact tests continue to pass. This is a prerequisite for any cost, quality, or superiority claim.
 
@@ -293,11 +302,11 @@ Run two comparisons: a same-model harness comparison where products permit it, a
 6. Refresh affected docs and navigation graphs after layout or module changes. Recheck code anchors rather than blindly updating their hashes.
 7. If evidence falsifies a proposal, mark it `rejected` with the result. If an external dependency blocks it, record the blocker and continue with the next independent item.
 
-First implementation revision: `fix(harness): expose configured memory and skills through host requests`, preceded by its failing integration regression revision. Independently reproduce T02's identity mismatch and T03's unknown-value bug. Do not start autonomous self-modification before those measurement and execution foundations are trustworthy.
+T02 and T03 landed first, with failing-before and passing-after tests. T01 remains in progress. Continue by dependency order; do not infer overall autonomy or comparative quality from these foundational fixes.
 
 ## Local code evidence index
 
-The following anchors are source locations at the audited revision, not permanent line-number APIs. The manifest checker detects file/anchor drift and requires a fresh review.
+These anchors identify the latest reviewed source, not permanent line-number APIs. For changed files, the manifest retains the research hash and line alongside the implementation review. The checker detects new file/anchor drift and requires another review.
 
 | ID | Source and anchor |
 | --- | --- |
@@ -309,7 +318,7 @@ The following anchors are source locations at the audited revision, not permanen
 | O06 | [crates/harness/src/context.rs](../../crates/harness/src/context.rs) at line 298, `pub fn project(` |
 | O07 | [crates/harness/src/context.rs](../../crates/harness/src/context.rs) at line 199, `pub fn read_text_page(` |
 | O08 | [crates/harness/src/context_cost.rs](../../crates/harness/src/context_cost.rs) at line 156, `pub fn recommendation(` |
-| O09 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 448, `async fn spawn(` |
+| O09 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 453, `async fn spawn(` |
 | O10 | [crates/harness/src/capabilities.rs](../../crates/harness/src/capabilities.rs) at line 90, `pub fn requires_reconciliation(` |
 | O11 | [crates/harness/src/store.rs](../../crates/harness/src/store.rs) at line 99, `pub struct Store` |
 | O12 | [crates/harness/src/completion.rs](../../crates/harness/src/completion.rs) at line 15, `pub fn evaluate(` |
@@ -321,15 +330,15 @@ The following anchors are source locations at the audited revision, not permanen
 | O18 | [crates/harness/src/controller/auxiliary.rs](../../crates/harness/src/controller/auxiliary.rs) at line 279, `let instructions = format!(` |
 | O19 | [crates/harness/src/admission_profile.rs](../../crates/harness/src/admission_profile.rs) at line 87, `pub struct HarnessBinding` |
 | O20 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3370, `fn native_tool_definitions(` |
-| O21 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 950, `async fn run_tool(` |
+| O21 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 955, `async fn run_tool(` |
 | O22 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3023, `async fn reconcile_unresolved(` |
-| O23 | [evals/snapcompact/run_paired.py](../../evals/snapcompact/run_paired.py) at line 32, `def parse_log(` |
-| O24 | [evals/snapcompact/paired_report.py](../../evals/snapcompact/paired_report.py) at line 20, `def validate(` |
+| O23 | [evals/snapcompact/run_paired.py](../../evals/snapcompact/run_paired.py) at line 36, `def parse_log(` |
+| O24 | [evals/snapcompact/paired_report.py](../../evals/snapcompact/paired_report.py) at line 30, `def validate(` |
 | O25 | [bin/orvek/src/app/config.rs](../../bin/orvek/src/app/config.rs) at line 2072, `fn completion_hook_can_be_configured(` |
 | O26 | [bin/orvek/src/app/host.rs](../../bin/orvek/src/app/host.rs) at line 422, `config.agent().completion_hook()` |
 | O27 | [crates/harness/tests/native_host.rs](../../crates/harness/tests/native_host.rs) at line 813, `restart_keeps_unknown_native_jobs_unfenced_and_never_replays_them` |
-| O28 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 927, `"submitted": false` |
-| O29 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 1061, `fn child_definitions(` |
+| O28 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 932, `"submitted": false` |
+| O29 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 1098, `fn child_definitions(` |
 
 ## Rerun this research check
 

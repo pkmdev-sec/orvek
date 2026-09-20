@@ -230,15 +230,23 @@
       "id": "O09",
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "async fn spawn(",
-      "line": 448,
-      "sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0"
+      "line": 453,
+      "sha256": "681e033c26f49cf2e8708405f8e0d98a24ee100b397f6ddf738c077ab2e53e73",
+      "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
+      "research_line": 448,
+      "reviewed_revision": "87bc77f",
+      "review_note": "T02 retained spawn semantics; child execution identity now reaches the backend unchanged. T08 lifecycle/context work remains open."
     },
     {
       "id": "O10",
       "path": "crates/harness/src/capabilities.rs",
       "anchor": "pub fn requires_reconciliation(",
       "line": 90,
-      "sha256": "47eb5d171b5ff2a1e55a30475226dc4f10aab88f2a989e370fd75acd26560160"
+      "sha256": "2610520f5abc37175091189b80b7450e74e9a306a92ea7846999362702f89e68",
+      "research_sha256": "47eb5d171b5ff2a1e55a30475226dc4f10aab88f2a989e370fd75acd26560160",
+      "research_line": 90,
+      "reviewed_revision": "87bc77f",
+      "review_note": "T02 added typed original backend environment and preserves ToolRun metadata. requires_reconciliation remains the uncertainty authority."
     },
     {
       "id": "O11",
@@ -314,8 +322,12 @@
       "id": "O21",
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "async fn run_tool(",
-      "line": 950,
-      "sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0"
+      "line": 955,
+      "sha256": "681e033c26f49cf2e8708405f8e0d98a24ee100b397f6ddf738c077ab2e53e73",
+      "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
+      "research_line": 950,
+      "reviewed_revision": "87bc77f",
+      "review_note": "T02 fixed admitted ToolContext, execution receipts/status, durable settlement errors, and no-replay recovery; verified 11 deterministic and 4 real-Docker tests."
     },
     {
       "id": "O22",
@@ -328,15 +340,23 @@
       "id": "O23",
       "path": "evals/snapcompact/run_paired.py",
       "anchor": "def parse_log(",
-      "line": 32,
-      "sha256": "9836e4bf03241ef4ed714e8c70b129bb10244cac587fa794615184f466086847"
+      "line": 36,
+      "sha256": "b012110f854bacfa4503c0ddde2bf8738fa5562dda95631c8377b095e7073177",
+      "research_sha256": "9836e4bf03241ef4ed714e8c70b129bb10244cac587fa794615184f466086847",
+      "research_line": 32,
+      "reviewed_revision": "757b6b4",
+      "review_note": "T03 schema-v2 admissions/final snapshots preserve null usage and failed/interrupted attempts; 32 offline tests passed."
     },
     {
       "id": "O24",
       "path": "evals/snapcompact/paired_report.py",
       "anchor": "def validate(",
-      "line": 20,
-      "sha256": "22188f70a9839a279d5a631bf31f65020afdc8dfa5e07794ebf25701d967918d"
+      "line": 30,
+      "sha256": "be4ad2dc6893ffdc1010ac6fe4627726090d4acd6dbdba9ce031ca162ae3d533",
+      "research_sha256": "22188f70a9839a279d5a631bf31f65020afdc8dfa5e07794ebf25701d967918d",
+      "research_line": 20,
+      "reviewed_revision": "757b6b4",
+      "review_note": "T03 report validates schema v2, rejects legacy zero-filled evidence, reports all attempt denominators and unmatched pairs; 32 offline tests passed."
     },
     {
       "id": "O25",
@@ -363,15 +383,23 @@
       "id": "O28",
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "\"submitted\": false",
-      "line": 927,
-      "sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0"
+      "line": 932,
+      "sha256": "681e033c26f49cf2e8708405f8e0d98a24ee100b397f6ddf738c077ab2e53e73",
+      "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
+      "research_line": 927,
+      "reviewed_revision": "87bc77f",
+      "review_note": "Reviewed after T02 changes: prose fallback submitted:false remains unchanged; T08 is still required."
     },
     {
       "id": "O29",
       "path": "crates/harness/src/controller/subagents.rs",
       "anchor": "fn child_definitions(",
-      "line": 1061,
-      "sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0"
+      "line": 1098,
+      "sha256": "681e033c26f49cf2e8708405f8e0d98a24ee100b397f6ddf738c077ab2e53e73",
+      "research_sha256": "3ca68070ed0912f821adb9e2faffdef82d5451428186699c92fd7af811cbd1e0",
+      "research_line": 1061,
+      "reviewed_revision": "87bc77f",
+      "review_note": "Reviewed after T02 changes: tool registry and schema exposure gap remain unchanged; T08 is still required."
     }
   ],
   "competitor_context": [
@@ -400,7 +428,7 @@
       "id": "T01",
       "title": "Host-visible memory and skills",
       "rank": 1,
-      "status": "ready",
+      "status": "in_progress",
       "depends_on": [],
       "sources": [
         "L02",
@@ -417,16 +445,18 @@
         "O18",
         "O20"
       ],
-      "owner": null,
+      "owner": "implement-host-context",
       "implementation_revision": null,
       "results": [],
-      "next_action": "Add host IPC provider-capture regression for enabled memory and skills."
+      "next_action": "Add host IPC provider-capture regression for enabled memory and skills.",
+      "worktree": "/tmp/orvek-autonomy-t01",
+      "branch": "work/autonomy-t01"
     },
     {
       "id": "T02",
       "title": "Child execution identity",
       "rank": 2,
-      "status": "ready_for_reproduction",
+      "status": "done",
       "depends_on": [],
       "sources": [
         "L04",
@@ -438,16 +468,31 @@
         "O21",
         "O22"
       ],
-      "owner": null,
-      "implementation_revision": null,
-      "results": [],
-      "next_action": "Reproduce mismatch between recorded child job ID and executor job ID."
+      "owner": "fix-child-execution",
+      "implementation_revision": "87bc77f",
+      "results": [
+        {
+          "command": "cargo test --locked -p orvek-harness --lib controller::subagents::execution_tests -- --test-threads=1",
+          "passed": 11,
+          "ignored": 4,
+          "log": ".agent-map/autonomy/t02-deterministic.log"
+        },
+        {
+          "command": "cargo test --locked -p orvek-harness --lib controller::subagents::execution_tests::real_docker -- --ignored --nocapture --test-threads=1",
+          "passed": 4,
+          "log": ".agent-map/autonomy/t02-live-complete.log",
+          "environment": "Docker 29.7.2, debian:bookworm-slim, static ARM64 executor helper"
+        }
+      ],
+      "next_action": "Retain regression and real-Docker coverage during integration; T08 adds lifecycle/context separately.",
+      "worktree": "/tmp/orvek-autonomy-t02",
+      "branch": "work/autonomy-t02"
     },
     {
       "id": "T03",
       "title": "Honest evaluation records",
       "rank": 3,
-      "status": "ready",
+      "status": "done",
       "depends_on": [],
       "sources": [
         "L08",
@@ -458,16 +503,24 @@
         "O23",
         "O24"
       ],
-      "owner": null,
-      "implementation_revision": null,
-      "results": [],
-      "next_action": "Add parse_log regression asserting null usage stays unknown."
+      "owner": "fix-evaluation-records",
+      "implementation_revision": "757b6b4",
+      "results": [
+        {
+          "command": "python3 -B -m unittest discover -s evals/snapcompact -p \"test_*.py\"",
+          "passed": 32,
+          "log": ".agent-map/autonomy/t03-tests.log"
+        }
+      ],
+      "next_action": "Use schema v2 for future comparisons; live-provider and competitor measurements remain pending.",
+      "worktree": "/tmp/orvek-autonomy-t03",
+      "branch": "work/autonomy-t03"
     },
     {
       "id": "T04",
       "title": "Causal trace bundles and replay",
       "rank": 4,
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "T02",
         "T03"
@@ -484,10 +537,12 @@
         "O15",
         "O17"
       ],
-      "owner": null,
+      "owner": "implement-causal-traces",
       "implementation_revision": null,
       "results": [],
-      "next_action": "Complete dependencies, then implement the first unchecked step in the work card."
+      "next_action": "Implement versioned local bundles, causal spans, offline replay, and separate fresh re-execution.",
+      "worktree": "/tmp/orvek-autonomy-t04",
+      "branch": "work/autonomy-t04"
     },
     {
       "id": "T05",
@@ -586,7 +641,7 @@
       "id": "T09",
       "title": "Terminal hooks and event intake",
       "rank": 9,
-      "status": "ready_for_hook_fix",
+      "status": "in_progress",
       "depends_on": [],
       "sources": [
         "L01",
@@ -597,17 +652,19 @@
         "O26",
         "O17"
       ],
-      "owner": null,
+      "owner": "implement-terminal-delivery",
       "implementation_revision": null,
       "results": [],
-      "next_action": "Add headless/TUI terminal-hook delivery regression.",
+      "next_action": "Implement durable terminal-hook delivery first; event intake remains pending T04.",
       "phase_dependencies": {
         "hook_fix": [],
         "event_intake": [
           "T02",
           "T04"
         ]
-      }
+      },
+      "worktree": "/tmp/orvek-autonomy-t09",
+      "branch": "work/autonomy-t09"
     },
     {
       "id": "T10",
