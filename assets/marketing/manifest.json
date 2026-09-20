@@ -1,0 +1,43 @@
+{
+  "product": "Orvex",
+  "width": 1280,
+  "height": 800,
+  "frames": 200,
+  "fps": 25,
+  "loop_seconds": 8,
+  "comparison_checked_on": "2026-09-20",
+  "files": {
+    "orvex-comparison.gif": {
+      "bytes": 960874,
+      "sha256": "731415ca8dfccb11d453b32a4e94a4a4091f9f657a3b1099d21f5ef98ac90ee3"
+    },
+    "orvex-comparison.mp4": {
+      "bytes": 148768,
+      "sha256": "539622e84942608d1ace696761de8e25adcadeeaccc214de41c34f2862cfeb8d"
+    },
+    "orvex-comparison.png": {
+      "bytes": 98540,
+      "sha256": "66fafd44b3145512d2d51ff673d6ebdfe60599531f4d0abde9e6841ec9bbe194"
+    },
+    "orvex-comparison.webp": {
+      "bytes": 698622,
+      "sha256": "c27b11cacfdcdf742cee23fd8b73882535cf41317c6cf388cdab87605a0014c7"
+    },
+    "orvex-differentiators.gif": {
+      "bytes": 2735565,
+      "sha256": "4b196f522f3ee21135becabfd360975d5aae69de4e209357b60bde132a0dfadc"
+    },
+    "orvex-differentiators.mp4": {
+      "bytes": 321228,
+      "sha256": "04b1c129fd0c89ec26ad5d6256a363dfb729f8405eb38a0204ab44ef4dfbfaf6"
+    },
+    "orvex-differentiators.png": {
+      "bytes": 68350,
+      "sha256": "fdd33560e58cfb11bf46faa8c1bdcceaa82195d784eba131d530eb9b7816f205"
+    },
+    "orvex-differentiators.webp": {
+      "bytes": 590898,
+      "sha256": "19a5e8609f4c39245d909ef84b2f00002f8dd4c945910195fc516119b7431b68"
+    }
+  }
+}

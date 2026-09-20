@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orvex · Marketing visuals</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#121018;color:#f2e7d5}*{box-sizing:border-box}body{max-width:1352px;margin:auto;padding:36px}header{display:flex;justify-content:space-between;align-items:center;gap:24px}h1{font-size:32px;letter-spacing:-.04em;margin:0}h2{font-size:22px;font-weight:550}p{color:#aea8bd;line-height:1.6;max-width:900px}a{color:#89c9e8;text-underline-offset:4px}button{background:#252033;color:#f2e7d5;border:1px solid #766191;padding:12px 18px;font:inherit;cursor:pointer;border-radius:4px}button:focus-visible,a:focus-visible{outline:3px solid #b6a1f2;outline-offset:5px}section{margin:40px 0 56px}video{width:100%;height:auto;display:block;background:#121018;border:1px solid #443753;border-radius:10px}nav{display:flex;flex-wrap:wrap;gap:24px;margin-top:16px;font-size:15px}footer{border-top:1px solid #443753;padding-top:22px;font-size:14px}.tag{font-size:13px;text-transform:uppercase;letter-spacing:.12em;color:#b6a1f2}@media(max-width:600px){body{padding:20px}header{align-items:flex-start;flex-direction:column}h1{font-size:28px}}
+details{margin-top:24px}summary{cursor:pointer;color:#b6a1f2}table{border-collapse:collapse;width:100%;margin-top:18px;text-align:left}th,td{border:1px solid #443753;padding:12px;font-size:15px;line-height:1.5}th{color:#f2e7d5}td{color:#aea8bd}</style>
+</head>
+<body>
+<header><div><p class="tag">Orvex / Marketing kit</p><h1>Coding work, with continuity.</h1></div><button id="motion" type="button">Play animations</button></header>
+<p>Two eight-second loops in the pixel-art palette. Each visual is available as GIF, animated WebP, MP4, and a static PNG. Native video controls let you pause or inspect any frame.</p>
+<section aria-labelledby="overview-title"><h2 id="overview-title">01 · What connects the workflow</h2>
+<video controls muted loop playsinline preload="metadata" poster="orvex-differentiators.png" aria-label="Orvex connects a durable local host, opt-in shared SQLite memory, read-only child agents with schema-checked results, and browser review."><source src="orvex-differentiators.mp4" type="video/mp4"><img src="orvex-differentiators.png" alt="Orvex's four workflow capabilities around its pixel diamond."></video>
+<nav aria-label="Download differentiators"><a href="orvex-differentiators.gif" download>GIF</a><a href="orvex-differentiators.webp" download>Animated WebP</a><a href="orvex-differentiators.mp4" download>MP4</a><a href="orvex-differentiators.png" download>Static PNG</a></nav>
+<p>Memory is opt-in. Child agents require Docker. Browser review requires web assets. Live execution requires the host and machine to remain available.</p>
+</section>
+<section aria-labelledby="comparison-title"><h2 id="comparison-title">02 · Orvex, Codex, and Claude Code</h2>
+<video controls muted loop playsinline preload="metadata" poster="orvex-comparison.png" aria-label="A sourced workflow comparison of Orvex, Codex, and Claude Code across continuing work, delegation, memory, and review."><source src="orvex-comparison.mp4" type="video/mp4"><img src="orvex-comparison.png" alt="Three-column workflow comparison of Orvex, Codex, and Claude Code."></video>
+<nav aria-label="Download comparison"><a href="orvex-comparison.gif" download>GIF</a><a href="orvex-comparison.webp" download>Animated WebP</a><a href="orvex-comparison.mp4" download>MP4</a><a href="orvex-comparison.png" download>Static PNG</a></nav>
+<p>This compares documented approaches, not benchmark results or exclusive features. Capabilities overlap. Code metrics do not replace tests. Read the <a href="SOURCES.md">dated sources and qualifications</a> before publishing.</p>
+<details><summary>Read the comparison as text</summary><table><caption>Documented workflow approaches</caption><thead><tr><th scope="col">Workflow</th><th scope="col">Orvex</th><th scope="col">Codex</th><th scope="col">Claude Code</th></tr></thead><tbody><tr><th scope="row">Continuing work</th><td>Detached host<br>Journaled sessions</td><td>Resume + background shells<br>App-server API</td><td>Detached sessions<br>Background agent view</td></tr><tr><th scope="row">Branching + delegation</th><td>Pane forks + read-only<br>JSON-checked children</td><td>Session forks<br>Configurable subagents</td><td>Background forks<br>Configurable subagents</td></tr><tr><th scope="row">Cross-session recall</th><td>Shared SQLite<br>Explicit scan/read</td><td>Generated local memories<br>Chat-level controls</td><td>Auto-memory files<br>Scoped agent memory</td></tr><tr><th scope="row">Review + evidence</th><td>Browser diff feedback<br>Built-in code metrics</td><td>Built-in /review<br>Tests via shell tools</td><td>/diff + review agents<br>Tests via tools</td></tr></tbody></table></details></section>
+<footer><a href="README.md">Deployment and regeneration guide</a><p>1280 × 800 · 25 fps · 8 seconds · Silent, looping video · No external assets or network requests</p></footer>
+<script>
+const videos = [...document.querySelectorAll('video')];
+const button = document.querySelector('#motion');
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+function updateLabel() { button.textContent = videos.some(video => !video.paused) ? 'Pause animations' : 'Play animations'; }
+function pauseAll() { videos.forEach(video => video.pause()); updateLabel(); }
+function playAll() { videos.forEach(video => video.play().catch(updateLabel)); }
+button.addEventListener('click', () => videos.some(video => !video.paused) ? pauseAll() : playAll());
+videos.forEach(video => { video.addEventListener('play', updateLabel); video.addEventListener('pause', updateLabel); });
+reducedMotion.addEventListener('change', event => { if (event.matches) pauseAll(); });
+if (!reducedMotion.matches) playAll();
+</script>
+</body></html>
