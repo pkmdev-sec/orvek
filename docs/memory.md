@@ -9,7 +9,9 @@ enabled = true
 ```
 
 Agents retrieve memory explicitly with `scan` and `read`. Orvek does not insert the whole store into
-prompts. Memory content does not override current instructions or `AGENTS.md`.
+prompts. Memory content does not override the host's task contract or instructions.
+The detached host installs the tools for native tasks, sandbox tasks, and read-only auxiliary
+conversation. Neither a TUI nor a pasted prompt is required.
 
 ## Local memory
 
@@ -22,7 +24,9 @@ workspace scope in the record itself. Local memory needs no network service or C
 
 ## Operations and limits
 
-Root agents can use all four memory-tool operations. Children can only `scan` and `read`.
+Primary coding tasks can use all four memory-tool operations. Auxiliary conversation and other
+read-only assistance can only `scan` and `read`. The host does not currently install memory tools
+for delegated children.
 
 | Operation | Behavior |
 | --- | --- |
@@ -101,10 +105,63 @@ search across backends.
 The token determines the authenticated namespace and `reader` or `writer` role. The configured
 namespace must match. Namespaces contain 1 to 128 ASCII letters, digits, periods, hyphens, or
 underscores. Readers can retrieve visible records across namespaces, including their own. Writers
-can also mutate their own namespace. Child agents remain read-only even with writer credentials.
+can also mutate their own namespace. Auxiliary requests remain read-only even with writer credentials. Delegated children do not
+currently receive this service.
 
-Configuration reload updates the memory browser. Existing agent runtimes retain their installed
-tools and instructions; create or restore a session to apply those changes to the agent.
+The application selects the backend from the admitted session workspace, not a temporary sandbox
+path. The host retains that selection for the run. Reconnect after active tasks finish to replace
+an idle host when configuration changes. Existing sessions still obey pinned configuration
+compatibility checks. No bearer token is sent over session IPC or copied into a context manifest.
+
+## Context versions and local skills
+
+Before each primary or auxiliary provider turn, the host refreshes the skill catalog and the
+memory discovery window. A `ContextPrepared` journal event records the request ID, model-call ID,
+and content-addressed manifest. Old manifests remain available as host artifacts. The manifest
+contains backend identity and exact keys from the bounded `list` window, not memory bodies or
+credentials. A remote window is **not** a revision of the entire shared corpus. Operations read
+current backend state, and mutations still require exact CAS keys. Cancellation stops waiting for
+context I/O. An already-dispatched atomic mutation may still commit; the host reports that
+uncertainty and does not replay it automatically.
+
+Unchanged metadata keeps the same manifest and instruction cache identity. A changed catalog or
+key-version window changes the instructions identity without discarding stable history or changing
+the routing/tool identity. Scan/read telemetry alone does not invalidate the manifest. Actual
+memory results and loaded skill bodies remain in recorded tool outputs; manifests do not replace
+that evidence.
+
+Enable local skill discovery separately:
+
+```toml
+[skills]
+enabled = true
+roots = ["/path/to/skills"]
+```
+
+The supported instruction-file format is `SKILL.md` with YAML `name` and `description` fields.
+Discovery includes configured roots, `$CODEX_HOME/skills` (or `~/.codex/skills`), and `~/.agents/skills`.
+A skill's name must match its containing directory. The host sends bounded metadata, not skill
+bodies, with each request. `read_skill` loads a catalogued skill by name, including when a sandbox
+cannot access its host path. It returns the complete body, canonical path, and content digest;
+bodies over 128 KiB are rejected rather than truncated. Bodies are read at tool-call time, so the
+returned digest, rather than the earlier catalog metadata, identifies their exact version. Referenced resource files are not copied
+into sandboxes by this tool.
+
+Invalid optional skills produce recorded, model-visible diagnostics without removing valid entries.
+File edits refresh at the next provider-turn boundary. `AGENTS.md`, `CLAUDE.md`, and other repository
+instruction filenames are not loaded automatically by this service; a model can inspect admitted
+workspace files explicitly.
+
+Verify the no-TUI restart path with a local fake provider:
+
+```sh
+cargo build -p orvek
+python3 scripts/test-host-context.py target/debug/orvek
+```
+
+The test starts two fresh headless clients with a host restart between them. It checks real memory
+writes and retrieval, on-demand skill bodies, refreshed metadata, and recorded manifests. It uses
+temporary data and loopback HTTP, not a live model account.
 
 ## Explicit transfer commands
 

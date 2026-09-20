@@ -1,6 +1,6 @@
 //! Explicit agent access to the global memory store.
 
-use super::{MemoryAccess, MemoryKey, MemoryRecord, MemoryStore, SelectedMemoryStore};
+use super::{MemoryAccess, MemoryError, MemoryKey, MemoryRecord, MemoryStore, SelectedMemoryStore};
 use nanocodex::{
     Tool,
     tools::contract::{
@@ -40,8 +40,8 @@ enum MemoryOperation {
 
 /// Zeroizes Orvek's typed copy even when object deserialization later rejects the call.
 ///
-/// Nanocodex owns the raw tool arguments and conversation records outside this wrapper; those
-/// dependency-owned copies do not provide a zeroization guarantee.
+/// Host/provider adapters and Nanocodex retain raw JSON arguments and conversation records
+/// outside this wrapper. Those copies do not provide a zeroization guarantee.
 struct MemoryContent(Zeroizing<String>);
 
 impl<'de> Deserialize<'de> for MemoryContent {
@@ -99,33 +99,95 @@ pub trait MutationAuthorizer: Send + Sync {
     async fn authorize_memory_mutation(&self, session_id: &str) -> io::Result<()>;
 }
 
-/// Nanocodex tool exposing bounded memory operations.
-pub struct MemoryTool<A> {
+/// Host-supplied permission; remote credentials can further restrict writes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemoryPermission {
+    /// Scan and read only.
+    ReadOnly,
+    /// Scan, read, put and delete.
+    ReadWrite,
+}
+
+/// A memory operation rejected at the protocol or storage boundary.
+#[derive(Debug, thiserror::Error)]
+pub enum MemoryOperationError {
+    /// Arguments or run-local preconditions were not satisfied.
+    #[error("{0}")]
+    Invalid(&'static str),
+    /// The selected backend rejected or could not complete the operation.
+    #[error(transparent)]
+    Store(#[from] MemoryError),
+    /// The bounded output could not be encoded.
+    #[error("memory output encoding failed")]
+    Encoding(#[from] serde_json::Error),
+}
+
+/// Transport-independent memory operations for one admitted primary or read-only run.
+pub struct MemorySession {
     store: SelectedMemoryStore,
-    authorizer: A,
     searched: AtomicBool,
 }
 
-impl<A> MemoryTool<A>
-where
-    A: MutationAuthorizer,
-{
-    /// Creates a tool over `store` with the supplied mutation authorizer.
-    pub const fn new(store: SelectedMemoryStore, authorizer: A) -> Self {
+impl MemorySession {
+    /// Creates run-local scan-before-put state over the selected backend.
+    pub const fn new(store: SelectedMemoryStore) -> Self {
         Self {
             store,
-            authorizer,
             searched: AtomicBool::new(false),
         }
     }
 
-    async fn scan(&self, query: String, limit: Option<usize>) -> ToolResult {
+    /// Executes a closed operation shape. Permission comes from the host, never arguments.
+    pub async fn execute(
+        &self,
+        arguments: Value,
+        permission: MemoryPermission,
+    ) -> Result<Value, MemoryOperationError> {
+        let operation: MemoryOperation = serde_json::from_value(arguments)
+            .map_err(|_| MemoryOperationError::Invalid("invalid memory operation arguments"))?;
+        if matches!(
+            operation,
+            MemoryOperation::Put { .. } | MemoryOperation::Delete { .. }
+        ) && permission == MemoryPermission::ReadOnly
+        {
+            return Err(MemoryOperationError::Invalid(
+                "memory mutation is only available to primary tasks",
+            ));
+        }
+        match operation {
+            MemoryOperation::Scan { query, limit } => self.scan(query, limit).await,
+            MemoryOperation::Read { keys } => self.read(keys).await,
+            MemoryOperation::Put { content, replace } => self.put(content, replace).await,
+            MemoryOperation::Delete { key } => self.delete(key).await,
+        }
+    }
+
+    /// Provider-neutral schema restricted to the admitted permission.
+    pub fn parameters(permission: MemoryPermission) -> Value {
+        let mut schema = memory_input_schema();
+        schema["type"] = json!("object");
+        if permission == MemoryPermission::ReadOnly {
+            schema["oneOf"]
+                .as_array_mut()
+                .expect("closed memory schema")
+                .truncate(2);
+        }
+        schema
+    }
+
+    async fn scan(
+        &self,
+        query: String,
+        limit: Option<usize>,
+    ) -> Result<Value, MemoryOperationError> {
         if query.trim().is_empty() {
-            return Err(io::Error::other("memory scan query is empty").into());
+            return Err(MemoryOperationError::Invalid("memory scan query is empty"));
         }
         let limit = limit.unwrap_or(DEFAULT_SCAN_LIMIT);
         if !(1..=DEFAULT_SCAN_LIMIT).contains(&limit) {
-            return Err(io::Error::other("memory scan limit must be between 1 and 5").into());
+            return Err(MemoryOperationError::Invalid(
+                "memory scan limit must be between 1 and 5",
+            ));
         }
         let backend = self.store.access().await?;
         let scan = self.store.scan(&query, limit).await?;
@@ -146,9 +208,11 @@ where
         })
     }
 
-    async fn read(&self, keys: Vec<MemoryKey>) -> ToolResult {
+    async fn read(&self, keys: Vec<MemoryKey>) -> Result<Value, MemoryOperationError> {
         if keys.is_empty() {
-            return Err(io::Error::other("memory read requires at least one key").into());
+            return Err(MemoryOperationError::Invalid(
+                "memory read requires at least one key",
+            ));
         }
         let backend = self.store.access().await?;
         let memories = self.store.read(&[], &keys).await?;
@@ -161,16 +225,14 @@ where
 
     async fn put(
         &self,
-        session_id: &str,
         content: MemoryContent,
         replace: Option<MemoryKey>,
-    ) -> ToolResult {
+    ) -> Result<Value, MemoryOperationError> {
         let content = content.0;
-        self.authorizer
-            .authorize_memory_mutation(session_id)
-            .await?;
         if !self.searched.swap(false, Ordering::AcqRel) {
-            return Err(io::Error::other("scan memory before storing a conclusion").into());
+            return Err(MemoryOperationError::Invalid(
+                "scan memory before storing a conclusion",
+            ));
         }
         let backend = self.store.access().await?;
         let replaced = replace.is_some();
@@ -183,10 +245,7 @@ where
         })
     }
 
-    async fn delete(&self, session_id: &str, key: MemoryKey) -> ToolResult {
-        self.authorizer
-            .authorize_memory_mutation(session_id)
-            .await?;
+    async fn delete(&self, key: MemoryKey) -> Result<Value, MemoryOperationError> {
         let backend = self.store.access().await?;
         self.store.delete(key.clone()).await?;
         json_output(&DeleteOutput {
@@ -194,6 +253,22 @@ where
             backend,
             key,
         })
+    }
+}
+
+/// Nanocodex compatibility adapter over the same operation implementation.
+pub struct MemoryTool<A> {
+    session: MemorySession,
+    authorizer: A,
+}
+
+impl<A: MutationAuthorizer> MemoryTool<A> {
+    /// Creates an adapter with an explicit mutation authorizer.
+    pub const fn new(store: SelectedMemoryStore, authorizer: A) -> Self {
+        Self {
+            session: MemorySession::new(store),
+            authorizer,
+        }
     }
 }
 
@@ -212,19 +287,27 @@ where
     }
 
     async fn execute(&self, input: ToolInput, context: ToolContext<'_>) -> ToolResult {
-        match input.decode_json::<MemoryOperation>()? {
-            MemoryOperation::Scan { query, limit } => self.scan(query, limit).await,
-            MemoryOperation::Read { keys } => self.read(keys).await,
-            MemoryOperation::Put { content, replace } => {
-                self.put(context.session_id(), content, replace).await
-            }
-            MemoryOperation::Delete { key } => self.delete(context.session_id(), key).await,
+        let operation = input.decode_json::<MemoryOperation>()?;
+        if matches!(
+            operation,
+            MemoryOperation::Put { .. } | MemoryOperation::Delete { .. }
+        ) {
+            self.authorizer
+                .authorize_memory_mutation(context.session_id())
+                .await?;
         }
+        let value = match operation {
+            MemoryOperation::Scan { query, limit } => self.session.scan(query, limit).await,
+            MemoryOperation::Read { keys } => self.session.read(keys).await,
+            MemoryOperation::Put { content, replace } => self.session.put(content, replace).await,
+            MemoryOperation::Delete { key } => self.session.delete(key).await,
+        }?;
+        Ok(ToolOutput::from_json(value, true))
     }
 }
 
-fn json_output(value: &impl Serialize) -> ToolResult {
-    Ok(ToolOutput::from_json(serde_json::to_value(value)?, true))
+fn json_output(value: &impl Serialize) -> Result<Value, MemoryOperationError> {
+    Ok(serde_json::to_value(value)?)
 }
 
 fn memory_input_schema() -> Value {

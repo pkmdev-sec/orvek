@@ -1,6 +1,6 @@
 # orvek-memory
 
-Memory storage and tools for Nanocodex applications. This workspace crate ships with Orvek 0.1.0
+Memory storage and tools for host applications. This workspace crate ships with Orvek 0.1.0
 source and has no crates.io release.
 
 | API | Purpose |
@@ -9,6 +9,7 @@ source and has no crates.io release.
 | `LocalMemoryStore` | Local SQLite storage using schema v1. |
 | `SelectedMemoryStore` | Select one local or remote backend per runtime. |
 | `RemoteMemoryClient`, `server::MemoryServer` | Authenticated HTTP operations with author namespaces. |
+| `MemorySession`, `MemoryPermission` | Provider-neutral operations and host-supplied access. |
 | `MemoryTool`, `MutationAuthorizer` | Agent scan, read, put, and delete with application-controlled write access. |
 
 Default features are `client`, `local`, `native-server`, and `tool`. For a server without native

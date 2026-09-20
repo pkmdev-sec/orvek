@@ -448,6 +448,23 @@ fn validate_max_subagents(limit: usize) -> Result<()> {
 }
 
 impl Config {
+    #[cfg(test)]
+    pub(crate) fn load_isolated(overrides: ConfigOverrides) -> Result<Self> {
+        let environment = Environment {
+            home: overrides
+                .path
+                .as_ref()
+                .and_then(|path| path.parent())
+                .map(Path::to_owned),
+            ..Environment::default()
+        };
+        Self::load_with(
+            overrides,
+            environment,
+            &env::current_dir().map_err(ConfigError::CurrentDirectory)?,
+        )
+    }
+
     pub(crate) fn load(overrides: ConfigOverrides) -> Result<Self> {
         let current_dir = env::current_dir().map_err(ConfigError::CurrentDirectory)?;
         Self::load_with(overrides, Environment::read(), &current_dir)

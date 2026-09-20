@@ -246,11 +246,7 @@ impl Host {
                 review: spec.review,
             },
         )?;
-        let definitions = auxiliary_tools(spec);
-        let allowed = definitions
-            .iter()
-            .filter_map(|tool| tool["name"].as_str())
-            .collect::<std::collections::BTreeSet<_>>();
+        let mut context_session = self.open_context(session.workspace())?;
         let mut seen = std::collections::BTreeSet::new();
         let mut provider_retries = 0_u32;
         loop {
@@ -276,7 +272,7 @@ impl Host {
             } else {
                 crate::controller::AUXILIARY_INSTRUCTIONS
             };
-            let instructions = format!(
+            let mut instructions = format!(
                 "Provide {:?} assistance. {framing}\nPinned harness behavior:\n{}\nOriginal auxiliary request:\n{}",
                 spec.kind,
                 session
@@ -284,6 +280,30 @@ impl Host {
                     .map_err(HostError::Invalid)?,
                 input.text
             );
+            let call = Uuid::new_v4();
+            self.prepare_context(
+                &mut context_session,
+                session.id,
+                request,
+                call,
+                &mut instructions,
+                &cancellation,
+            )
+            .await?;
+            let mut definitions = auxiliary_tools(spec);
+            let context_definitions = context_session
+                .as_ref()
+                .map(|context| context.definitions(ContextAccess::ReadOnly))
+                .unwrap_or_default();
+            let context_tools = context_definitions
+                .iter()
+                .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+                .collect::<std::collections::BTreeSet<_>>();
+            definitions.extend(context_definitions);
+            let allowed = definitions
+                .iter()
+                .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+                .collect::<std::collections::BTreeSet<_>>();
             let inference = InferenceRequest::new(
                 session.model(),
                 materialized,
@@ -298,7 +318,6 @@ impl Host {
                     &inference.wire(crate::inference::Transport::Http),
                 )?)
                 .map_err(StoreError::from)?;
-            let call = Uuid::new_v4();
             self.store.lock().await.record_auxiliary(
                 session.id,
                 request,
@@ -420,16 +439,29 @@ impl Host {
                 let result = if !allowed.contains(proposal.name.as_str()) {
                     json!({"error":"tool is not admitted for this read-only request"})
                 } else if let Some(args) = args {
-                    self.auxiliary_tool(
-                        &session,
-                        request,
-                        spec,
-                        &working,
-                        &proposal,
-                        args,
-                        cancellation.clone(),
-                    )
-                    .await?
+                    if context_tools.contains(&proposal.name) {
+                        Self::execute_context_tool(
+                            context_session
+                                .as_deref_mut()
+                                .expect("admitted context service"),
+                            &proposal.name,
+                            args,
+                            ContextAccess::ReadOnly,
+                            &cancellation,
+                        )
+                        .await
+                    } else {
+                        self.auxiliary_tool(
+                            &session,
+                            request,
+                            spec,
+                            &working,
+                            &proposal,
+                            args,
+                            cancellation.clone(),
+                        )
+                        .await?
+                    }
                 } else {
                     json!({"error":"tool arguments must be a JSON object"})
                 };

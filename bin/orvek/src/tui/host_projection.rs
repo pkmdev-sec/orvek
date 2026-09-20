@@ -466,6 +466,7 @@ impl HostProjection {
                     SessionCommand::SettingsChanged(settings) => {
                         vec![ViewChange::Settings(settings)]
                     }
+                    SessionCommand::ContextPrepared { .. } => Vec::new(),
                     SessionCommand::ContextProjected {
                         source_revision,
                         view,

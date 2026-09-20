@@ -415,6 +415,7 @@ fn configuration_identity_material(config: &Config) -> Result<serde_json::Value>
         "model_route_credentials": model_route_credential_identities(config)?,
         "mcp": config.mcp_servers(),
         "memory": config.memory(),
+        "skills": config.skills(),
         "children": config.subagents(),
         "max_children": config.agent().max_subagents(),
         "context_window_tokens": config.agent().context_window_tokens(),
@@ -563,6 +564,13 @@ pub(crate) async fn serve(config: &Config) -> Result<()> {
             provider,
             configuration_identity(config)?,
         )?
+    };
+    let host = if config.memory().enabled() || config.skills().enabled() {
+        host.with_context_service(Arc::new(crate::core::context::ConfiguredContext::new(
+            config,
+        )))
+    } else {
+        host
     };
     let host =
         Arc::new(host.with_completion_hook(config.agent().completion_hook().map(str::to_owned)));
@@ -791,3 +799,7 @@ api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
         assert_eq!(watch.cursor(), 7);
     }
 }
+
+#[cfg(test)]
+#[path = "host_context_tests.rs"]
+mod context_tests;

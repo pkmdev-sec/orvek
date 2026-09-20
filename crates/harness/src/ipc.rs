@@ -29,7 +29,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 pub const UNSUPPORTED_PROTOCOL_VERSION: &str = "unsupported operator protocol version";
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);

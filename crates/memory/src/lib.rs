@@ -28,7 +28,9 @@ pub use store::{MemoryError, MemoryStore};
 #[cfg(feature = "client")]
 pub use store::{RemoteClientError, RemoteMemoryClient, RemoteToken};
 #[cfg(feature = "tool")]
-pub use tool::{MemoryTool, MutationAuthorizer};
+pub use tool::{
+    MemoryOperationError, MemoryPermission, MemorySession, MemoryTool, MutationAuthorizer,
+};
 
 #[cfg(test)]
 mod tests;

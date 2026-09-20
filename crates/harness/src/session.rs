@@ -510,6 +510,11 @@ pub enum SessionCommand {
         error: Option<String>,
     },
     SettingsChanged(ModelSettings),
+    ContextPrepared {
+        request: Uuid,
+        call: Uuid,
+        manifest: Digest,
+    },
     ContextProjected {
         source_revision: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -769,7 +774,9 @@ impl SessionState {
                 }
                 self.history.extend(items.clone());
             }
-            SessionCommand::ProviderUsage { .. } | SessionCommand::ProviderCost { .. } => {}
+            SessionCommand::ProviderUsage { .. }
+            | SessionCommand::ProviderCost { .. }
+            | SessionCommand::ContextPrepared { .. } => {}
             SessionCommand::Feedback { message } => self
                 .history
                 .push(json!({"role":"developer","content":message})),

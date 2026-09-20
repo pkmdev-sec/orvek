@@ -22,6 +22,7 @@ pub mod ipc;
 pub mod manual;
 pub mod review;
 pub mod runtime;
+pub mod services;
 pub mod session;
 pub mod sloppiness;
 pub mod state;

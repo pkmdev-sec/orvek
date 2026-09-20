@@ -30,7 +30,7 @@ pub(crate) const CATALOG_END_MARKER: &str = "<!-- tact:skills-catalog:end -->";
 const CATALOG_PREAMBLE: &str = "## Available local skills\n";
 const CATALOG_RULES: &str = "\
 Use a skill when the user names it or the task clearly matches its description. Before acting, \
-read the selected `SKILL.md` completely. Resolve referenced resources relative to the directory \
+read the selected `SKILL.md` completely with `read_skill` using its name. Resolve referenced resources relative to the directory \
 containing that `SKILL.md`.\n\n";
 
 #[derive(Debug, Error)]
@@ -82,9 +82,7 @@ struct DiagnosticCollector {
 
 #[derive(Debug)]
 pub(crate) struct SkillCatalog {
-    #[cfg(test)]
     skills: Vec<SkillMetadata>,
-    #[cfg(test)]
     diagnostics: Vec<SkillDiagnostic>,
     rendered: Option<String>,
 }
@@ -135,9 +133,7 @@ impl SkillCatalog {
     pub(crate) fn load(config: &SkillsConfig) -> Self {
         if !config.enabled() {
             return Self {
-                #[cfg(test)]
                 skills: Vec::new(),
-                #[cfg(test)]
                 diagnostics: Vec::new(),
                 rendered: None,
             };
@@ -172,14 +168,10 @@ impl SkillCatalog {
             diagnostics.push(SkillDiagnostic::MetadataBudget { omitted });
         }
         let diagnostics = diagnostics.finish();
-        #[cfg(not(test))]
-        drop(diagnostics);
 
         Self {
             rendered: (!skills.is_empty()).then_some(rendered),
-            #[cfg(test)]
             skills,
-            #[cfg(test)]
             diagnostics,
         }
     }
@@ -187,6 +179,14 @@ impl SkillCatalog {
     /// Instructions safe to add to model context; skill bodies are never included here.
     pub(crate) fn rendered_instructions(&self) -> Option<&str> {
         self.rendered.as_deref()
+    }
+
+    /// Only catalogued skills can cross the host-filesystem boundary.
+    pub(crate) fn path(&self, name: &str) -> Option<&Path> {
+        self.skills
+            .iter()
+            .find(|skill| skill.name == name)
+            .map(|skill| skill.path.as_path())
     }
 
     pub(crate) fn available_in(instructions: &str) -> Vec<Skill> {
@@ -232,7 +232,6 @@ impl SkillCatalog {
         skills
     }
 
-    #[cfg(test)]
     pub(crate) fn diagnostics(&self) -> &[SkillDiagnostic] {
         &self.diagnostics
     }
