@@ -1,5 +1,10 @@
 # Orvek
 
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="assets/orvek-logo.png">
+  <img src="assets/orvek-logo.gif" alt="Orvek: a rotating, multicolored pixel diamond beside the Orvek wordmark." width="960">
+</picture>
+
 Orvek is a native coding agent for the terminal. It works with local files and shell commands,
 keeps resumable sessions, and uses your configured model provider for inference.
 

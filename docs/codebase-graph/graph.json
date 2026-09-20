@@ -429,7 +429,22 @@
     {
       "kind": "contains",
       "source": "directory:assets",
+      "target": "file:assets/README.md"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:assets",
       "target": "file:assets/favicon.svg"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:assets",
+      "target": "file:assets/orvek-logo.gif"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:assets",
+      "target": "file:assets/orvek-logo.png"
     },
     {
       "kind": "contains",
@@ -2275,6 +2290,11 @@
       "kind": "contains",
       "source": "directory:scripts",
       "target": "file:scripts/generate-codebase-graph.py"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:scripts",
+      "target": "file:scripts/generate-readme-logo.py"
     },
     {
       "kind": "contains",
@@ -12334,7 +12354,7 @@
       "id": "file:README.md",
       "kind": "file",
       "label": "README.md",
-      "lines": 102,
+      "lines": 107,
       "path": "README.md"
     },
     {
@@ -12346,12 +12366,34 @@
       "path": "RELEASES.md"
     },
     {
+      "file_kind": "documentation",
+      "id": "file:assets/README.md",
+      "kind": "file",
+      "label": "README.md",
+      "lines": 19,
+      "path": "assets/README.md"
+    },
+    {
       "file_kind": "web-asset",
       "id": "file:assets/favicon.svg",
       "kind": "file",
       "label": "favicon.svg",
       "lines": 12,
       "path": "assets/favicon.svg"
+    },
+    {
+      "file_kind": "binary-asset",
+      "id": "file:assets/orvek-logo.gif",
+      "kind": "file",
+      "label": "orvek-logo.gif",
+      "path": "assets/orvek-logo.gif"
+    },
+    {
+      "file_kind": "binary-asset",
+      "id": "file:assets/orvek-logo.png",
+      "kind": "file",
+      "label": "orvek-logo.png",
+      "path": "assets/orvek-logo.png"
     },
     {
       "file_kind": "cargo-manifest",
@@ -14895,6 +14937,14 @@
       "label": "generate-codebase-graph.py",
       "lines": 801,
       "path": "scripts/generate-codebase-graph.py"
+    },
+    {
+      "file_kind": "python-script",
+      "id": "file:scripts/generate-readme-logo.py",
+      "kind": "file",
+      "label": "generate-readme-logo.py",
+      "lines": 226,
+      "path": "scripts/generate-readme-logo.py"
     },
     {
       "file_kind": "python-script",
@@ -19430,26 +19480,26 @@
     ]
   },
   "statistics": {
-    "edges": 2214,
+    "edges": 2218,
     "files_by_kind": {
       "automation": 4,
-      "binary-asset": 1,
+      "binary-asset": 3,
       "cargo-manifest": 8,
       "ci-workflow": 4,
       "configuration": 17,
-      "documentation": 49,
-      "python-script": 30,
+      "documentation": 50,
+      "python-script": 31,
       "rust-source": 352,
       "supporting-file": 21,
       "typescript-source": 36,
       "web-asset": 20
     },
-    "nodes": 1155,
+    "nodes": 1159,
     "nodes_by_kind": {
       "component": 14,
       "dependency": 72,
       "directory": 116,
-      "file": 542,
+      "file": 546,
       "module": 356,
       "package": 7,
       "repository": 1,
