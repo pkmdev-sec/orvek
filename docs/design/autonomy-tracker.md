@@ -1,6 +1,6 @@
 # Orvek autonomy and harness tracker
 
-Status: T02 and T03 implemented and verified. T01, T04, and the T09 hook phase are in progress. Baseline: `720210c0cbceebe89c123038049e9aebf77ba47d`. Sources inspected on 2026-09-20.
+Status: T01, T02, and T03 implemented and verified. T09 hooks are verified; event intake is pending. T04 and T11 are in progress. Baseline: `720210c0cbceebe89c123038049e9aebf77ba47d`. Sources inspected on 2026-09-20.
 
 ## Decision
 
@@ -14,7 +14,7 @@ This is an implementation tracker, not a feature announcement. Proposed tools, c
 
 The supplied list contains **15 direct blog links, two X links, and one repository**, rather than 16 direct blog links. Both X pages were readable and have matching LangChain articles. All 18 supplied links are covered below, using L01–L15, X01–X02, and D01. The provisional source selection made before the links arrived is not used as task evidence.
 
-Navigation began with `CODEBASE.md`, `docs/codebase-graph/overview.md`, and `.agent-map/architecture.md`. The agent-map overlay is orientation, not proof of runtime wiring. Findings below follow actual callers and tool definitions. The companion [evidence manifest](autonomy-tracker.sources.json) records source URLs, content hashes, code anchors, dependencies, and statuses. Local source references O01–O29 are indexed at the end.
+Navigation began with `CODEBASE.md`, `docs/codebase-graph/overview.md`, and `.agent-map/architecture.md`. The agent-map overlay is orientation, not proof of runtime wiring. Findings below follow actual callers and tool definitions. The companion [evidence manifest](autonomy-tracker.sources.json) records source URLs, content hashes, code anchors, dependencies, and statuses. Local source references O01–O33 are indexed at the end.
 
 Deep Agents is pinned to `c3a041e3d8f593e4e4c9bfc273d52264ceff165b`. Its current implementation can differ from an older article. Article performance numbers are not Orvek results.
 
@@ -28,6 +28,9 @@ Verification at the research baseline:
 
 
 ### Verified implementation results
+
+- **T01**, `74c92ea` plus `46ba3e6`: 45 context-focused tests and all 75 memory tests pass. The fresh-process CLI test proves persistent put/scan/read, host restart, on-demand skill bodies, catalog refresh, and recorded manifests. Native, real-Docker sandbox, and read-only auxiliary provider captures pass.
+- **T09 hook phase**, `a0429a5` plus `7684a17`: all nine real CLI/IPC hook tests pass, including Docker and nonblocking startup recovery. A separate real-Docker test confirms that hook failure leaves a verified result and certificate intact. Schedule/webhook intake is still pending.
 
 - **T02**, `87bc77f`: 11 deterministic child-execution tests pass. Four additional real-Docker tests pass: parent/child command conformance, host crash and exact-container fencing, receipt-commit loss without re-execution, and running-command cancellation. Crash recovery also preserves an unrelated container.
 - **T03**, `757b6b4`: all 32 SnapCompact tests pass, including null measurements, failed/interrupted admissions, malformed logs, child failures, torn records, pairing controls, and report denominators. The original six tests were retained or migrated to schema v2; archived zero-filled records are not accepted as measured evidence.
@@ -48,7 +51,7 @@ The manifest records rerun commands. No live-model or competitor comparison has 
 | Local/remote memory, BM25 retrieval, versioned keys, transactional mutations, secret filtering | O04, O05; `crates/memory/src/tests.rs` | Keep the store and concurrency semantics. Fix host integration before redesigning retrieval. |
 | Harbor, ATIF evidence, incident replay fixtures, paired context evaluations | O14, O15, O23, O24 | Reuse these evaluators. Do not replace them with a mandatory hosted observability service. |
 
-Two important qualifications: `docs/memory.md` describes agent memory operations, but current host tool lists do not expose them. Also, context history is lossless in storage, but `context::project` can still omit old items from the model view with no summary. These are different claims, not contradictions to hide.
+The baseline host did not expose the memory operations documented in `docs/memory.md`; T01 now does. Context history remains lossless in storage, but `context::project` can still omit old items from the model view with no summary. T07 addresses that separate limitation.
 
 ## Source innovation catalog
 
@@ -88,11 +91,11 @@ All paths below are relative to the pinned D01 repository.
 
 ## Ranked implementation queue
 
-T02 and T03 are complete. T01, T04, and the T09 hook phase are in progress in isolated worktrees. “Ready” means the next step is sufficiently specified, not that implementation is verified. Scores are prioritization judgments, not measurements: empowerment and competitive value each range from 1 to 5. Order also respects correctness prerequisites. Effort is relative: S is a narrow fix, M spans a subsystem, L crosses persistence/runtime boundaries.
+T01, T02, and T03 are complete. T09 hooks are verified; event intake remains open. T04 and T11 are in progress in isolated worktrees. “Ready” means the next step is sufficiently specified, not that implementation is verified. Scores are prioritization judgments, not measurements: empowerment and competitive value each range from 1 to 5. Order also respects correctness prerequisites. Effort is relative: S is a narrow fix, M spans a subsystem, L crosses persistence/runtime boundaries.
 
 | Rank | ID | Deliverable | Empowerment / edge | Effort | Status | Dependencies |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | T01 | Host-visible memory and skill context | 5 / 4 | M | In progress | None |
+| 1 | T01 | Host-visible memory and skill context | 5 / 4 | M | Done | None |
 | 2 | T02 | Consistent child execution identity and outcome accounting | 5 / 4 | M | Done | None |
 | 3 | T03 | Honest evaluation records, including failed attempts | 4 / 5 | S | Done | None |
 | 4 | T04 | Portable causal trace bundles and offline replay | 5 / 5 | L | In progress | T02, T03 |
@@ -100,21 +103,21 @@ T02 and T03 are complete. T01, T04, and the T09 hook phase are in progress in is
 | 6 | T06 | Persistent interpreter over host-admitted tools | 5 / 5 | L | Planned | T02, T04 |
 | 7 | T07 | Model-directed, lossless-source context transitions | 5 / 4 | M | Planned | T03, T04 |
 | 8 | T08 | Durable child lifecycle, valid results, explicit context modes | 5 / 4 | L | Planned | T02, T04 |
-| 9 | T09 | Working terminal hooks and durable event intake | 4 / 3 | M | Hook fix in progress; intake later | None for hook fix; T02, T04 for intake |
+| 9 | T09 | Working terminal hooks and durable event intake | 4 / 3 | M | Hooks verified; intake pending | None for hook fix; T02, T04 for intake |
 | 10 | T10 | Trace-driven quality monitoring and autonomous repair experiments | 5 / 5 | L | Planned | T03, T04, T09 |
-| 11 | T11 | Executable capability documentation | 4 / 3 | M | Ready for inventory | T01, T09 for end-to-end examples |
+| 11 | T11 | Executable capability documentation | 4 / 3 | M | Examples and inventory in progress | T01, T09 for end-to-end examples |
 
 ### T01: Make configured memory and skills reach the model
 
-**Evidence:** O01–O04, O18, O20; L02/L06/L11/L14 and D01. `ConfiguredSession::admit` validates memory configuration and discards the selected store. It reduces the rendered skill catalog to UI metadata. Neither native nor sandbox tool definitions expose memory. `MemoryTool` exists in the memory crate, but has no production instantiation in the inspected first-party code.
+**Evidence:** O01–O04, O18, O20, O30/O31; L02/L06/L11/L14 and D01. At baseline, configured memory stopped at admission preflight and skill metadata stopped at the UI. T01 installs a host-owned service and shared `MemorySession` operations in native, sandbox, and auxiliary requests. Commits `74c92ea` and `46ba3e6` implement and bound that path.
 
 **Decision:** Keep `orvek-memory` responsible for storage. Install a host-owned service and protocol adapter, not a TUI callback or a dependency on terminal configuration types. Reuse scan/read/put/delete semantics. Deliver skill metadata through a versioned context manifest; load bodies on demand. Document supported instruction files explicitly rather than claiming automatic `AGENTS.md` loading from the mere presence of that filename in a repository.
 
-- [ ] First reproduce with a fake provider through host IPC: memory enabled and a discoverable skill must appear in the actual request/tools. Cover native tasks, sandbox tasks, and auxiliary conversation separately.
-- [ ] Resolve backend identity at the application boundary; pass an owned service to the host. Do not journal credentials or serialize a token into session state.
-- [ ] Record catalog/memory version references used by each request. Refresh at a recorded turn boundary; preserve old manifests for replay and invalidate only affected cache identity.
-- [ ] Expose discovery failures instead of silently discarding production `SkillDiagnostic` values. A bad optional skill must not erase valid skills.
-- [ ] Verify two sessions can retrieve the same intended memory, disabled memory is absent, stale writes conflict, and remote failure never silently switches to a local corpus.
+- [x] First reproduce with a fake provider through host IPC: memory enabled and a discoverable skill must appear in the actual request/tools. Cover native tasks, sandbox tasks, and auxiliary conversation separately.
+- [x] Resolve backend identity at the application boundary; pass an owned service to the host. Do not journal credentials or serialize a token into session state.
+- [x] Record catalog/memory version references used by each request. Refresh at a recorded turn boundary; preserve old manifests for replay and invalidate only affected cache identity.
+- [x] Expose discovery failures instead of silently discarding production `SkillDiagnostic` values. A bad optional skill must not erase valid skills.
+- [x] Verify two sessions can retrieve the same intended memory, disabled memory is absent, stale writes conflict, and remote failure never silently switches to a local corpus.
 
 **Done:** a fresh headless process uses an enabled memory and selected skill after host restart, without a TUI or manual prompt paste. Reconcile `docs/memory.md` with the proven behavior. Do not start by replacing BM25 or increasing arbitrary record limits.
 
@@ -221,13 +224,13 @@ T02 and T03 are complete. T01, T04, and the T09 hook phase are in progress in is
 
 ### T09: Deliver terminal hooks reliably, then accept events
 
-**Evidence:** O25/O26/O17; L01/L02. `completion_hook` parses and affects configuration identity but has no execution consumer in the inspected host. Generic middleware would not fix that wiring defect by itself.
+**Evidence:** O25/O26/O17 and O32/O33; L01/L02. At baseline, `completion_hook` parsed and affected configuration identity without an execution consumer. Commits `a0429a5` and `7684a17` add durable host delivery and nonblocking startup recovery. Event intake remains unimplemented.
 
 **Decision:** First implement the configured terminal notification through one host-owned post-settlement path, or explicitly reject unsupported configuration until it exists. Hook failure cannot change task verification. Only after this works, add event-driven submissions through the existing host queue.
 
-- [ ] Add a failing headless/TUI parity test for the configured hook. Define covered terminal outcomes, output handling, timeout, and cancellation.
-- [ ] Persist delivery intent and result with a stable delivery ID. Offer idempotency keys to receivers. An arbitrary shell hook cannot promise exactly-once external effects after lost acknowledgement.
-- [ ] Treat ambiguous delivery as unknown; retry automatically only when the receiver can deduplicate or the action is demonstrably repeatable.
+- [x] Add a failing headless/TUI parity test for the configured hook. Define covered terminal outcomes, output handling, timeout, and cancellation.
+- [x] Persist delivery intent and result with a stable delivery ID. Offer idempotency keys to receivers. An arbitrary shell hook cannot promise exactly-once external effects after lost acknowledgement.
+- [x] Treat ambiguous delivery as unknown; retry automatically only when the receiver can deduplicate or the action is demonstrably repeatable.
 - [ ] For later schedule/webhook intake, persist trigger identity, deduplication key, payload digest, selected session, and submission receipt. Reuse the admission queue rather than run a second controller.
 - [ ] Define catch-up after downtime, trigger coalescing, and cancellation. Local adapters first; no public unauthenticated server is implied.
 
@@ -302,7 +305,7 @@ Run two comparisons: a same-model harness comparison where products permit it, a
 6. Refresh affected docs and navigation graphs after layout or module changes. Recheck code anchors rather than blindly updating their hashes.
 7. If evidence falsifies a proposal, mark it `rejected` with the result. If an external dependency blocks it, record the blocker and continue with the next independent item.
 
-T02 and T03 landed first, with failing-before and passing-after tests. T01 remains in progress. Continue by dependency order; do not infer overall autonomy or comparative quality from these foundational fixes.
+T02 and T03 landed first, followed by T01 and the T09 hook phase, with failing-before and passing-after tests. Continue by dependency order; do not infer overall autonomy or comparative quality from these foundational fixes.
 
 ## Local code evidence index
 
@@ -310,9 +313,9 @@ These anchors identify the latest reviewed source, not permanent line-number API
 
 | ID | Source and anchor |
 | --- | --- |
-| O01 | [bin/orvek/src/core/mod.rs](../../bin/orvek/src/core/mod.rs) at line 71, `configured_memory_store(config, &workspace)?;` |
-| O02 | [bin/orvek/src/core/extensions/skills.rs](../../bin/orvek/src/core/extensions/skills.rs) at line 188, `pub(crate) fn rendered_instructions` |
-| O03 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3421, `fn tool_definitions(discovery: bool)` |
+| O01 | [bin/orvek/src/core/mod.rs](../../bin/orvek/src/core/mod.rs) at line 72, `configured_memory_store(config, &workspace)?;` |
+| O02 | [bin/orvek/src/core/extensions/skills.rs](../../bin/orvek/src/core/extensions/skills.rs) at line 180, `pub(crate) fn rendered_instructions` |
+| O03 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3546, `fn tool_definitions(discovery: bool)` |
 | O04 | [crates/memory/src/model.rs](../../crates/memory/src/model.rs) at line 47, `pub struct MemoryRecord` |
 | O05 | [crates/memory/src/store/local.rs](../../crates/memory/src/store/local.rs) at line 278, `pub async fn merge_remote_export(` |
 | O06 | [crates/harness/src/context.rs](../../crates/harness/src/context.rs) at line 298, `pub fn project(` |
@@ -327,18 +330,22 @@ These anchors identify the latest reviewed source, not permanent line-number API
 | O15 | [evals/incident_replay/generate.py](../../evals/incident_replay/generate.py) at line 381, `def generate_tasks(` |
 | O16 | [scripts/check-docs.py](../../scripts/check-docs.py) at line 2, `without running them` |
 | O17 | [bin/orvek/src/app/headless.rs](../../bin/orvek/src/app/headless.rs) at line 26, `orvek.host` |
-| O18 | [crates/harness/src/controller/auxiliary.rs](../../crates/harness/src/controller/auxiliary.rs) at line 279, `let instructions = format!(` |
+| O18 | [crates/harness/src/controller/auxiliary.rs](../../crates/harness/src/controller/auxiliary.rs) at line 275, `let mut instructions = format!(` |
 | O19 | [crates/harness/src/admission_profile.rs](../../crates/harness/src/admission_profile.rs) at line 87, `pub struct HarnessBinding` |
-| O20 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3370, `fn native_tool_definitions(` |
+| O20 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3495, `fn native_tool_definitions(` |
 | O21 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 955, `async fn run_tool(` |
-| O22 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3023, `async fn reconcile_unresolved(` |
+| O22 | [crates/harness/src/controller.rs](../../crates/harness/src/controller.rs) at line 3148, `async fn reconcile_unresolved(` |
 | O23 | [evals/snapcompact/run_paired.py](../../evals/snapcompact/run_paired.py) at line 36, `def parse_log(` |
 | O24 | [evals/snapcompact/paired_report.py](../../evals/snapcompact/paired_report.py) at line 30, `def validate(` |
-| O25 | [bin/orvek/src/app/config.rs](../../bin/orvek/src/app/config.rs) at line 2072, `fn completion_hook_can_be_configured(` |
-| O26 | [bin/orvek/src/app/host.rs](../../bin/orvek/src/app/host.rs) at line 422, `config.agent().completion_hook()` |
+| O25 | [bin/orvek/src/app/config.rs](../../bin/orvek/src/app/config.rs) at line 2089, `fn completion_hook_can_be_configured(` |
+| O26 | [bin/orvek/src/app/host.rs](../../bin/orvek/src/app/host.rs) at line 424, `config.agent().completion_hook()` |
 | O27 | [crates/harness/tests/native_host.rs](../../crates/harness/tests/native_host.rs) at line 813, `restart_keeps_unknown_native_jobs_unfenced_and_never_replays_them` |
 | O28 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 932, `"submitted": false` |
 | O29 | [crates/harness/src/controller/subagents.rs](../../crates/harness/src/controller/subagents.rs) at line 1098, `fn child_definitions(` |
+| O30 | [crates/harness/src/services.rs](../../crates/harness/src/services.rs) at line 17, `pub trait ContextService` |
+| O31 | [bin/orvek/src/core/context.rs](../../bin/orvek/src/core/context.rs) at line 80, `impl ContextSession for ConfiguredContextSession` |
+| O32 | [crates/harness/src/controller/notification.rs](../../crates/harness/src/controller/notification.rs) at line 270, `async fn run_hook` |
+| O33 | [crates/harness/src/ipc.rs](../../crates/harness/src/ipc.rs) at line 409, `let recovery_host = host.clone();` |
 
 ## Rerun this research check
 

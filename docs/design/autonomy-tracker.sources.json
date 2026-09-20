@@ -174,22 +174,37 @@
       "id": "O01",
       "path": "bin/orvek/src/core/mod.rs",
       "anchor": "configured_memory_store(config, &workspace)?;",
-      "line": 71,
-      "sha256": "65132a824d25bc045a12b7f3128b8e191857ca4886af627d4e8c57bdee880ded"
+      "line": 72,
+      "sha256": "c9864e47ca63397694a793fd79c321e4f294411bf44c2c731d7bb765e0681b5d",
+      "research_sha256": "65132a824d25bc045a12b7f3128b8e191857ca4886af627d4e8c57bdee880ded",
+      "research_line": 71,
+      "research_anchor": "configured_memory_store(config, &workspace)?;",
+      "reviewed_revision": "7684a17",
+      "review_note": "T01 retains admission preflight; app bootstrap now installs ConfiguredContext into the authoritative Host. Actual provider/IPC and fresh-process tests pass."
     },
     {
       "id": "O02",
       "path": "bin/orvek/src/core/extensions/skills.rs",
       "anchor": "pub(crate) fn rendered_instructions",
-      "line": 188,
-      "sha256": "19d47fbd68c5e10ffd07f6ef7e297ad1350b53d41efbe49c694c85b82aecb5a2"
+      "line": 180,
+      "sha256": "db908dea293d97ca167e80d424f904329cbb4adfe8a512eecdef75d9bd6aff2d",
+      "research_sha256": "19d47fbd68c5e10ffd07f6ef7e297ad1350b53d41efbe49c694c85b82aecb5a2",
+      "research_line": 188,
+      "research_anchor": "pub(crate) fn rendered_instructions",
+      "reviewed_revision": "7684a17",
+      "review_note": "T01 exposes catalog path lookup for on-demand read_skill, retains valid skills and reports bounded diagnostics. Catalog bodies are not pasted into initial instructions."
     },
     {
       "id": "O03",
       "path": "crates/harness/src/controller.rs",
       "anchor": "fn tool_definitions(discovery: bool)",
-      "line": 3421,
-      "sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03"
+      "line": 3546,
+      "sha256": "0c9051af4b22a91b849f97cdefa96494b1192ee60fcfd6d357ef30718854e717",
+      "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
+      "research_line": 3421,
+      "research_anchor": "fn tool_definitions(discovery: bool)",
+      "reviewed_revision": "7684a17",
+      "review_note": "T01 composes context-service definitions with sandbox tools at provider boundaries; T09 notifications run only after settlement. The static base registry is not the complete runtime list."
     },
     {
       "id": "O04",
@@ -300,9 +315,14 @@
     {
       "id": "O18",
       "path": "crates/harness/src/controller/auxiliary.rs",
-      "anchor": "let instructions = format!(",
-      "line": 279,
-      "sha256": "ad4b8293512a7d9fc352d0ca59769a33311e4be40860312f08a7f70000bc1469"
+      "anchor": "let mut instructions = format!(",
+      "line": 275,
+      "sha256": "a2f8efbe2f67c09839a9e6aeb3dae9a427e21d04c5319895edc15badc95a9398",
+      "research_sha256": "ad4b8293512a7d9fc352d0ca59769a33311e4be40860312f08a7f70000bc1469",
+      "research_line": 279,
+      "research_anchor": "let instructions = format!(",
+      "reviewed_revision": "7684a17",
+      "review_note": "T01 prepares the same recorded context manifest for auxiliary/conversation requests and admits only read operations; mutation proposals are rejected."
     },
     {
       "id": "O19",
@@ -315,8 +335,13 @@
       "id": "O20",
       "path": "crates/harness/src/controller.rs",
       "anchor": "fn native_tool_definitions(",
-      "line": 3370,
-      "sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03"
+      "line": 3495,
+      "sha256": "0c9051af4b22a91b849f97cdefa96494b1192ee60fcfd6d357ef30718854e717",
+      "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
+      "research_line": 3370,
+      "research_anchor": "fn native_tool_definitions(",
+      "reviewed_revision": "7684a17",
+      "review_note": "T01 composes memory and skills into native requests; native completion remains FinishedUnverified. T09 cannot alter that outcome."
     },
     {
       "id": "O21",
@@ -333,8 +358,13 @@
       "id": "O22",
       "path": "crates/harness/src/controller.rs",
       "anchor": "async fn reconcile_unresolved(",
-      "line": 3023,
-      "sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03"
+      "line": 3148,
+      "sha256": "0c9051af4b22a91b849f97cdefa96494b1192ee60fcfd6d357ef30718854e717",
+      "research_sha256": "07a39b4e1327b3d96af64a2f7b071c630ad6578eb7df95d8d2666eacd87f7d03",
+      "research_line": 3023,
+      "research_anchor": "async fn reconcile_unresolved(",
+      "reviewed_revision": "7684a17",
+      "review_note": "Reviewed after T01/T09 integrations: exact-backend unresolved-job reconciliation is unchanged; optional context and notifications do not replay uncertain tools."
     },
     {
       "id": "O23",
@@ -362,15 +392,25 @@
       "id": "O25",
       "path": "bin/orvek/src/app/config.rs",
       "anchor": "fn completion_hook_can_be_configured(",
-      "line": 2072,
-      "sha256": "ec7a62e87483f15ee65bb10dee88e3b7922d22fdff0fd60120387e39026b549a"
+      "line": 2089,
+      "sha256": "dc5cdb7a53ce87ec824fe4fb92ed0fcaa0d87b050420974575f8b09665fb7f04",
+      "research_sha256": "ec7a62e87483f15ee65bb10dee88e3b7922d22fdff0fd60120387e39026b549a",
+      "research_line": 2072,
+      "research_anchor": "fn completion_hook_can_be_configured(",
+      "reviewed_revision": "7684a17",
+      "review_note": "T09 now consumes the already-parsed setting. T01 adds isolated configuration loading only for tests; existing hook parsing semantics are unchanged."
     },
     {
       "id": "O26",
       "path": "bin/orvek/src/app/host.rs",
       "anchor": "config.agent().completion_hook()",
-      "line": 422,
-      "sha256": "99ef0f522c905c812719d2e1e11668349a0c646b5eb374534a990cc075289e1e"
+      "line": 424,
+      "sha256": "06efb2f44cb0c334e4cc996f96c73ff7454dd5146c3186d61a34affa5c7bf672",
+      "research_sha256": "99ef0f522c905c812719d2e1e11668349a0c646b5eb374534a990cc075289e1e",
+      "research_line": 422,
+      "research_anchor": "config.agent().completion_hook()",
+      "reviewed_revision": "7684a17",
+      "review_note": "Host bootstrap installs both context service and versioned completion hook. Hooks are host-owned, not client callbacks; IPC recovery runs in a cancellable background task."
     },
     {
       "id": "O27",
@@ -400,6 +440,42 @@
       "research_line": 1061,
       "reviewed_revision": "87bc77f",
       "review_note": "Reviewed after T02 changes: tool registry and schema exposure gap remain unchanged; T08 is still required."
+    },
+    {
+      "id": "O30",
+      "path": "crates/harness/src/services.rs",
+      "anchor": "pub trait ContextService",
+      "line": 17,
+      "sha256": "023169d11803278fcdbed2a5e5d8f967d1efd4b4faae11655dc4ceadd862e861",
+      "reviewed_revision": "7684a17",
+      "review_note": "Host-owned optional context interface, with credentials outside recorded manifests."
+    },
+    {
+      "id": "O31",
+      "path": "bin/orvek/src/core/context.rs",
+      "anchor": "impl ContextSession for ConfiguredContextSession",
+      "line": 80,
+      "sha256": "f0dfdd670e37b756e6ba86c56d35a8f74f9da9e925c53fba1488eacccb36ee64",
+      "reviewed_revision": "7684a17",
+      "review_note": "Production selected-memory and skill adapter; encoded output bounds and no silent backend fallback."
+    },
+    {
+      "id": "O32",
+      "path": "crates/harness/src/controller/notification.rs",
+      "anchor": "async fn run_hook",
+      "line": 270,
+      "sha256": "062f6fa78fb792727102b0ff78bf8570e1f8e207f5aa5c7e866e99cfac8f4753",
+      "reviewed_revision": "7684a17",
+      "review_note": "Durable claim-before-shell delivery, bounded timeout and process-group cleanup; unknown deliveries never retry automatically."
+    },
+    {
+      "id": "O33",
+      "path": "crates/harness/src/ipc.rs",
+      "anchor": "let recovery_host = host.clone();",
+      "line": 409,
+      "sha256": "22f7adade020d67af6169c96563222f6474b8c191908583d77d66357b55ca562",
+      "reviewed_revision": "7684a17",
+      "review_note": "Recovery starts after socket binding and is cancelled on host shutdown; a blocked hook does not block IPC."
     }
   ],
   "competitor_context": [
@@ -428,7 +504,7 @@
       "id": "T01",
       "title": "Host-visible memory and skills",
       "rank": 1,
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [],
       "sources": [
         "L02",
@@ -443,14 +519,35 @@
         "O03",
         "O04",
         "O18",
-        "O20"
+        "O20",
+        "O30",
+        "O31"
       ],
-      "owner": "implement-host-context",
-      "implementation_revision": null,
-      "results": [],
-      "next_action": "Add host IPC provider-capture regression for enabled memory and skills.",
+      "owner": "parent-integration",
+      "implementation_revision": "74c92ea",
+      "results": [
+        {
+          "command": "cargo test --locked -p orvek --bin orvek context -- --include-ignored",
+          "passed": 45,
+          "log": ".agent-map/autonomy/t01-integrated-context.log"
+        },
+        {
+          "command": "cargo test --locked -p orvek-memory",
+          "passed": 75,
+          "log": ".agent-map/autonomy/t01-integrated-memory.log"
+        },
+        {
+          "command": "python3 scripts/test-host-context.py /tmp/orvek-autonomy-integrated-target/debug/orvek",
+          "result": "passed: fresh headless sessions, host restart, persistent memory, refreshed skills and recorded manifests",
+          "log": ".agent-map/autonomy/t01-integrated-headless.log"
+        }
+      ],
+      "next_action": "Use the host-owned service as the boundary for T05 evidence memory and T11 examples.",
       "worktree": "/tmp/orvek-autonomy-t01",
-      "branch": "work/autonomy-t01"
+      "branch": "work/autonomy-t01",
+      "followup_revisions": [
+        "46ba3e6"
+      ]
     },
     {
       "id": "T02",
@@ -537,7 +634,7 @@
         "O15",
         "O17"
       ],
-      "owner": "implement-causal-traces",
+      "owner": "resume-causal-traces",
       "implementation_revision": null,
       "results": [],
       "next_action": "Implement versioned local bundles, causal spans, offline replay, and separate fresh re-execution.",
@@ -650,12 +747,27 @@
       "code_evidence": [
         "O25",
         "O26",
-        "O17"
+        "O17",
+        "O32",
+        "O33"
       ],
-      "owner": "implement-terminal-delivery",
-      "implementation_revision": null,
-      "results": [],
-      "next_action": "Implement durable terminal-hook delivery first; event intake remains pending T04.",
+      "owner": "parent-integration",
+      "implementation_revision": "a0429a5",
+      "results": [
+        {
+          "phase": "hook_fix",
+          "command": "cargo test --locked -p orvek --test completion_hook -- --include-ignored",
+          "passed": 9,
+          "log": ".agent-map/autonomy/t09-integrated-startup.log"
+        },
+        {
+          "phase": "hook_fix",
+          "command": "cargo test --locked -p orvek-harness --test controller_execution completion_hook_failure_cannot_revoke_a_verified_sandbox_result -- --ignored",
+          "passed": 1,
+          "log": ".agent-map/autonomy/t09-integrated-certificate.log"
+        }
+      ],
+      "next_action": "Implement event intake after T04; terminal-hook phase is verified.",
       "phase_dependencies": {
         "hook_fix": [],
         "event_intake": [
@@ -664,7 +776,17 @@
         ]
       },
       "worktree": "/tmp/orvek-autonomy-t09",
-      "branch": "work/autonomy-t09"
+      "branch": "work/autonomy-t09",
+      "followup_revisions": [
+        "7684a17"
+      ],
+      "phase_status": {
+        "hook_fix": "done",
+        "event_intake": "planned"
+      },
+      "verification_notes": [
+        "A pre-cleanup concurrent run failed the timeout cleanup marker assertion; its retry could not link due ENOSPC. Root cause of that observation was not isolated. After cleanup, one serial and two concurrent suites passed (9 tests each), including the integrated tree. Prior failure log: /tmp/orvek-t09-startup-green.log. No claim that cleanup fixed a proven code defect."
+      ]
     },
     {
       "id": "T10",
@@ -698,7 +820,7 @@
       "id": "T11",
       "title": "Executable capability docs",
       "rank": 11,
-      "status": "ready_for_inventory",
+      "status": "in_progress",
       "depends_on": [
         "T01",
         "T09"
@@ -713,17 +835,19 @@
         "O16",
         "O25"
       ],
-      "owner": null,
+      "owner": "resume-executable-docs",
       "implementation_revision": null,
       "results": [],
-      "next_action": "Inventory runnable versus illustrative examples.",
+      "next_action": "Implement runnable native/sandbox/reconnect/hook examples and inventory; memory/skills and trace links follow integrated T01/T04.",
       "phase_dependencies": {
         "inventory": [],
         "end_to_end_examples": [
           "T01",
           "T09"
         ]
-      }
+      },
+      "worktree": "/tmp/orvek-autonomy-t11",
+      "branch": "work/autonomy-t11"
     }
   ],
   "research_checks": [
