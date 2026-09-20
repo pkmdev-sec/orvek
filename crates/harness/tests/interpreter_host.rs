@@ -830,3 +830,113 @@ async fn interpreter_large_result_does_not_fail_the_turn() {
     );
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn native_tasks_prefer_direct_tools_without_starting_an_interpreter() {
+    let fixture = Fixture::new();
+    fs::write(fixture.workspace.join("note"), "local data").unwrap();
+    let (endpoint, server) = provider(vec![
+        vec![tool("read", "read_file", json!({"path":"note"}))],
+        vec![tool(
+            "command",
+            "exec_command",
+            json!({"command":"printf direct > marker"}),
+        )],
+        done(),
+    ])
+    .await;
+    let host = fixture.native(&endpoint);
+    let session = fixture.session(&host).await;
+    let result = run(&host, session, "Read the note and write a marker").await;
+    assert_eq!(result.task.outcome, Some(Outcome::FinishedUnverified));
+    assert_eq!(
+        output(&host, session, "read").await["result"]["content"]["data"],
+        "local data"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.workspace.join("marker")).unwrap(),
+        "direct"
+    );
+    assert!(
+        host.session(session)
+            .await
+            .unwrap()
+            .interpreter
+            .cells
+            .is_empty()
+    );
+    let requests = server.await.unwrap();
+    for request in requests {
+        let instructions = request["instructions"].as_str().unwrap();
+        assert!(instructions.contains("Use direct native tools for normal work."));
+        assert!(instructions.contains("interpreter_eval is optional"));
+        let tools = request["tools"].as_array().unwrap();
+        for name in [
+            "read_file",
+            "write_file",
+            "exec_command",
+            "interpreter_eval",
+        ] {
+            assert!(tools.iter().any(|tool| tool["name"] == name));
+        }
+    }
+}
+
+#[tokio::test]
+async fn failed_optional_cell_does_not_block_direct_tools_or_later_native_tasks() {
+    let fixture = Fixture::new();
+    fs::write(fixture.workspace.join("note"), "local data").unwrap();
+    let (endpoint, server) = provider(vec![
+        eval(
+            "compose",
+            "await host.call('read_file',{path:'note'}); throw new Error('fixture cell failure');",
+        ),
+        vec![tool("direct-read", "read_file", json!({"path":"note"}))],
+        vec![tool(
+            "direct-command",
+            "exec_command",
+            json!({"command":"printf recovered > marker"}),
+        )],
+        done(),
+        vec![tool("later-read", "read_file", json!({"path":"marker"}))],
+        done(),
+    ])
+    .await;
+    let host = fixture.native(&endpoint);
+    let session = fixture.session(&host).await;
+    let first = run(
+        &host,
+        session,
+        "Compose if useful, but complete the work if it fails",
+    )
+    .await;
+    assert_eq!(first.task.outcome, Some(Outcome::FinishedUnverified));
+    assert_eq!(
+        first.task.jobs.len(),
+        3,
+        "the failed cell's completed read must not be rerun by the host"
+    );
+    let failed = output(&host, session, "compose").await;
+    assert_eq!(failed["state_lost"], true);
+    assert!(
+        failed["output"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("fixture cell failure")
+    );
+    assert_eq!(
+        output(&host, session, "direct-read").await["result"]["content"]["data"],
+        "local data"
+    );
+    let later = run(&host, session, "Read the marker normally").await;
+    assert_eq!(later.task.outcome, Some(Outcome::FinishedUnverified));
+    assert_eq!(
+        output(&host, session, "later-read").await["result"]["content"]["data"],
+        "recovered"
+    );
+    assert_eq!(
+        host.session(session).await.unwrap().interpreter.cells.len(),
+        1
+    );
+    server.await.unwrap();
+}

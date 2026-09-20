@@ -1,8 +1,17 @@
-# Persistent tool composition
+# Optional tool composition
 
 `interpreter_eval` runs an async JavaScript function body inside the host. It is
 available to task requests in native and sandbox sessions. It is not a shell,
 a second agent loop, or a separate execution authority.
+
+Use direct native tools for normal reads, searches, edits, and commands. The interpreter
+is optional for data-heavy filtering and multi-step composition. Do not wrap ordinary
+tool calls in a cell. An interpreter execution error discards its live working state;
+it does not disable direct tools or prevent later tasks in the same session. Keep
+completed inner-call receipts and do not automatically repeat an unknown effect.
+
+The interpreter is embedded in the native application. It does not require Docker,
+Node.js, or a remote execution service.
 
 ```javascript
 globalThis.rows = JSON.parse(

@@ -1658,8 +1658,10 @@ impl Host {
                 Vec::new()
             };
             let mut instructions = if native {
-                let mut sections = Vec::with_capacity(4);
+                let mut sections = Vec::with_capacity(5);
                 sections.push(NATIVE_INSTRUCTIONS.to_owned());
+                // Tool-choice advice does not change the persisted admission identity.
+                sections.push("Use direct native tools for normal work. interpreter_eval is optional: use it for data-heavy filtering or multi-step composition that benefits from retained working values. Do not wrap ordinary reads, searches, edits, or commands in interpreter cells. If a cell fails, continue with direct tools when possible. Keep completed inner-call receipts and never automatically repeat an unknown effect.".to_owned());
                 sections.push(format!(
                     "Pinned harness behavior:\n{}",
                     session
