@@ -25,6 +25,21 @@ isolated verification and read-only child agents; see [Subagents](docs/subagents
 
 <img src="assets/orvex-differentiators.gif" alt="Orvex workflow: a durable host connects shared memory, read-only child agents, and browser review." width="1280">
 
+## Differentiators
+
+<img src="assets/orvex-comparison.gif" alt="Orvex compared with Codex and Claude Code across continuing work, delegation, cross-session memory, and review." width="1280">
+
+This compares documented workflows, not benchmark results or exclusive features.
+Capabilities overlap. Memory is opt-in, child agents require Docker, and browser review
+requires web assets. Code metrics do not replace tests.
+
+Sources checked 20 September 2026: [Codex CLI](https://developers.openai.com/codex/cli/reference),
+[Codex memory](https://developers.openai.com/codex/customization/memories),
+[Codex subagents](https://developers.openai.com/codex/multi-agent),
+[Claude Code background sessions](https://code.claude.com/docs/en/agent-view),
+[Claude Code memory](https://code.claude.com/docs/en/memory), and
+[Claude Code subagents](https://code.claude.com/docs/en/sub-agents).
+
 ## Install
 
 Requires Rust 1.97 or newer and a C toolchain. Orvek currently ships from source:

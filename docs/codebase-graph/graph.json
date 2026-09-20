@@ -449,6 +449,11 @@
     {
       "kind": "contains",
       "source": "directory:assets",
+      "target": "file:assets/orvex-comparison.gif"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:assets",
       "target": "file:assets/orvex-differentiators.gif"
     },
     {
@@ -12374,7 +12379,7 @@
       "id": "file:README.md",
       "kind": "file",
       "label": "README.md",
-      "lines": 111,
+      "lines": 126,
       "path": "README.md"
     },
     {
@@ -12390,7 +12395,7 @@
       "id": "file:assets/README.md",
       "kind": "file",
       "label": "README.md",
-      "lines": 26,
+      "lines": 30,
       "path": "assets/README.md"
     },
     {
@@ -12414,6 +12419,13 @@
       "kind": "file",
       "label": "orvek-logo.png",
       "path": "assets/orvek-logo.png"
+    },
+    {
+      "file_kind": "binary-asset",
+      "id": "file:assets/orvex-comparison.gif",
+      "kind": "file",
+      "label": "orvex-comparison.gif",
+      "path": "assets/orvex-comparison.gif"
     },
     {
       "file_kind": "binary-asset",
@@ -19523,10 +19535,10 @@
     ]
   },
   "statistics": {
-    "edges": 2222,
+    "edges": 2223,
     "files_by_kind": {
       "automation": 4,
-      "binary-asset": 4,
+      "binary-asset": 5,
       "cargo-manifest": 8,
       "ci-workflow": 4,
       "configuration": 17,
@@ -19537,12 +19549,12 @@
       "typescript-source": 36,
       "web-asset": 20
     },
-    "nodes": 1162,
+    "nodes": 1163,
     "nodes_by_kind": {
       "component": 14,
       "dependency": 72,
       "directory": 116,
-      "file": 549,
+      "file": 550,
       "module": 356,
       "package": 7,
       "repository": 1,

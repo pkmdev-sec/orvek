@@ -24,3 +24,7 @@ and a periodic animation to keep pixel edges sharp and the loop continuous.
 installation instructions in the root README. It loops every eight seconds at 25 fps.
 Supporting exports and the generator stay local in the ignored `assets/marketing/`
 folder; they are not needed to build or run the application.
+
+`orvex-comparison.gif` is the matching animated comparison with Codex and Claude Code,
+shown in the root README's Differentiators section. Its sources and qualifications
+are listed next to the image; supporting marketing exports remain local.
