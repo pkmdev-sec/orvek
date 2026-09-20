@@ -31,7 +31,7 @@ Configure the provider window for new sessions:
 context_window_tokens = 1000000
 ```
 
-The supported range is 16,384 through 1,000,000 tokens. The default is 272,000. Legacy `[agent.compaction]` provider settings still map `input_budget_tokens` to this value.
+The supported range is 16,384 through 1,000,000 tokens. The default is 1,000,000. Legacy `[agent.compaction]` provider settings still map `input_budget_tokens` to this value.
 
 ## Exact retrieval
 

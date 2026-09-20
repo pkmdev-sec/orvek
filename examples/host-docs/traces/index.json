@@ -10,12 +10,12 @@
     "examples/host-docs/fixture.py": "cbec99f671598ffa8bec029b75643e6b4adaaa11f1b6f39719b203fd11fe17ff",
     "scripts/doc-traces.py": "1819a31877f8b3f38432478f7ab07b62af116aa1b4f5a76b9a1b40d4a60c2bdb"
   },
-  "runtime_sha256": "7ce2abdf1d47a892ec4c5f70be4ad87ed9a09fe418277042aa08aa2694b4a606",
-  "binary_sha256": "34b59f88dff411df559e7794e4f95ba613a5382bede06ad71e7f5e8eff7c93ec",
+  "runtime_sha256": "4165ba95a650eb4e67c48aacc1fdffb9f570d82984e0483ccfd3f3e6a59e6861",
+  "binary_sha256": "14d539c955b35602e46b2d6bdd3301b2bfa5d869f6a4c6c613376aa605f95220",
   "scenarios": {
     "native": {
-      "sha256": "1cfd420472eaa81639ce8b4f9a8c1a77a334279955dd75fcc6ccfea63edae61a",
-      "bytes": 25914,
+      "sha256": "6ba5de3625236792bb65b13d8541bd216bc1660504b3fc1b8bc787ab0b1ce013",
+      "bytes": 25894,
       "records": 24,
       "replay": {
         "outcome": "finished_unverified",
@@ -23,11 +23,11 @@
         "tasks": 1
       },
       "original_exact": true,
-      "original_digest": "4169b042c75b7e4861e3454a994ad0a76b9c3962e3cd5f6d88a7eff1c2fc1439",
-      "records_sha256": "74e069cbc8c6883de3a8ffde2937dda3b1b48b629d001ef940185873901e92a8"
+      "original_digest": "e1279f64bf38de026cd391b6d0bde9fe67ed15bf3e6c2d21eea21f14132e0b26",
+      "records_sha256": "fb8007a72f365880889d7f0e6c685dd6b807008c856bfe94d78ddd9adf6e61b3"
     },
     "sandbox": {
-      "sha256": "9c7a2d6a579a30ec8319f50b664b33287c1af7529b778111c8a1478391901513",
+      "sha256": "447bf85b0ccfac6db5c4548b0828cb40931a08865a89066bbbeec9a602e99b28",
       "bytes": 39957,
       "records": 41,
       "replay": {
@@ -36,12 +36,12 @@
         "tasks": 1
       },
       "original_exact": true,
-      "original_digest": "1b56534d78ae05bfe6c2acf6443e1412c49dd341d7e1679239aa283b073aab84",
-      "records_sha256": "5c78b2dd5648e716ef2887c8db9e29ef4f62bf00e1b9bbfcb72cf7b842552a52"
+      "original_digest": "d1ba9883cc402e29cb75953205e31556a7f072c86cbc562ec43f7492de5991a2",
+      "records_sha256": "146949c2c9ea1a7e0d07a171d1980a7709123a04e015f42b65c4d64177518e37"
     },
     "reconnect": {
-      "sha256": "0a116309a4884c84cf11238b6c8b58e22dc340fd00e58d50d8641bc71475e591",
-      "bytes": 26142,
+      "sha256": "9bf41b1675b8118660b5a464c16a1e8d4935c95311e549c335100c95de4747e1",
+      "bytes": 26126,
       "records": 24,
       "replay": {
         "outcome": "finished_unverified",
@@ -49,12 +49,12 @@
         "tasks": 1
       },
       "original_exact": true,
-      "original_digest": "0d0b60709db5e687987e60fde29b42dac775d45c3aac855d9b688023fa135bc8",
-      "records_sha256": "7aeca6ae6e36da7425297e75789e040b2d3f0c07c284fa15a5feafc0ebb31dc0"
+      "original_digest": "0a8afb1e51245fa66981e08bf81e8e1b7516bc34c9a93ef630129547b2ca411a",
+      "records_sha256": "ce9b6f690545daba1352532c391a0badb3ebb032e2c0951c40f28e763ada76c4"
     },
     "completion_hook": {
-      "sha256": "3ec9e6fa80a6486a996748b7a5b71ff861716385556395e61638e51e23387f85",
-      "bytes": 20826,
+      "sha256": "f08ff5eb5ec1c45390d88ef6e47e01aae340af5d9d3df7a081144a898dae9029",
+      "bytes": 20806,
       "records": 18,
       "replay": {
         "outcome": "finished_unverified",
@@ -62,12 +62,12 @@
         "tasks": 1
       },
       "original_exact": true,
-      "original_digest": "5385a8272bfdbfd214603e39c2e8b95f1e5cb2323129764aafa4d5d3d973242c",
-      "records_sha256": "93afee98ff9b3af436ac5018091af7d410177ad8c15d550a27d9a8c8025fa25e"
+      "original_digest": "c520a8810c892d05a2d329b5d312f1460db42b8355103a760c9a803fd3d0e45f",
+      "records_sha256": "e6ee04e6ce8392cd1162870edfe404b691519a838d1a8c34f2592d260161b705"
     },
     "memory_skills": {
-      "sha256": "e1d02a21ed7c6b67cd75f1ba7bb18449f210231c4ab1241efcf707ea3a24f120",
-      "bytes": 64057,
+      "sha256": "f10ebf3c9e024cdcc7a344d691f9a3f36469ee1fa0f0d35c0ac43fcb2bf9a74e",
+      "bytes": 64017,
       "records": 65,
       "replay": {
         "outcome": "finished_unverified",
@@ -75,8 +75,8 @@
         "tasks": 2
       },
       "original_exact": true,
-      "original_digest": "1471bb2044e5f4398aa2a3eb409c20b1b3cf2fdcc1b8847455d4912f779b5272",
-      "records_sha256": "6c4167888b0ca7927d78db46bd11393e6c2788668af631c7da8d44c913a2326e"
+      "original_digest": "f211d82f218a5773ef340e082f0b1ced65273c75ef677b6fba9e8105355c5078",
+      "records_sha256": "4dc335eeba91b90fe62ea6b2243e96f2d58c251b994378e1c0d2f61128ee621d"
     }
   },
   "sandbox": {
@@ -84,5 +84,5 @@
     "image": "debian:bookworm-slim",
     "image_id": "sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251"
   },
-  "exporter_revision": "3ed7050529ea"
+  "exporter_revision": "fb79f69fe24d"
 }

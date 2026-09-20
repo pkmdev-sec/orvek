@@ -66,7 +66,7 @@ for the affected segment. The `read_context` tool retrieves exact authorized his
 rerunning a tool.
 
 Set `agent.context_window_tokens` for new sessions. It accepts 16,384 through 1,000,000 tokens and
-defaults to 272,000. Legacy `[agent.compaction]` settings still map `input_budget_tokens` to this value.
+defaults to 1,000,000. Legacy `[agent.compaction]` settings still map `input_budget_tokens` to this value.
 Projection does not add a spend limit, call limit, or execution stop. Historical SQLite imports retain
 unknown tables as opaque data; keep your own copy if vendor-private archives matter. See
 [Host-owned context views](compaction.md) for selection, branch access, and recovery rules.
