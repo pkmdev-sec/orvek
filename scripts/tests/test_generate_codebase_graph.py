@@ -17,6 +17,56 @@ SPEC.loader.exec_module(GRAPH)
 
 
 class GraphGeneratorTests(unittest.TestCase):
+    def test_source_fingerprint_changes_with_authored_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            original_root = GRAPH.ROOT
+            GRAPH.ROOT = Path(directory)
+            try:
+                path = Path("source.txt")
+                (GRAPH.ROOT / path).write_text("first", encoding="utf-8")
+                first = GRAPH.source_fingerprint([path])
+                (GRAPH.ROOT / path).write_text("second", encoding="utf-8")
+                second = GRAPH.source_fingerprint([path])
+                self.assertNotEqual(first, second)
+                self.assertRegex(first, r"^[0-9a-f]{64}$")
+            finally:
+                GRAPH.ROOT = original_root
+
+    def test_capability_reference_requires_a_real_source_anchor(self) -> None:
+        path = Path("src/feature.rs")
+        with self.assertRaisesRegex(ValueError, "missing from src/feature.rs"):
+            GRAPH.validate_capability_reference(
+                "feature",
+                "dispatchers",
+                {"path": path.as_posix(), "anchor": "fn missing"},
+                {path},
+                {path: "fn present() {}"},
+            )
+
+    def test_capability_execution_path_requires_the_inspected_callsite(self) -> None:
+        caller = Path("src/caller.rs")
+        dispatcher = Path("src/dispatcher.rs")
+        references = {
+            "entrypoints": [{"path": caller.as_posix(), "anchor": "fn start"}],
+            "dispatchers": [{"path": dispatcher.as_posix(), "anchor": "fn execute"}],
+        }
+        with self.assertRaisesRegex(ValueError, "execution call .* outside the declared scope"):
+            GRAPH.validate_execution_paths(
+                "feature",
+                [
+                    [
+                        {"path": caller.as_posix(), "anchor": "fn start", "call": "execute()"},
+                        {"path": dispatcher.as_posix(), "anchor": "fn execute"},
+                    ]
+                ],
+                references,
+                {caller, dispatcher},
+                {
+                    caller: "fn start() {\n    disconnected();\n}\n\nfn unrelated() {\n    execute();\n}\n",
+                    dispatcher: "fn execute() {\n}\n",
+                },
+            )
+
     def test_nested_integration_modules_use_the_declared_cargo_target(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             original_root = GRAPH.ROOT
@@ -68,6 +118,7 @@ class GraphGeneratorTests(unittest.TestCase):
             "statistics": {
                 "nodes": 1,
                 "edges": 1,
+                "source_fingerprint": "0" * 64,
                 "static_reference_coverage": {},
             },
         }
@@ -136,6 +187,43 @@ class GraphGeneratorTests(unittest.TestCase):
                 "source": "file:web/review/app.ts",
                 "kind": "imports_local",
                 "target": "file:web/review/styles.css",
+            },
+            graph["edges"],
+        )
+        capabilities = [node for node in graph["nodes"] if node["kind"] == "capability"]
+        subagents = next(
+            node for node in capabilities if node["id"] == "capability:subagents"
+        )
+        self.assertEqual(
+            subagents["references"]["dispatchers"][0]["anchor"],
+            "pub async fn execute(",
+        )
+        self.assertEqual(
+            subagents["execution_paths"][0][0]["call"],
+            ".execute(name, arguments, &run, cancellation)",
+        )
+
+        ledger = json.loads((ROOT / "assets/capabilities.json").read_text())
+        self.assertEqual(len(capabilities), len(ledger["capabilities"]))
+        self.assertEqual(
+            graph["statistics"]["capabilities_by_status"],
+            {"experimental": 1, "implemented": len(capabilities) - 1},
+        )
+        self.assertEqual(graph["statistics"]["capability_exempt_components"], 6)
+        self.assertTrue(
+            any(
+                edge["source"] == "capability:verification-delivery"
+                and edge["kind"] == "owned_by"
+                and edge["target"] == "component:delivery"
+                for edge in graph["edges"]
+            )
+        )
+        self.assertRegex(graph["statistics"]["source_fingerprint"], r"^[0-9a-f]{64}$")
+        self.assertIn(
+            {
+                "source": "capability:subagents",
+                "kind": "dispatched_by",
+                "target": "file:crates/harness/src/controller/subagents.rs",
             },
             graph["edges"],
         )

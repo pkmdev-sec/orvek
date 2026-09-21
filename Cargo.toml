@@ -1,11 +1,6 @@
 [workspace]
 members = ["bin/orvek", "crates/*", "examples/orvek-memory-cloudflare"]
-exclude = ["vendor/nanocodex-agent", "vendor/nanocodex-oai-api"]
 resolver = "3"
-
-[patch.crates-io]
-nanocodex-agent = { path = "vendor/nanocodex-agent" }
-nanocodex-oai-api = { path = "vendor/nanocodex-oai-api" }
 
 [workspace.package]
 version = "0.1.0"
@@ -42,7 +37,6 @@ image = { version = "0.25.10", default-features = false, features = ["bmp", "dds
 jsonschema = { version = "0.48.5", default-features = false }
 miette = { version = "7.6.0", features = ["fancy"] }
 minisign-verify = "0.2.5"
-nanocodex = "0.5.0"
 png = "0.18.1"
 proc-macro2 = { version = "1.0.106", features = ["span-locations"] }
 pulldown-cmark = { version = "0.13.4", default-features = false }

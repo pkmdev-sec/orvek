@@ -9,8 +9,6 @@ agents:
       effort: low
       reasoning_mode: standard
       max_subagents: 32
-      web_search: false
-      image_generation: false
       minimum_subagents: 0
       fail_on_subagent_error: false
       require_wait: false

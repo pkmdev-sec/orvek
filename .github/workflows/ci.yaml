@@ -23,7 +23,7 @@ jobs:
         run: python3 scripts/check-doc-examples.py --check
       - name: Test documentation checks and codebase graph generator
         run: python3 -m unittest discover -s scripts/tests -p "test_*.py"
-      - name: Reject stale codebase graph
+      - name: Reject stale capability and codebase graph
         run: python3 scripts/generate-codebase-graph.py --check
 
   evaluation-contracts:
@@ -35,6 +35,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install uv
         run: pipx install uv==0.8.22
+      - name: Reject stale capability artwork
+        run: uv run scripts/generate-capability-diagram.py --check
       - name: Install locked evaluation dependencies
         run: uv sync --project evals --locked
       - name: Test Harbor adapter contracts

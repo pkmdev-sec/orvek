@@ -78,7 +78,7 @@ and saved-data handling.
 
 ## Guides
 
-- [Configuration, authentication, skills, and MCP](docs/configuration.md)
+- [Configuration, authentication, and skills](docs/configuration.md)
 - [Sessions, review, and reflection](docs/sessions.md)
 - [Executable host examples and coverage limits](docs/executable-examples.md)
 - [Local and remote memory](docs/memory.md)
@@ -104,5 +104,5 @@ credentials, and build outputs must stay out of Git.
 
 ## License
 
-Orvek is distributed under [Apache-2.0](LICENSE.md). Attribution and dependency notices, including
-the remaining Nanocodex-derived support crates, are in [NOTICE.md](NOTICE.md) and `vendor/`.
+Orvek is distributed under [Apache-2.0](LICENSE.md). Source attribution is retained in
+[NOTICE.md](NOTICE.md).

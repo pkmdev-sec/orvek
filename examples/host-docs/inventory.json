@@ -91,20 +91,6 @@
     "reason": "Skill paths are placeholders; memory_skills.py separately proves host catalog and on-demand body delivery."
   },
   {
-    "guide": "docs/configuration.md",
-    "block": 8,
-    "sha256": "15293de48a98548a039a78f69adf717fb6046137d4742a38061a9eec4f8b0bc6",
-    "kind": "external-service",
-    "reason": "Downloads an MCP server and needs a real workspace path."
-  },
-  {
-    "guide": "docs/configuration.md",
-    "block": 9,
-    "sha256": "96fbe7453ce9bd5c4440064ec1528a3cd87ee7ec0a2494b6b34a3a9e9c150656",
-    "kind": "external-service",
-    "reason": "Needs an external MCP service and credentials."
-  },
-  {
     "guide": "docs/event-intake.md",
     "block": 1,
     "sha256": "0f487b0bdcc70edfa17a0630f8ea55a14093ab1d4150c534d7658d2dff210199",

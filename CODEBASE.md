@@ -15,3 +15,9 @@ python3 scripts/generate-codebase-graph.py --check
 
 The graph intentionally excludes local untracked files and build outputs. It is an orientation and
 navigation index; source and behavior checks remain authoritative.
+
+`assets/capabilities.json` is the checked-in product-capability ledger. The graph validates each
+implemented capability's owner, executable entry point, dispatcher, proof, and documentation, then
+requires a source-bound callsite path from an entrypoint to every dispatcher and projects those
+references as `capability:` nodes. Developer-local `.agent-map` overlays are private
+derived evidence and are never repository authority.

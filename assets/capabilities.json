@@ -1,83 +1,419 @@
 {
+  "schema_version": 1,
   "brand": "Orvek",
   "overview": {
     "title": "From setup to evaluation.",
-    "subtitle": "Thirteen capability areas / Details in the Configuration guide",
-    "cards": [
-      {
-        "lines": [
-          "Configuration, authentication,",
-          "skills & MCP"
-        ]
-      },
-      {
-        "lines": [
-          "Sessions, review",
-          "& reflection"
-        ]
-      },
-      {
-        "lines": [
-          "Local & remote memory"
-        ]
-      },
-      {
-        "lines": [
-          "Context projection &",
-          "legacy compaction data"
-        ]
-      },
-      {
-        "lines": [
-          "Subagents"
-        ]
-      },
-      {
-        "lines": [
-          "Sloppiness diagnostics"
-        ]
-      },
-      {
-        "lines": [
-          "Performance notes"
-        ]
-      },
-      {
-        "lines": [
-          "Evaluations"
-        ]
-      },
-      {
-        "lines": [
-          "Portable trace bundles",
-          "& offline replay"
-        ]
-      },
-      {
-        "lines": [
-          "Optional interpreter",
-          "for composed tool calls"
-        ]
-      },
-      {
-        "lines": [
-          "Durable event intake",
-          "& schedules"
-        ]
-      },
-      {
-        "lines": [
-          "Trace monitoring",
-          "& native read recovery"
-        ]
-      },
-      {
-        "lines": [
-          "Experimental context",
-          "phase transitions"
-        ]
-      }
-    ],
+    "subtitle": "Thirteen source-backed capability areas",
     "footnote": "Configuration guide: setup, behavior, requirements, and limitations."
-  }
+  },
+  "capability_coverage": {
+    "mode": "complete",
+    "exempt_components": [
+      {"component": "component:session-assembly", "reason": "Application assembly supports host-owned session capabilities rather than owning a separate product capability."},
+      {"component": "component:host-client", "reason": "The local IPC client is transport infrastructure for session and task capabilities."},
+      {"component": "component:host-server", "reason": "The detached process boundary serves harness capabilities and owns no competing product behavior."},
+      {"component": "component:executor", "reason": "The executor is the isolated backend for workspace execution and verification capabilities."},
+      {"component": "component:headless", "reason": "Headless JSONL is a projection of the same session and task capabilities."},
+      {"component": "component:review", "reason": "Browser review is included in the sessions, review, and reflection capability owned by the authoritative harness."}
+    ]
+  },
+  "capabilities": [
+    {
+      "id": "configuration-authentication-skills",
+      "title": "Configuration, authentication, and skills",
+      "summary": "Loads bounded local configuration and credentials, admits a durable session, and exposes refreshed skill metadata and bodies through the host context service.",
+      "status": "implemented",
+      "owner": "component:cli",
+      "runtime_modes": ["host", "sandbox"],
+      "entrypoints": [
+        {"path": "bin/orvek/src/app/cli.rs", "anchor": "pub(crate) async fn run(self) -> Result<()>"},
+        {"path": "bin/orvek/src/app/host.rs", "anchor": "pub(crate) async fn serve(config: &Config)"}
+      ],
+      "dispatchers": [{"path": "bin/orvek/src/core/context.rs", "anchor": "impl ContextSession for ConfiguredContextSession"}],
+      "persistence": [{"path": "bin/orvek/src/app/config.rs", "anchor": "pub(crate) struct Config {"}],
+      "proof": [{"path": "bin/orvek/src/app/host_context_tests.rs", "anchor": "configured_context_reaches_native_requests_over_ipc"}],
+      "documentation": [{"path": "docs/configuration.md", "anchor": "### Configuration, authentication, and skills"}],
+      "limitations": ["Skills are disabled by default and are reference data rather than task authority."],
+      "execution_paths": [
+        [
+          {"path": "bin/orvek/src/app/host.rs", "anchor": "pub(crate) async fn serve(config: &Config)", "call": "ConfiguredContext::new("},
+          {"path": "bin/orvek/src/core/context.rs", "anchor": "impl ContextSession for ConfiguredContextSession"}
+        ]
+      ],
+      "diagram": {"lines": ["Configuration, authentication", "& skills"]}
+    },
+    {
+      "id": "sessions-review-reflection",
+      "title": "Sessions, review, and reflection",
+      "summary": "Resumes and forks host-owned sessions, projects them into the terminal, and serves frozen browser review data with recorded feedback.",
+      "status": "implemented",
+      "owner": "component:harness",
+      "runtime_modes": ["client", "host", "sandbox"],
+      "entrypoints": [
+        {"path": "bin/orvek/src/tui/client.rs", "anchor": "The detached host owns all work."},
+        {"path": "bin/orvek/src/review/mod.rs", "anchor": "pub(crate) async fn start("},
+        {"path": "crates/harness/src/ipc.rs", "anchor": "async fn execute("}
+      ],
+      "dispatchers": [
+        {"path": "crates/harness/src/controller.rs", "anchor": "pub async fn fork_session("},
+        {"path": "crates/harness/src/controller/review.rs", "anchor": "pub async fn record_review("}
+      ],
+      "persistence": [{"path": "crates/harness/src/store.rs", "anchor": "pub fn session_command("}],
+      "proof": [
+        {"path": "bin/orvek/src/tui/host_projection.rs", "anchor": "durable_replay_is_idempotent_and_other_sessions_are_not_rendered"},
+        {"path": "bin/orvek/src/review/mod.rs", "anchor": "review_decision_renders_as_composer_markdown"}
+      ],
+      "documentation": [{"path": "docs/sessions.md", "anchor": "# Sessions and review"}],
+      "limitations": ["Browser review requires separately installed web assets for source builds."],
+      "execution_paths": [
+        [
+          {"path": "crates/harness/src/ipc.rs", "anchor": "async fn execute(", "call": "host.fork_session("},
+          {"path": "crates/harness/src/controller.rs", "anchor": "pub async fn fork_session("}
+        ],
+        [
+          {"path": "crates/harness/src/ipc.rs", "anchor": "async fn execute(", "call": "host.record_review("},
+          {"path": "crates/harness/src/controller/review.rs", "anchor": "pub async fn record_review("}
+        ]
+      ],
+      "diagram": {"lines": ["Sessions, review", "& reflection"]}
+    },
+    {
+      "id": "memory",
+      "title": "Local and remote memory",
+      "summary": "Stores bounded evidence-backed memory locally or remotely and exposes explicit scan, read, mutation, lesson, and transfer operations.",
+      "status": "implemented",
+      "owner": "component:memory",
+      "runtime_modes": ["host", "sandbox", "auxiliary"],
+      "entrypoints": [
+        {"path": "bin/orvek/src/core/context.rs", "anchor": "ConfiguredMemory"},
+        {"path": "bin/orvek/src/core/context.rs", "anchor": "fn execute<'a>("}
+      ],
+      "dispatchers": [{"path": "crates/memory/src/tool.rs", "anchor": "pub async fn execute("}],
+      "persistence": [
+        {"path": "crates/memory/src/store/local.rs", "anchor": "pub struct LocalMemoryStore"},
+        {"path": "crates/memory/src/store/remote/client.rs", "anchor": "pub struct RemoteMemoryClient"}
+      ],
+      "proof": [{"path": "bin/orvek/src/app/host_context_tests.rs", "anchor": "memory_operations_preserve_cas_and_only_changed_context_invalidates_cache"}],
+      "documentation": [{"path": "docs/memory.md", "anchor": "# Memory"}],
+      "limitations": ["Memory is disabled by default, unencrypted locally, and unavailable to delegated children."],
+      "execution_paths": [
+        [
+          {"path": "bin/orvek/src/core/context.rs", "anchor": "fn execute<'a>(", "call": ".execute(arguments, permission(access))"},
+          {"path": "crates/memory/src/tool.rs", "anchor": "pub async fn execute("}
+        ]
+      ],
+      "diagram": {"lines": ["Local & remote memory"]}
+    },
+    {
+      "id": "context-projection",
+      "title": "Context projection and exact retrieval",
+      "summary": "Derives stable and live provider context from authoritative history, selects measured representations, and preserves exact source retrieval.",
+      "status": "implemented",
+      "owner": "component:runtime",
+      "runtime_modes": ["host", "sandbox"],
+      "entrypoints": [
+        {"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract("}
+      ],
+      "dispatchers": [
+        {"path": "crates/harness/src/context.rs", "anchor": "pub fn project("},
+        {"path": "crates/harness/src/controller.rs", "anchor": "async fn read_context("}
+      ],
+      "persistence": [{"path": "crates/harness/src/session.rs", "anchor": "ContextProjected {"}],
+      "proof": [{"path": "crates/harness/tests/context_projection.rs", "anchor": "exact_projection_preserves_original_authority_and_has_reproducible_identity"}],
+      "documentation": [{"path": "docs/compaction.md", "anchor": "# Host-owned context views"}],
+      "limitations": ["Bitmap selection depends on comparable provider receipts and falls back to native text when evidence is missing."],
+      "execution_paths": [
+        [
+          {"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract(", "call": "crate::context::project(&session, byte_limit)"},
+          {"path": "crates/harness/src/context.rs", "anchor": "pub fn project("}
+        ],
+        [
+          {"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract(", "call": "self.read_context("},
+          {"path": "crates/harness/src/controller.rs", "anchor": "async fn read_context("}
+        ]
+      ],
+      "diagram": {"lines": ["Context projection &", "exact retrieval"]}
+    },
+    {
+      "id": "subagents",
+      "title": "Isolated subagents",
+      "summary": "Runs bounded read-only child model sessions with session-scoped management, durable lifecycle records, and schema-validated results.",
+      "status": "implemented",
+      "owner": "component:subagents",
+      "runtime_modes": ["sandbox"],
+      "entrypoints": [
+        {"path": "crates/harness/src/controller.rs", "anchor": "tools.extend(subagents::Subagents::definitions())"},
+        {"path": "crates/harness/src/controller.rs", "anchor": "async fn dispatch("}
+      ],
+      "dispatchers": [{"path": "crates/harness/src/controller/subagents.rs", "anchor": "pub async fn execute("}],
+      "persistence": [{"path": "crates/harness/src/controller/subagents/lifecycle.rs", "anchor": "pub enum Event"}],
+      "proof": [{"path": "crates/harness/tests/subagents.rs", "anchor": "child_reads_the_workspace_records_a_job_and_submits_a_valid_result"}],
+      "documentation": [{"path": "docs/subagents.md", "anchor": "# Subagents"}],
+      "limitations": ["Children require the Docker runtime, are read-only, share a live workspace, and cannot delegate recursively."],
+      "execution_paths": [
+        [
+          {"path": "crates/harness/src/controller.rs", "anchor": "async fn dispatch(", "call": ".execute(name, arguments, &run, cancellation)"},
+          {"path": "crates/harness/src/controller/subagents.rs", "anchor": "pub async fn execute("}
+        ]
+      ],
+      "diagram": {"lines": ["Isolated subagents"]}
+    },
+    {
+      "id": "sloppiness-diagnostics",
+      "title": "Sloppiness diagnostics",
+      "summary": "Measures deterministic source growth, duplication, redundant Rust forms, and complexity hotspots without treating metrics as completion evidence.",
+      "status": "implemented",
+      "owner": "component:runtime",
+      "runtime_modes": ["host", "sandbox"],
+      "entrypoints": [{"path": "crates/harness/src/controller.rs", "anchor": "async fn dispatch("}],
+      "dispatchers": [{"path": "crates/harness/src/sloppiness.rs", "anchor": "pub fn assess("}],
+      "persistence": [],
+      "proof": [{"path": "crates/harness/src/sloppiness.rs", "anchor": "measures_verbosity_union_and_erosion_formula"}],
+      "documentation": [{"path": "docs/sloppiness.md", "anchor": "# Sloppiness diagnostics"}],
+      "limitations": ["Only Rust has AST-aware redundancy and complexity analysis; the report is not a quality score."],
+      "execution_paths": [
+        [
+          {"path": "crates/harness/src/controller.rs", "anchor": "async fn dispatch(", "call": "crate::sloppiness::assess("},
+          {"path": "crates/harness/src/sloppiness.rs", "anchor": "pub fn assess("}
+        ]
+      ],
+      "diagram": {"lines": ["Sloppiness diagnostics"]}
+    },
+    {
+      "id": "terminal-performance",
+      "title": "Terminal performance",
+      "summary": "Caches transcript wrapping, syntax styles, and layout work while scheduling bounded rendering around input and streaming updates.",
+      "status": "implemented",
+      "owner": "component:tui",
+      "runtime_modes": ["client"],
+      "entrypoints": [{"path": "bin/orvek/src/tui/mod.rs", "anchor": "pub(crate) async fn run("}],
+      "dispatchers": [{"path": "bin/orvek/src/tui/client.rs", "anchor": "pub(super) async fn run("}],
+      "persistence": [],
+      "proof": [{"path": "bin/orvek/src/tui/bench.rs", "anchor": "fn benchmarks(c: &mut Criterion)"}],
+      "documentation": [{"path": "docs/performance.md", "anchor": "# Performance notes"}],
+      "limitations": ["Local rendering benchmarks do not measure provider latency or task success."],
+      "execution_paths": [
+        [
+          {"path": "bin/orvek/src/tui/mod.rs", "anchor": "pub(crate) async fn run(", "call": "client::run(config, startup, shutdown).await"},
+          {"path": "bin/orvek/src/tui/client.rs", "anchor": "pub(super) async fn run("}
+        ]
+      ],
+      "diagram": {"lines": ["Terminal performance"]}
+    },
+    {
+      "id": "evaluations",
+      "title": "Evaluation lab",
+      "summary": "Runs reproducible Harbor, SnapCompact, context-cost, transition, and incident-replay analyses while preserving raw evidence and unknown measurements.",
+      "status": "implemented",
+      "owner": "component:operations",
+      "runtime_modes": ["offline", "sandbox"],
+      "entrypoints": [
+        {"path": "evals/harbor_adapter/agent.py", "anchor": "class OrvekAgent"},
+        {"path": "evals/snapcompact/run_paired.py", "anchor": "def main("}
+      ],
+      "dispatchers": [{"path": "evals/snapcompact/run_paired.py", "anchor": "def run_condition("}],
+      "persistence": [{"path": "evals/snapcompact/results/2026-09-19/report.json", "anchor": "\"version\": 1"}],
+      "proof": [{"path": "evals/harbor_adapter/test_agent.py", "anchor": "class ArgumentContractTests"}],
+      "documentation": [{"path": "evals/README.md", "anchor": "# Harbor evaluations"}],
+      "limitations": ["Live trials require external providers and credentials; deterministic checks do not establish benchmark quality."],
+      "execution_paths": [
+        [
+          {"path": "evals/snapcompact/run_paired.py", "anchor": "def main(", "call": "run_condition(args, model, condition"},
+          {"path": "evals/snapcompact/run_paired.py", "anchor": "def run_condition("}
+        ]
+      ],
+      "diagram": {"lines": ["Evaluation lab"]}
+    },
+    {
+      "id": "trace-bundles",
+      "title": "Portable trace bundles and offline replay",
+      "summary": "Exports a pinned journal prefix and bounded artifact closure, then replays reducers and receipt relationships without executing tools or providers.",
+      "status": "implemented",
+      "owner": "component:harness",
+      "runtime_modes": ["offline"],
+      "entrypoints": [{"path": "bin/orvek/src/app/trace.rs", "anchor": "pub(crate) fn run_offline("}],
+      "dispatchers": [{"path": "crates/harness/src/trace.rs", "anchor": "pub fn replay(&self)"}],
+      "persistence": [{"path": "crates/harness/src/trace.rs", "anchor": "pub fn write(&self, path: &Path)"}],
+      "proof": [{"path": "crates/harness/tests/trace_bundle.rs", "anchor": "exact_prefix_replays_state_context_and_is_read_only"}],
+      "documentation": [{"path": "docs/trace-bundles.md", "anchor": "# Local trace bundles"}],
+      "limitations": ["Replay verifies recorded state and supported causal links; it does not rerun tools or authenticate a wholesale rewritten bundle."],
+      "execution_paths": [
+        [
+          {"path": "bin/orvek/src/app/trace.rs", "anchor": "pub(crate) fn run_offline(", "call": "TraceBundle::read(&bundle)?.replay()"},
+          {"path": "crates/harness/src/trace.rs", "anchor": "pub fn replay(&self)"}
+        ]
+      ],
+      "diagram": {"lines": ["Portable trace bundles", "& offline replay"]}
+    },
+    {
+      "id": "interpreter",
+      "title": "Optional interpreter for composed tool calls",
+      "summary": "Runs bounded QuickJS cells that compose only the tools admitted to the current request and retain explicit artifact-backed checkpoints.",
+      "status": "implemented",
+      "owner": "component:harness",
+      "runtime_modes": ["host", "sandbox"],
+      "entrypoints": [{"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract("}],
+      "dispatchers": [{"path": "crates/harness/src/controller/interpreter.rs", "anchor": "pub(super) async fn evaluate_cell("}],
+      "persistence": [{"path": "crates/harness/src/session.rs", "anchor": "Interpreter {"}],
+      "proof": [{"path": "crates/harness/tests/interpreter_host.rs", "anchor": "interpreter_host_filters_large_values_without_inserting_intermediates_in_parent_prompt"}],
+      "documentation": [{"path": "docs/interpreter.md", "anchor": "# Optional tool composition"}],
+      "limitations": ["The interpreter has no ambient filesystem, process, network, credential, or module-loader access."],
+      "execution_paths": [
+        [
+          {"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract(", "call": "self.evaluate_cell("},
+          {"path": "crates/harness/src/controller/interpreter.rs", "anchor": "pub(super) async fn evaluate_cell("}
+        ]
+      ],
+      "diagram": {"lines": ["Optional tool-call", "interpreter"]}
+    },
+    {
+      "id": "event-intake",
+      "title": "Durable event intake and schedules",
+      "summary": "Binds authenticated event sources to existing session authority, deduplicates deliveries, and queues bounded work with latest-only schedule catch-up.",
+      "status": "implemented",
+      "owner": "component:harness",
+      "runtime_modes": ["host", "sandbox"],
+      "entrypoints": [
+        {"path": "crates/harness/src/ipc.rs", "anchor": "RegisterEventSource {"},
+        {"path": "crates/harness/src/ipc.rs", "anchor": "pub async fn serve("}
+      ],
+      "dispatchers": [{"path": "crates/harness/src/controller/event_intake.rs", "anchor": "pub(crate) async fn run_event_intake("}],
+      "persistence": [{"path": "crates/harness/src/store/event_intake.rs", "anchor": "pub(crate) fn register_event_source("}],
+      "proof": [{"path": "crates/harness/src/controller/event_intake.rs", "anchor": "crash_before_admission_recovers_stable_request_and_cancellation_tombstone"}],
+      "documentation": [{"path": "docs/event-intake.md", "anchor": "# Local event intake"}],
+      "limitations": ["Event payloads are untrusted data and cannot create sessions, change profiles, or grant capabilities."],
+      "execution_paths": [
+        [
+          {"path": "crates/harness/src/ipc.rs", "anchor": "pub async fn serve(", "call": "intake_host.run_event_intake()"},
+          {"path": "crates/harness/src/controller/event_intake.rs", "anchor": "pub(crate) async fn run_event_intake("}
+        ]
+      ],
+      "diagram": {"lines": ["Durable event intake", "& schedules"]}
+    },
+    {
+      "id": "monitoring",
+      "title": "Trace monitoring and native read recovery",
+      "summary": "Consumes verified journal data, records bounded operational measurements, and can promote or roll back one versioned native read envelope.",
+      "status": "implemented",
+      "owner": "component:harness",
+      "runtime_modes": ["host"],
+      "entrypoints": [
+        {"path": "bin/orvek/src/app/monitor.rs", "anchor": "pub(crate) enum MonitorCommand"},
+        {"path": "crates/harness/src/ipc.rs", "anchor": "pub async fn serve("}
+      ],
+      "dispatchers": [{"path": "crates/harness/src/controller/monitor.rs", "anchor": "pub(crate) async fn run_monitor("}],
+      "persistence": [{"path": "crates/harness/src/store/monitor.rs", "anchor": "pub(crate) fn monitor_save_status("}],
+      "proof": [{"path": "crates/harness/src/controller/monitor/tests.rs", "anchor": "evaluator_rejects_heldout_tampering_and_user_admission_still_works"}],
+      "documentation": [{"path": "docs/monitoring.md", "anchor": "# Trace monitoring and native read recovery"}],
+      "limitations": ["Monitoring cannot change prompts, tool schemas, repository policy, contracts, task budgets, or arbitrary code."],
+      "execution_paths": [
+        [
+          {"path": "crates/harness/src/ipc.rs", "anchor": "pub async fn serve(", "call": "monitor_host.run_monitor()"},
+          {"path": "crates/harness/src/controller/monitor.rs", "anchor": "pub(crate) async fn run_monitor("}
+        ]
+      ],
+      "diagram": {"lines": ["Trace monitoring", "& native read recovery"]}
+    },
+    {
+      "id": "context-transitions",
+      "title": "Experimental context phase transitions",
+      "summary": "Replaces eligible settled ranges only in the derived context view while retaining exact source history and retrieval authority.",
+      "status": "experimental",
+      "owner": "component:runtime",
+      "runtime_modes": ["host", "sandbox"],
+      "entrypoints": [{"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract("}],
+      "dispatchers": [{"path": "crates/harness/src/controller.rs", "anchor": "async fn transition_context("}],
+      "persistence": [{"path": "crates/harness/src/session.rs", "anchor": "ContextProjected {"}],
+      "proof": [{"path": "crates/harness/tests/context_transitions.rs", "anchor": "restart_preserves_accepted_transition_and_exact_multibyte_source_without_reexecution"}],
+      "documentation": [{"path": "docs/compaction.md", "anchor": "# Host-owned context views"}],
+      "limitations": ["The feature is disabled by default and model summaries remain derived claims rather than task authority."],
+      "execution_paths": [
+        [
+          {"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract(", "call": "self.transition_context("},
+          {"path": "crates/harness/src/controller.rs", "anchor": "async fn transition_context("}
+        ]
+      ],
+      "diagram": {"lines": ["Experimental context", "phase transitions"]}
+    },
+    {
+      "id": "task-execution",
+      "title": "Task admission and execution",
+      "summary": "Admits a host request into one durable task and drives its provider and tool loop through the authoritative controller.",
+      "status": "implemented",
+      "owner": "component:harness",
+      "runtime_modes": ["host", "sandbox"],
+      "entrypoints": [{"path": "crates/harness/src/ipc.rs", "anchor": "async fn execute("}],
+      "dispatchers": [{"path": "crates/harness/src/controller.rs", "anchor": "pub async fn execute_request("}],
+      "persistence": [{"path": "crates/harness/src/store.rs", "anchor": "pub fn start_request("}],
+      "proof": [{"path": "crates/harness/tests/controller_execution.rs", "anchor": "ordinary_action_is_classified_then_admitted_as_one_task"}],
+      "documentation": [{"path": "docs/harness-host.md", "anchor": "# Detached harness host"}],
+      "limitations": ["Native tasks finish without the sandbox verification certificate."],
+      "execution_paths": [
+        [
+          {"path": "crates/harness/src/ipc.rs", "anchor": "async fn execute(", "call": "host.execute_request("},
+          {"path": "crates/harness/src/controller.rs", "anchor": "pub async fn execute_request("}
+        ]
+      ]
+    },
+    {
+      "id": "workspace-execution",
+      "title": "Workspace tool execution",
+      "summary": "Admits bounded file and command tools against the native workspace or an isolated Docker working copy and records their outcomes.",
+      "status": "implemented",
+      "owner": "component:runtime",
+      "runtime_modes": ["host", "sandbox"],
+      "entrypoints": [{"path": "crates/harness/src/controller.rs", "anchor": "async fn dispatch("}],
+      "dispatchers": [{"path": "crates/harness/src/capabilities.rs", "anchor": "pub async fn execute_recorded("}],
+      "persistence": [{"path": "crates/harness/src/store.rs", "anchor": "pub fn start_execution_job("}],
+      "proof": [{"path": "crates/harness/tests/workspace_tools.rs", "anchor": "exec_command_runs_only_through_the_isolated_docker_executor"}],
+      "documentation": [{"path": "docs/workspace-execution.md", "anchor": "# Workspace execution"}],
+      "limitations": ["Native execution uses the operator's authority; protected verification is sandbox-only."],
+      "execution_paths": [
+        [
+          {"path": "crates/harness/src/controller.rs", "anchor": "async fn dispatch(", "call": ".execute_recorded(name, arguments, context, cancellation.clone())"},
+          {"path": "crates/harness/src/capabilities.rs", "anchor": "pub async fn execute_recorded("}
+        ]
+      ]
+    },
+    {
+      "id": "verification-delivery",
+      "title": "Verification and reproducible delivery",
+      "summary": "Runs protected checks on frozen candidates, reproduces exact patches, and records a completion certificate only after every obligation is satisfied.",
+      "status": "implemented",
+      "owner": "component:delivery",
+      "runtime_modes": ["sandbox"],
+      "entrypoints": [
+        {"path": "crates/harness/src/controller.rs", "anchor": "async fn verify("},
+        {"path": "crates/harness/src/controller.rs", "anchor": "async fn freeze("},
+        {"path": "crates/harness/src/store.rs", "anchor": "pub fn complete("}
+      ],
+      "dispatchers": [
+        {"path": "crates/harness/src/verification.rs", "anchor": "pub async fn execute("},
+        {"path": "crates/harness/src/delivery.rs", "anchor": "pub async fn build("},
+        {"path": "crates/harness/src/completion.rs", "anchor": "pub fn evaluate("}
+      ],
+      "persistence": [{"path": "crates/harness/src/store.rs", "anchor": "pub fn record_delivery("}],
+      "proof": [
+        {"path": "crates/harness/tests/protected_verification.rs", "anchor": "real_bug_requires_baseline_failure_and_candidate_success_before_delivery"},
+        {"path": "crates/harness/tests/patch_delivery.rs", "anchor": "patch_digest_is_reproducible_across_scratch_runs"},
+        {"path": "crates/harness/tests/completion_contract.rs", "anchor": "complete_requires_current_evidence_control_and_delivery_then_replays_exactly"}
+      ],
+      "documentation": [{"path": "docs/harness-integration.md", "anchor": "# Harness replacement integration plan"}],
+      "limitations": ["Certificates cover the declared contract and recorded evidence, not external state that the checks did not observe."],
+      "execution_paths": [
+        [
+          {"path": "crates/harness/src/controller.rs", "anchor": "async fn verify(", "call": "verification::execute("},
+          {"path": "crates/harness/src/verification.rs", "anchor": "pub async fn execute("}
+        ],
+        [
+          {"path": "crates/harness/src/controller.rs", "anchor": "async fn freeze(", "call": "PatchBuilder::new(PatchLimits::default())"},
+          {"path": "crates/harness/src/delivery.rs", "anchor": "pub async fn build("}
+        ],
+        [
+          {"path": "crates/harness/src/store.rs", "anchor": "pub fn complete(", "call": "completion::evaluate(state, now_ms())"},
+          {"path": "crates/harness/src/completion.rs", "anchor": "pub fn evaluate("}
+        ]
+      ]
+    }
+  ]
 }

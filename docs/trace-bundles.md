@@ -166,7 +166,7 @@ generator hashes, a runtime-input hash, the binary hash, exporter revision, orig
 export digests, journal hashes and bundle hashes. It also records the local Docker
 image ID and executor-helper hash, without recording their host paths. Runtime
 inputs include Rust/Cargo sources and the embedded font under `bin`, `crates`,
-`vendor` and `.cargo`.
+and `.cargo`.
 The generator trusts the supplied CLI. Its binary hash identifies what ran; the
 runtime-input hash describes the checkout, not proof that the binary was built
 from it. Build the current CLI before generation. This is not a signed attestation

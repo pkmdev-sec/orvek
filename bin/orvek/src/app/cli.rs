@@ -10,12 +10,11 @@ use crate::{
     },
     tui,
 };
-use clap::{ArgAction, Parser, Subcommand, builder::NonEmptyStringValueParser};
+use clap::{Parser, Subcommand, builder::NonEmptyStringValueParser};
 use crossterm::style::{Color, Stylize};
 use orvek_harness::inference::Model;
-use std::{env, env::VarError, fmt, path::PathBuf};
+use std::{env, path::PathBuf};
 use tokio_util::sync::CancellationToken;
-use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 const BUILD_VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -123,37 +122,6 @@ pub(crate) struct Cli {
     )]
     max_subagents: Option<usize>,
 
-    /// Replace the session instructions before optional context references.
-    #[arg(
-        long,
-        global = true,
-        env = compatible_env("ORVEK_INSTRUCTIONS", "TACT_INSTRUCTIONS"),
-        value_parser = NonEmptyStringValueParser::new()
-    )]
-    instructions: Option<String>,
-
-    /// Append after Orvek's built-in instructions.
-    #[arg(
-        long,
-        global = true,
-        env = compatible_env("ORVEK_APPEND_INSTRUCTIONS", "TACT_APPEND_INSTRUCTIONS"),
-        value_parser = NonEmptyStringValueParser::new()
-    )]
-    append_instructions: Option<String>,
-
-    /// Expose standalone web search to the model.
-    #[arg(long, global = true, env = compatible_env("ORVEK_WEB_SEARCH", "TACT_WEB_SEARCH"), action = ArgAction::Set)]
-    web_search: Option<bool>,
-
-    /// Expose image generation to the model.
-    #[arg(
-        long,
-        global = true,
-        env = compatible_env("ORVEK_IMAGE_GENERATION", "TACT_IMAGE_GENERATION"),
-        action = ArgAction::Set
-    )]
-    image_generation: Option<bool>,
-
     /// Override the Responses API WebSocket endpoint.
     #[arg(
         long,
@@ -209,11 +177,6 @@ enum Command {
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
-    },
-    /// Manage MCP servers.
-    Mcp {
-        #[command(subcommand)]
-        command: McpCommand,
     },
     /// Run one durable task and stream versioned host events as JSONL.
     Run {
@@ -279,102 +242,6 @@ enum ConfigCommand {
     Show,
 }
 
-#[derive(Subcommand)]
-enum McpCommand {
-    /// Add a local stdio or remote Streamable HTTP MCP server.
-    #[command(group(
-        clap::ArgGroup::new("transport")
-            .required(true)
-            .args(["url", "command"])
-    ), override_usage = "orvek mcp add [OPTIONS] <NAME> (--url <URL> | -- <COMMAND>...)")]
-    Add {
-        /// Name for the MCP server configuration.
-        #[arg(value_parser = NonEmptyStringValueParser::new())]
-        name: String,
-
-        /// Environment variable copied into the server configuration.
-        #[arg(long, value_name = "NAME", value_parser = NonEmptyStringValueParser::new(), conflicts_with = "url")]
-        env: Vec<String>,
-
-        /// Working directory for the server process.
-        #[arg(long, value_name = "PATH", conflicts_with = "url")]
-        cwd: Option<PathBuf>,
-
-        /// URL for a remote Streamable HTTP server.
-        #[arg(
-            long,
-            value_name = "URL",
-            conflicts_with = "command",
-            value_parser = NonEmptyStringValueParser::new()
-        )]
-        url: Option<String>,
-
-        /// Environment variable containing the remote server's bearer token.
-        #[arg(long, value_name = "NAME", requires = "url", conflicts_with = "command", value_parser = NonEmptyStringValueParser::new())]
-        bearer_token_env_var: Option<String>,
-
-        /// Resolve an HTTP header value from an environment variable (`HEADER=ENV_VAR`).
-        #[arg(long, value_name = "HEADER=ENV_VAR", requires = "url", conflicts_with = "command", value_parser = parse_header_env)]
-        header_env: Vec<(String, String)>,
-
-        /// Command used to launch the server.
-        #[arg(
-            trailing_var_arg = true,
-            allow_hyphen_values = true,
-            value_name = "COMMAND"
-        )]
-        command: Vec<String>,
-    },
-
-    /// Show the configured MCP servers without revealing any secret values.
-    List,
-}
-
-impl fmt::Debug for McpCommand {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Add {
-                name,
-                env,
-                cwd,
-                url,
-                bearer_token_env_var,
-                header_env,
-                command,
-            } => formatter
-                .debug_struct("Add")
-                .field("name", name)
-                .field("env", env)
-                .field("cwd", cwd)
-                .field("url", &url.as_ref().map(|_| "[REDACTED URL]"))
-                .field("bearer_token_env_var", bearer_token_env_var)
-                .field("header_env", header_env)
-                .field("command", command)
-                .finish(),
-            Self::List => formatter.write_str("List"),
-        }
-    }
-}
-
-impl Zeroize for McpCommand {
-    fn zeroize(&mut self) {
-        let Self::Add { url, .. } = self else {
-            return;
-        };
-        if let Some(url) = url {
-            url.zeroize();
-        }
-    }
-}
-
-impl Drop for McpCommand {
-    fn drop(&mut self) {
-        self.zeroize();
-    }
-}
-
-impl ZeroizeOnDrop for McpCommand {}
-
 impl Cli {
     pub(crate) async fn run(self) -> Result<()> {
         if self.resume.is_some()
@@ -408,18 +275,10 @@ impl Cli {
             thinking: self.thinking,
             reasoning_mode: self.reasoning_mode,
             max_subagents: self.max_subagents,
-            instructions: self.instructions,
-            append_instructions: self.append_instructions,
-            web_search: self.web_search,
-            image_generation: self.image_generation,
             websocket_url: self.websocket_url,
             api_base_url: self.api_base_url,
         };
-        let config = if matches!(&self.command, Some(Command::Mcp { .. })) {
-            Config::load_for_update(overrides)?
-        } else {
-            Config::load(overrides)?
-        };
+        let config = Config::load(overrides)?;
         let model = self.model.unwrap_or(config.agent().model());
 
         match self.command {
@@ -523,7 +382,6 @@ impl Command {
             Self::Trace { command } => command.reexecute(config).await,
             Self::Auth { command } => command.run(config).await.map_err(Into::into),
             Self::Config { command } => command.run(config),
-            Self::Mcp { command } => command.run(config),
             Self::Run { .. } => unreachable!("run is dispatched with the optional resume target"),
             Self::Resume => unreachable!("resume is dispatched to the TUI"),
             Self::Memory { command } => command.run(config).await,
@@ -728,140 +586,17 @@ impl ConfigCommand {
     }
 }
 
-impl McpCommand {
-    fn run(self, config: &Config) -> Result<()> {
-        match &self {
-            Self::Add {
-                name,
-                env,
-                cwd,
-                url,
-                bearer_token_env_var,
-                header_env,
-                command,
-            } => {
-                if let Some(url) = url {
-                    config.add_http_mcp_server(
-                        name,
-                        url,
-                        bearer_token_env_var.as_deref(),
-                        header_env
-                            .iter()
-                            .map(|(header, variable)| (header.as_str(), variable.as_str())),
-                    )?;
-                    println!("Added MCP server `{name}`.");
-                    return Ok(());
-                }
-
-                let (program, arguments) = command.split_first().expect("clap requires a command");
-                let environment = env
-                    .iter()
-                    .map(|name| read_mcp_environment(name.clone(), |name| env::var(name)))
-                    .collect::<std::result::Result<Vec<_>, _>>()?;
-                config.add_mcp_server(
-                    name,
-                    program,
-                    arguments,
-                    environment
-                        .iter()
-                        .map(|(name, value)| (name.as_str(), value.as_str())),
-                    cwd.as_deref(),
-                )?;
-                println!("Added MCP server `{name}`.");
-            }
-            Self::List => {
-                let servers = config.mcp_servers();
-                if servers.is_empty() {
-                    println!("No MCP servers are configured.");
-                    return Ok(());
-                }
-                for (name, server) in servers {
-                    match server {
-                        super::config::McpServerConfig::Stdio(stdio) => {
-                            println!("{name} (stdio)");
-                            println!(
-                                "  command: {}",
-                                std::iter::once(stdio.command())
-                                    .chain(stdio.args().iter().map(String::as_str))
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                            );
-                            if let Some(cwd) = stdio.cwd() {
-                                println!("  cwd: {}", cwd.display());
-                            }
-                            // Names only. The values stay secret; nothing here
-                            // prints what `expose` yields.
-                            let names = stdio
-                                .env()
-                                .expose()
-                                .map(|(name, _)| name)
-                                .collect::<Vec<_>>();
-                            if !names.is_empty() {
-                                println!("  env: {}", names.join(", "));
-                            }
-                        }
-                        super::config::McpServerConfig::Http(http) => {
-                            println!("{name} (http)");
-                            println!("  url: {}", http.url());
-                            if let Some(variable) = http.bearer_token_env_var() {
-                                println!("  bearer token from: {variable}");
-                            }
-                            for (header, variable) in http.header_env() {
-                                println!("  {header} from: {variable}");
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-fn parse_header_env(value: &str) -> std::result::Result<(String, String), String> {
-    let Some((header, variable)) = value.split_once('=') else {
-        return Err("expected HEADER=ENV_VAR".into());
-    };
-    if header.is_empty() || variable.is_empty() {
-        return Err("header and environment variable names must not be empty".into());
-    }
-    Ok((header.into(), variable.into()))
-}
-
-fn read_mcp_environment(
-    name: String,
-    read: impl FnOnce(&str) -> std::result::Result<String, VarError>,
-) -> std::result::Result<(String, Zeroizing<String>), crate::app::error::ConfigError> {
-    match read(&name) {
-        Ok(value) => Ok((name, Zeroizing::new(value))),
-        Err(VarError::NotPresent) => {
-            Err(crate::app::error::ConfigError::McpEnvironmentNotPresent { name })
-        }
-        // VarError owns and renders the non-Unicode value, so discard it before constructing the
-        // diagnostic. The process environment retains the original outside orvek's ownership.
-        Err(VarError::NotUnicode(_)) => {
-            Err(crate::app::error::ConfigError::McpEnvironmentNotUnicode { name })
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        Cli, McpCommand, MemoryCommand, push_memories, read_mcp_environment, resume_command,
-        same_replication_snapshot,
-    };
+    use super::{Cli, MemoryCommand, push_memories, resume_command, same_replication_snapshot};
     use crate::app::{
         cli::Command,
         config::{AuthMode, Config, ConfigOverrides, ReasoningEffort},
-        error::{ConfigError, Error},
+        error::Error,
     };
     use clap::{CommandFactory, Parser, error::ErrorKind};
     use orvek_harness::inference::Model;
     use std::{
-        env::VarError,
-        ffi::OsString,
         fs,
         path::PathBuf,
         sync::{
@@ -1029,186 +764,6 @@ mod tests {
     }
 
     #[test]
-    fn mcp_add_accepts_a_stdio_command_and_options() {
-        let cli = Cli::try_parse_from([
-            "orvek",
-            "mcp",
-            "add",
-            "filesystem",
-            "--env",
-            "TOKEN",
-            "--cwd",
-            "servers/filesystem",
-            "--",
-            "npx",
-            "-y",
-            "@modelcontextprotocol/server-filesystem",
-            ".",
-        ])
-        .unwrap();
-
-        let Some(Command::Mcp {
-            command:
-                McpCommand::Add {
-                    name,
-                    env,
-                    cwd,
-                    command,
-                    ..
-                },
-        }) = &cli.command
-        else {
-            panic!("expected mcp add command");
-        };
-        assert_eq!(name, "filesystem");
-        assert_eq!(env.as_slice(), ["TOKEN"]);
-        assert_eq!(
-            cwd.as_deref(),
-            Some(PathBuf::from("servers/filesystem").as_path())
-        );
-        assert_eq!(
-            command.as_slice(),
-            ["npx", "-y", "@modelcontextprotocol/server-filesystem", "."]
-        );
-    }
-
-    #[test]
-    fn mcp_add_accepts_a_remote_server_with_environment_backed_auth() {
-        let cli = Cli::try_parse_from([
-            "orvek",
-            "mcp",
-            "add",
-            "docs",
-            "--url",
-            "https://example.com/mcp",
-            "--bearer-token-env-var",
-            "MCP_TOKEN",
-            "--header-env",
-            "X-Tenant=TENANT_ID",
-        ])
-        .unwrap();
-
-        let Some(Command::Mcp {
-            command:
-                McpCommand::Add {
-                    url,
-                    bearer_token_env_var,
-                    header_env,
-                    command,
-                    ..
-                },
-        }) = &cli.command
-        else {
-            panic!("expected mcp add command");
-        };
-        assert_eq!(url.as_deref(), Some("https://example.com/mcp"));
-        assert_eq!(bearer_token_env_var.as_deref(), Some("MCP_TOKEN"));
-        assert_eq!(
-            header_env.as_slice(),
-            [("X-Tenant".into(), "TENANT_ID".into())]
-        );
-        assert!(command.is_empty());
-    }
-
-    #[test]
-    fn mcp_add_rejects_an_empty_remote_url_and_shows_transport_usage() {
-        let error = Cli::try_parse_from(["orvek", "mcp", "add", "docs", "--url", ""]).unwrap_err();
-        assert_eq!(error.kind(), ErrorKind::InvalidValue);
-
-        let help = Cli::try_parse_from(["orvek", "mcp", "add", "--help"])
-            .unwrap_err()
-            .to_string();
-        assert!(
-            help.contains("Usage: orvek mcp add [OPTIONS] <NAME> (--url <URL> | -- <COMMAND>...)")
-        );
-    }
-
-    #[test]
-    fn mcp_add_rejects_whitespace_and_credential_bearing_urls_without_persisting_them() {
-        let directory = tempdir().unwrap();
-        let path = directory.path().join("config.toml");
-        let original = "[auth]\nmode = \"api-key\"\nfile = \"auth.json\"\n";
-        fs::write(&path, original).unwrap();
-        let config = Config::load(ConfigOverrides {
-            path: Some(path.clone()),
-            ..ConfigOverrides::default()
-        })
-        .unwrap();
-
-        for url in [" ", "https://user:not-a-real-secret@example.com/mcp"] {
-            let cli = Cli::try_parse_from(["orvek", "mcp", "add", "docs", "--url", url]).unwrap();
-            assert!(!format!("{cli:?}").contains("not-a-real-secret"));
-            let Some(Command::Mcp { command }) = cli.command else {
-                panic!("expected mcp command");
-            };
-            let error = command.run(&config).unwrap_err();
-            let rendered = format!("{error:?} {error}");
-            assert!(matches!(
-                error,
-                Error::Config(ConfigError::McpUrl { name, .. }) if name == "docs"
-            ));
-            assert!(!rendered.contains("not-a-real-secret"));
-            assert_eq!(fs::read_to_string(&path).unwrap(), original);
-        }
-    }
-
-    #[test]
-    fn mcp_add_requires_exactly_one_transport_and_transport_specific_options() {
-        for arguments in [
-            vec!["orvek", "mcp", "add", "missing"],
-            vec![
-                "orvek",
-                "mcp",
-                "add",
-                "mixed",
-                "--url",
-                "https://example.com/mcp",
-                "--",
-                "server",
-            ],
-            vec![
-                "orvek",
-                "mcp",
-                "add",
-                "stdio",
-                "--header-env",
-                "X=Y",
-                "--",
-                "server",
-            ],
-            vec![
-                "orvek",
-                "mcp",
-                "add",
-                "http",
-                "--url",
-                "https://example.com/mcp",
-                "--cwd",
-                ".",
-            ],
-        ] {
-            assert!(
-                Cli::try_parse_from(&arguments).is_err(),
-                "accepted invalid arguments: {arguments:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn non_unicode_mcp_environment_errors_are_redacted() {
-        let error = read_mcp_environment("TOKEN".into(), |_| {
-            Err(VarError::NotUnicode(OsString::from("secret-sentinel")))
-        })
-        .unwrap_err();
-        let debug = format!("{error:?}");
-        let display = error.to_string();
-
-        assert!(!debug.contains("secret-sentinel"));
-        assert!(!display.contains("secret-sentinel"));
-        assert!(display.contains("TOKEN"));
-    }
-
-    #[test]
     fn run_accepts_a_prompt() {
         let cli = Cli::try_parse_from(["orvek", "run", "inspect the workspace"]).unwrap();
 
@@ -1219,20 +774,19 @@ mod tests {
     }
 
     #[test]
-    fn append_instructions_are_accepted() {
-        let cli = Cli::try_parse_from([
-            "orvek",
-            "--append-instructions",
-            "Follow project conventions.",
-            "run",
-            "inspect the workspace",
-        ])
-        .unwrap();
-
-        assert_eq!(
-            cli.append_instructions.as_deref(),
-            Some("Follow project conventions.")
-        );
+    fn configuration_only_cli_surfaces_are_not_advertised() {
+        for arguments in [
+            vec!["orvek", "--instructions", "unused"],
+            vec!["orvek", "--append-instructions", "unused"],
+            vec!["orvek", "--web-search", "true"],
+            vec!["orvek", "--image-generation", "true"],
+            vec!["orvek", "mcp", "list"],
+        ] {
+            assert!(
+                Cli::try_parse_from(arguments).is_err(),
+                "accepted removed CLI surface"
+            );
+        }
     }
 
     #[test]
@@ -1469,10 +1023,6 @@ mod tests {
             ("reasoning_mode", "ORVEK_REASONING_MODE"),
             ("model", "ORVEK_MODEL"),
             ("max_subagents", "ORVEK_MAX_SUBAGENTS"),
-            ("instructions", "ORVEK_INSTRUCTIONS"),
-            ("append_instructions", "ORVEK_APPEND_INSTRUCTIONS"),
-            ("web_search", "ORVEK_WEB_SEARCH"),
-            ("image_generation", "ORVEK_IMAGE_GENERATION"),
             ("websocket_url", "ORVEK_WEBSOCKET_URL"),
             ("api_base_url", "ORVEK_API_BASE_URL"),
             ("resume", "ORVEK_RESUME"),

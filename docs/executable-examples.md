@@ -404,8 +404,6 @@ The existing `scripts/check-docs.py` still checks links and syntax separately.
 | [docs/configuration.md](../docs/configuration.md) #5 | illustrative | Handler path is a placeholder; runnable hook coverage is below. |
 | [docs/configuration.md](../docs/configuration.md) #6 | illustrative | Visual settings require an interactive terminal. |
 | [docs/configuration.md](../docs/configuration.md) #7 | illustrative | Skill paths are placeholders; memory_skills.py separately proves host catalog and on-demand body delivery. |
-| [docs/configuration.md](../docs/configuration.md) #8 | external-service | Downloads an MCP server and needs a real workspace path. |
-| [docs/configuration.md](../docs/configuration.md) #9 | external-service | Needs an external MCP service and credentials. |
 | [docs/event-intake.md](../docs/event-intake.md) #1 | illustrative | Registration requires existing source/session IDs and user-selected protected checks; real CLI tests supply isolated fixtures. |
 | [docs/event-intake.md](../docs/event-intake.md) #2 | illustrative | Commands depend on source.json, payload.json and an existing configured session; no HTTP server is implied. |
 | [docs/event-intake.md](../docs/event-intake.md) #3 | illustrative | Interval trigger fragment; deterministic cursor/catch-up tests and real CLI tests exercise scheduling. |

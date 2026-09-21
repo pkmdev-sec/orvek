@@ -275,10 +275,6 @@ impl HostClient {
         process
             .arg("--max-subagents")
             .arg(config.agent().max_subagents().to_string())
-            .arg("--web-search")
-            .arg(config.agent().web_search().to_string())
-            .arg("--image-generation")
-            .arg(config.agent().image_generation().to_string())
             .arg("host")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -417,14 +413,11 @@ fn configuration_identity_material(config: &Config) -> Result<serde_json::Value>
         "auth": config.auth(),
         "credential_identity": config.auth().credential_identity()?,
         "model_route_credentials": model_route_credential_identities(config)?,
-        "mcp": config.mcp_servers(),
         "memory": config.memory(),
         "skills": config.skills(),
         "children": config.subagents(),
         "max_children": config.agent().max_subagents(),
         "context_window_tokens": config.agent().context_window_tokens(),
-        "web_search": config.agent().web_search(),
-        "image_generation": config.agent().image_generation(),
         "completion_hook": config.agent().completion_hook().map(|command| json!({"version":1,"command":command})),
         "trace_recording_version": 1,
         "provider_transport_version": 2,

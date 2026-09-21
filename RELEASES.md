@@ -3,7 +3,6 @@
 Orvek currently ships from source. No Orvek crates, signed binaries, or container images are
 published. The release workflow is not ready until these prerequisites are complete:
 
-- Release or upstream the pinned Nanocodex extensions and update dependencies.
 - Resolve the `orvek-harness` dependency on the non-publishable, path-only
   `orvek-executor` crate. Choose and verify a publishable dependency graph before
   enabling crate publication; the current workflow does not publish these prerequisites.

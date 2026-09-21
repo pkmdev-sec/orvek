@@ -71,7 +71,10 @@ orvek-memory-cloudflare
 └── orvek-memory
 ```
 
-The workspace also patches the vendored `nanocodex-agent` and `nanocodex-oai-api` packages. External dependency relationships are present in the machine-readable graph.
+At the time of this review, the workspace patched vendored `nanocodex-agent` and
+`nanocodex-oai-api` packages. They were removed in the later maintainability-baseline change.
+External dependency relationships for the reviewed snapshot were present in its machine-readable
+graph.
 
 ### Generated module graph
 
