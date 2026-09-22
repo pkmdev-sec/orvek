@@ -3364,6 +3364,11 @@
     {
       "kind": "contains",
       "source": "directory:docs/design",
+      "target": "directory:docs/design/helix-storage-migration"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:docs/design",
       "target": "file:docs/design/autonomy-tracker.md"
     },
     {
@@ -3385,6 +3390,11 @@
       "kind": "contains",
       "source": "directory:docs/design",
       "target": "file:docs/design/harbor-durable-host.md"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:docs/design",
+      "target": "file:docs/design/macos-distribution.md"
     },
     {
       "kind": "contains",
@@ -3485,6 +3495,16 @@
       "kind": "contains",
       "source": "directory:docs/design/components",
       "target": "file:docs/design/components/transcript-v1.html"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:docs/design/helix-storage-migration",
+      "target": "file:docs/design/helix-storage-migration/01-structure-outline-helix-storage-migration.md"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:docs/design/helix-storage-migration",
+      "target": "file:docs/design/helix-storage-migration/02-handoff-helix-storage-migration.md"
     },
     {
       "kind": "contains",
@@ -4535,6 +4555,36 @@
       "kind": "links_to",
       "source": "file:docs/design/decisions.md",
       "target": "file:docs/design/tui-motion.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/helix-storage-migration/01-structure-outline-helix-storage-migration.md",
+      "target": "file:docs/design/helix-storage-migration/02-handoff-helix-storage-migration.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/helix-storage-migration/02-handoff-helix-storage-migration.md",
+      "target": "file:CODEBASE.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/helix-storage-migration/02-handoff-helix-storage-migration.md",
+      "target": "file:assets/capabilities.json"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/helix-storage-migration/02-handoff-helix-storage-migration.md",
+      "target": "file:docs/design/helix-storage-migration/01-structure-outline-helix-storage-migration.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/helix-storage-migration/02-handoff-helix-storage-migration.md",
+      "target": "file:docs/harness-host.md"
+    },
+    {
+      "kind": "links_to",
+      "source": "file:docs/design/helix-storage-migration/02-handoff-helix-storage-migration.md",
+      "target": "file:docs/harness-integration.md"
     },
     {
       "kind": "links_to",
@@ -13973,6 +14023,12 @@
       "path": "docs/design/components"
     },
     {
+      "id": "directory:docs/design/helix-storage-migration",
+      "kind": "directory",
+      "label": "helix-storage-migration",
+      "path": "docs/design/helix-storage-migration"
+    },
+    {
       "id": "directory:evals",
       "kind": "directory",
       "label": "evals",
@@ -16648,6 +16704,30 @@
     },
     {
       "file_kind": "documentation",
+      "id": "file:docs/design/helix-storage-migration/01-structure-outline-helix-storage-migration.md",
+      "kind": "file",
+      "label": "01-structure-outline-helix-storage-migration.md",
+      "lines": 593,
+      "path": "docs/design/helix-storage-migration/01-structure-outline-helix-storage-migration.md"
+    },
+    {
+      "file_kind": "documentation",
+      "id": "file:docs/design/helix-storage-migration/02-handoff-helix-storage-migration.md",
+      "kind": "file",
+      "label": "02-handoff-helix-storage-migration.md",
+      "lines": 268,
+      "path": "docs/design/helix-storage-migration/02-handoff-helix-storage-migration.md"
+    },
+    {
+      "file_kind": "documentation",
+      "id": "file:docs/design/macos-distribution.md",
+      "kind": "file",
+      "label": "macos-distribution.md",
+      "lines": 60,
+      "path": "docs/design/macos-distribution.md"
+    },
+    {
+      "file_kind": "documentation",
       "id": "file:docs/design/maintainability-baseline.md",
       "kind": "file",
       "label": "maintainability-baseline.md",
@@ -17131,7 +17211,7 @@
       "id": "file:examples/host-docs/reconnect.py",
       "kind": "file",
       "label": "reconnect.py",
-      "lines": 45,
+      "lines": 48,
       "path": "examples/host-docs/reconnect.py"
     },
     {
@@ -19820,34 +19900,34 @@
       "implemented": 21
     },
     "capability_exempt_components": 6,
-    "edges": 1984,
+    "edges": 1994,
     "files_by_kind": {
       "automation": 4,
       "binary-asset": 6,
       "cargo-manifest": 5,
       "ci-workflow": 3,
       "configuration": 21,
-      "documentation": 51,
+      "documentation": 54,
       "python-script": 53,
       "rust-source": 245,
       "supporting-file": 13,
       "typescript-source": 34,
       "web-asset": 20
     },
-    "nodes": 927,
+    "nodes": 931,
     "nodes_by_kind": {
       "capability": 24,
       "component": 14,
       "dependency": 57,
-      "directory": 75,
-      "file": 455,
+      "directory": 76,
+      "file": 458,
       "module": 249,
       "package": 4,
       "repository": 1,
       "target": 47,
       "workspace": 1
     },
-    "source_fingerprint": "38c0628a2b30f6d81e250e114b03f0f3b051674f6f43c3a390d4f4331ad56885",
+    "source_fingerprint": "d496b66fe5e946c80242322bd28aab07b9412e89f469d6702cbffee90d9abc14",
     "static_reference_coverage": {
       "rust_compile_time_includes": {
         "detected": 16,

@@ -41,7 +41,7 @@ def request(kind, **data):
     command = {"type": kind}
     if data:
         command["data"] = data
-    return {"version": 6, "id": str(uuid.uuid4()), "command": command}
+    return {"version": 7, "id": str(uuid.uuid4()), "command": command}
 
 
 def send_frame(stream, value):
@@ -173,7 +173,7 @@ class HostFixture:
                 except (ConnectionRefusedError, FileNotFoundError):
                     return None
             info = wait_until(ready)
-            assert info["protocol_version"] == 6
+            assert info["protocol_version"] == 7
             return self
         except BaseException:
             self.stack.close()
