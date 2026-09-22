@@ -119,7 +119,10 @@ async fn real_operator_socket_uses_the_host_owner_and_survives_client_reconnect(
         ipc::read_frame::<ipc::WatchFrame>(&mut watch)
             .await
             .unwrap(),
-        ipc::WatchFrame::Ready { after: 0 }
+        ipc::WatchFrame::Ready {
+            after: 0,
+            through: 0
+        }
     ));
     assert!(
         matches!(ipc::read_frame::<ipc::WatchFrame>(&mut watch).await.unwrap(), ipc::WatchFrame::Warnings { warnings } if warnings.is_empty())
@@ -152,7 +155,7 @@ async fn real_operator_socket_uses_the_host_owner_and_survives_client_reconnect(
     drop(watch);
     let mut watch = ipc::subscribe(&socket, cursor).await.unwrap();
     assert!(
-        matches!(ipc::read_frame::<ipc::WatchFrame>(&mut watch).await.unwrap(), ipc::WatchFrame::Ready { after } if after == cursor)
+        matches!(ipc::read_frame::<ipc::WatchFrame>(&mut watch).await.unwrap(), ipc::WatchFrame::Ready { after, through } if after == cursor && through == cursor)
     );
     assert!(
         matches!(ipc::read_frame::<ipc::WatchFrame>(&mut watch).await.unwrap(), ipc::WatchFrame::Warnings { warnings } if warnings.is_empty())
@@ -170,7 +173,7 @@ async fn real_operator_socket_uses_the_host_owner_and_survives_client_reconnect(
         ipc::call(&socket, &invalid, Duration::from_secs(5))
             .await
             .unwrap(),
-        Response::Error { .. }
+        Response::Error(envelope) if envelope.code == ipc::IpcErrorCode::UnsupportedProtocol && envelope.disposition == ipc::IpcErrorDisposition::Reject
     ));
     let mut second = create.clone();
     let Command::CreateSession { id: second_id, .. } = &mut second.command else {

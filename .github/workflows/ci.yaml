@@ -4,13 +4,14 @@ on:
     branches: [main]
   merge_group:
   pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   source-hygiene:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     name: Source hygiene
     steps:
       - name: Checkout sources
@@ -22,12 +23,14 @@ jobs:
       - name: Reject stale executable documentation
         run: python3 scripts/check-doc-examples.py --check
       - name: Test documentation checks and codebase graph generator
+        env:
+          ORVEK_CHECK_ID: graph-generator-tests
         run: python3 -m unittest discover -s scripts/tests -p "test_*.py"
-      - name: Reject stale codebase graph
+      - name: Reject stale capability and codebase graph
         run: python3 scripts/generate-codebase-graph.py --check
 
   evaluation-contracts:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     name: Evaluation contracts
     timeout-minutes: 10
     steps:
@@ -35,18 +38,33 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install uv
         run: pipx install uv==0.8.22
+      - name: Reject stale capability artwork
+        run: uv run scripts/generate-capability-diagram.py --check
       - name: Install locked evaluation dependencies
         run: uv sync --project evals --locked
       - name: Test Harbor adapter contracts
+        env:
+          ORVEK_CHECK_ID: eval-harbor-contracts
         run: uv run --project evals --frozen python -m unittest harbor_adapter.test_agent -v
       - name: Test SnapCompact accounting
+        env:
+          ORVEK_CHECK_ID: eval-snapcompact-contracts
         run: python3 -B -m unittest discover -s evals/snapcompact -p 'test_*.py' -v
-
+      - name: Test deterministic context-transition contracts
+        env:
+          ORVEK_CHECK_ID: eval-context-transition-contracts
+        run: python3 -B -m unittest discover -s evals/context_transitions -p 'test_*.py' -v
+      - name: Test deterministic incident-replay contracts
+        env:
+          ORVEK_CHECK_ID: eval-incident-replay-contracts
+        run: python3 -B -m unittest discover -s evals/incident_replay -p 'test_*.py' -v
+      - name: Smoke-test deterministic incident-replay generation
+        run: python3 -B evals/incident_replay/generate.py --output "${{ runner.temp }}/incident-replay"
   cache:
     uses: ./.github/workflows/cache.yaml
 
   review-web:
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     name: Review Web
     timeout-minutes: 10
     defaults:
@@ -71,52 +89,72 @@ jobs:
   cargo-tests:
     needs: cache
     runs-on: ${{ matrix.os }}
-    name: Tests (${{ matrix.os }})
+    name: Tests (${{ matrix.label }})
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-22.04
+            label: Ubuntu
+          - os: macos-15
+            label: macOS
     steps:
       - name: Checkout sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
       - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.97.1
+        with:
+          toolchain: 1.97.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: build
           save-if: false
-      - uses: taiki-e/install-action@just
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
+        with:
+          tool: just@1.43.1
+      - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
+        with:
+          tool: cargo-nextest@0.9.114
       - name: cargo test
+        env:
+          ORVEK_CHECK_ID: rust-locked-suite
         run: just test --locked
 
   docker-security:
     needs: cache
-    runs-on: ubuntu-latest
+    # Docker Desktop is not available on hosted macOS runners. This job tests
+    # the Linux guest used by the macOS Docker backend; it is not a Linux release.
+    runs-on: ubuntu-22.04
     name: Docker security integration
     timeout-minutes: 45
     env:
       ORVEK_EXECUTOR_HELPER: ${{ github.workspace }}/target/executor/orvek-executor-linux-x86_64
-      ORVEK_EXECUTOR_IMAGE: debian:bookworm-slim
-      ORVEK_WORKSPACE_TEST_IMAGE: debian:bookworm-slim
+      ORVEK_EXECUTOR_IMAGE: debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+      ORVEK_WORKSPACE_TEST_IMAGE: debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
     steps:
       - name: Checkout sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
       - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.97.1
+        with:
+          toolchain: 1.97.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: build
           save-if: false
-      - uses: taiki-e/install-action@just
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
+        with:
+          tool: just@1.43.1
+      - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
+        with:
+          tool: cargo-nextest@0.9.114
       - name: Pull the isolated runtime image
-        run: docker pull debian:bookworm-slim
+        run: docker pull "${ORVEK_EXECUTOR_IMAGE}"
       - name: Build the Linux executor helper
         run: sh crates/executor/build-linux.sh x86_64
       - name: Build the CLI for executable documentation
@@ -126,32 +164,46 @@ jobs:
       - name: Run all five host examples with sanitized export and replay assertions
         run: python3 -B scripts/doc-traces.py --generate --binary target/debug/orvek --output "${{ runner.temp }}/doc-traces"
       - name: Run ignored Docker tests across every workspace target
+        env:
+          ORVEK_CHECK_ID: docker-security-integration
         run: just test-docker --locked
+
+  evaluation-live:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    name: Manual live evaluation checks
+    steps:
+      - name: Manual classification marker
+        env:
+          ORVEK_CHECK_ID: eval-context-transition-sandbox
+        run: echo 'Live provider and Docker evaluations run only through an explicitly dispatched workflow.'
 
   cargo-build:
     needs: cache
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     name: Build (${{ matrix.toolchain }})
     timeout-minutes: 20
-    continue-on-error: ${{ matrix.toolchain != '1.97.0' }}
+    continue-on-error: ${{ matrix.toolchain != '1.97.1' }}
     strategy:
       fail-fast: false
       matrix:
-        toolchain: ["1.97.0", stable, nightly]
+        toolchain: ["1.97.1", "1.98.0", "nightly-2026-07-31"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
       - name: Install Rust ${{ matrix.toolchain }} toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: ${{ matrix.toolchain }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: build
           save-if: false
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
+        with:
+          tool: just@1.43.1
       - name: Check standalone orvek package
         run: cargo check --package orvek --locked
       - name: build
@@ -159,8 +211,8 @@ jobs:
 
   cargo-portability:
     needs: cache
-    runs-on: ubuntu-latest
-    name: Features + WebAssembly
+    runs-on: macos-15
+    name: Memory feature combinations
     timeout-minutes: 20
     steps:
       - name: Checkout sources
@@ -168,37 +220,25 @@ jobs:
         with:
           submodules: recursive
       - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.97.1
         with:
-          targets: wasm32-unknown-unknown
+          toolchain: 1.97.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: build
           save-if: false
-      - uses: taiki-e/install-action@cargo-hack
-      - uses: taiki-e/install-action@just
-      - name: Install Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
         with:
-          bun-version: 1.3.14
-      - name: Install Worker build tool
-        uses: taiki-e/install-action@v2
+          tool: cargo-hack@0.6.39
+      - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
         with:
-          tool: worker-build@0.8.5
+          tool: just@1.43.1
       - name: Check orvek-memory feature powerset
         run: just check-features
-      - name: Check Cloudflare Worker WebAssembly target
-        run: just check-wasm --locked
-      - name: Install Cloudflare Worker dependencies
-        run: npm ci --prefix examples/orvek-memory-cloudflare
-      - name: Test Cloudflare credential tooling
-        run: npm test --prefix examples/orvek-memory-cloudflare
-      - name: Bundle Cloudflare Worker
-        run: npm run deploy:check --prefix examples/orvek-memory-cloudflare
 
   cargo-lint:
     needs: cache
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     timeout-minutes: 20
     name: Clippy
     steps:
@@ -206,25 +246,29 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
+        with:
+          tool: just@1.43.1
       - name: Install Rust stable Clippy toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.97.1
         with:
           components: clippy
+          toolchain: 1.97.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: build
           save-if: false
       - name: Install Rust nightly formatting toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # nightly-2026-07-31
         with:
           components: rustfmt
+          toolchain: nightly-2026-07-31
       - name: fmt + lint
         run: just lint
 
   cargo-doc:
     needs: cache
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     name: Docs (lint + test)
     timeout-minutes: 20
     steps:
@@ -232,9 +276,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
+        with:
+          tool: just@1.43.1
       - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.97.1
+        with:
+          toolchain: 1.97.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: build
@@ -246,7 +294,7 @@ jobs:
 
   cargo-build-benches:
     needs: cache
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     timeout-minutes: 20
     name: Build Benchmarks
     continue-on-error: true
@@ -255,20 +303,18 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
+        with:
+          tool: just@1.43.1
       - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.97.1
+        with:
+          toolchain: 1.97.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: build
           save-if: false
       - name: build benches
+        env:
+          ORVEK_CHECK_ID: rust-bench-build
         run: cargo bench --no-run --all
-
-  benchmarks:
-    if: ${{ vars.ORVEK_ENABLE_CODSPEED == 'true' }}
-    needs: cache
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/codspeed.yml

@@ -1,6 +1,6 @@
 use crate::{
     MemoryCandidate, MemoryError, MemoryKey, MemoryLimits, MemoryRecord, MemoryScan, MemoryStore,
-    server::protocol,
+    model::MemoryRecordScope, server::protocol,
 };
 use protocol::{
     DeleteRequest, ErrorResponse, ExportRequest, ExportResponse, ListResponse, PutRequest,
@@ -248,17 +248,20 @@ impl RemoteMemoryClient {
                 return Err(RemoteClientError::InvalidResponse);
             }
             if !self.valid_candidate(&candidate) {
-                continue;
+                return Err(RemoteClientError::InvalidResponse);
             }
             if previous_score.is_some_and(|score| candidate.score > score) {
                 return Err(RemoteClientError::InvalidResponse);
             }
             previous_score = Some(candidate.score);
-            let Some(namespace) = candidate.key.namespace.clone() else {
-                continue;
-            };
+            let namespace = candidate.key.namespace.clone().unwrap();
             if !seen.insert((namespace, candidate.key.id)) {
                 return Err(RemoteClientError::InvalidResponse);
+            }
+            if candidate.metadata.reject_likely_secret().is_err()
+                || crate::secrets::contains_likely_secret(&candidate.preview)
+            {
+                continue;
             }
             candidates.push(candidate);
         }
@@ -309,6 +312,9 @@ impl RemoteMemoryClient {
         let mut seen = HashSet::new();
         let mut memories = Vec::new();
         for memory in response.memories {
+            memory
+                .validate(MemoryRecordScope::AnyRemote, &MemoryLimits::PRODUCTION)
+                .map_err(|_| RemoteClientError::InvalidResponse)?;
             if scope
                 .as_ref()
                 .is_some_and(|scope| !memory.metadata.visible_in(scope.repository.as_deref()))
@@ -318,7 +324,11 @@ impl RemoteMemoryClient {
             if !(requested.contains(&memory.key)
                 || (memory.key.namespace.as_deref() == Some(self.namespace())
                     && requested_ids.contains(&memory.key.id)))
-                || !Self::valid_record(&memory)
+            {
+                return Err(RemoteClientError::InvalidResponse);
+            }
+            if memory.metadata.reject_likely_secret().is_err()
+                || crate::secrets::contains_likely_secret(&memory.content)
             {
                 continue;
             }
@@ -339,13 +349,15 @@ impl RemoteMemoryClient {
         let mut seen = HashSet::new();
         let mut memories = Vec::new();
         for memory in response.memories {
-            if !Self::valid_record(&memory) {
+            memory
+                .validate(MemoryRecordScope::AnyRemote, &MemoryLimits::PRODUCTION)
+                .map_err(|_| RemoteClientError::InvalidResponse)?;
+            if memory.metadata.reject_likely_secret().is_err()
+                || crate::secrets::contains_likely_secret(&memory.content)
+            {
                 continue;
             }
-            let Some(namespace) = memory.key.namespace.clone() else {
-                continue;
-            };
-            let logical_key = (namespace, memory.key.id);
+            let logical_key = (memory.key.namespace.clone().unwrap(), memory.key.id);
             if !seen.insert(logical_key) {
                 return Err(RemoteClientError::InvalidResponse);
             }
@@ -380,7 +392,15 @@ impl RemoteMemoryClient {
                 Replay::ConnectOnly,
             )
             .await?;
-        if !Self::valid_record(&response.memory)
+        response
+            .memory
+            .validate(
+                MemoryRecordScope::Remote(self.namespace()),
+                &MemoryLimits::PRODUCTION,
+            )
+            .map_err(|_| RemoteClientError::InvalidResponse)?;
+        if response.memory.metadata.reject_likely_secret().is_err()
+            || crate::secrets::contains_likely_secret(&response.memory.content)
             || response.memory.key.namespace.as_deref() != Some(self.namespace())
             || response.memory.content != content
             || {
@@ -418,6 +438,11 @@ impl RemoteMemoryClient {
     }
 
     async fn sync(&self, memories: &[MemoryRecord]) -> Result<SyncReport, RemoteClientError> {
+        for memory in memories {
+            memory
+                .validate(MemoryRecordScope::Local, &MemoryLimits::PRODUCTION)
+                .map_err(|_| RemoteClientError::InvalidResponse)?;
+        }
         let report: SyncReport = self
             .post(
                 protocol::SYNC_PATH,
@@ -443,7 +468,7 @@ impl RemoteMemoryClient {
         accumulated_records: usize,
         accumulated_content_bytes: usize,
         response: &ExportResponse,
-    ) -> Result<usize, RemoteClientError> {
+    ) -> Result<(usize, Vec<MemoryRecord>), RemoteClientError> {
         if response.memories.len() > protocol::MAX_EXPORT_PAGE_RECORDS
             || accumulated_records
                 .checked_add(response.memories.len())
@@ -454,6 +479,7 @@ impl RemoteMemoryClient {
 
         let mut previous = cursor.cloned();
         let mut page_content_bytes = 0usize;
+        let mut visible = Vec::with_capacity(response.memories.len());
         for memory in &response.memories {
             let Some(namespace) = memory.key.namespace.as_deref() else {
                 return Err(RemoteClientError::InvalidResponse);
@@ -463,7 +489,10 @@ impl RemoteMemoryClient {
             let ordered = previous.as_ref().is_none_or(|previous| {
                 (namespace, memory.key.id) > (previous.namespace.as_str(), previous.id)
             });
-            if !Self::valid_record(memory) || !selected || !ordered {
+            memory
+                .validate(MemoryRecordScope::AnyRemote, &MemoryLimits::PRODUCTION)
+                .map_err(|_| RemoteClientError::InvalidResponse)?;
+            if !selected || !ordered {
                 return Err(RemoteClientError::InvalidResponse);
             }
 
@@ -480,6 +509,11 @@ impl RemoteMemoryClient {
                 namespace: namespace.to_owned(),
                 id: memory.key.id,
             });
+            if memory.metadata.reject_likely_secret().is_ok()
+                && !crate::secrets::contains_likely_secret(&memory.content)
+            {
+                visible.push(memory.clone());
+            }
         }
 
         if let Some(next_cursor) = &response.next_cursor {
@@ -491,7 +525,7 @@ impl RemoteMemoryClient {
                 return Err(RemoteClientError::InvalidResponse);
             }
         }
-        Ok(page_content_bytes)
+        Ok((page_content_bytes, visible))
     }
 
     fn valid_key(key: &MemoryKey) -> bool {
@@ -509,18 +543,17 @@ impl RemoteMemoryClient {
             && candidate.preview.len() <= 64
             && candidate.score.is_finite()
             && candidate.score >= 0.0
-            && !crate::secrets::contains_likely_secret(&candidate.preview)
     }
 
-    fn valid_record(memory: &MemoryRecord) -> bool {
-        memory.metadata.validate().is_ok()
-            && Self::valid_key(&memory.key)
-            && memory.key.namespace.is_some()
-            && !memory.content.trim().is_empty()
-            && memory.content.len() <= MemoryLimits::PRODUCTION.content_bytes
-            && memory.created_at_ms >= 0
-            && memory.updated_at_ms >= memory.created_at_ms
-            && !crate::secrets::contains_likely_secret(&memory.content)
+    fn validate_authored_content(
+        content: &str,
+        metadata: &crate::MemoryMetadata,
+    ) -> Result<(), MemoryError> {
+        crate::store::validate_authored_content(content, metadata, &MemoryLimits::PRODUCTION)
+    }
+
+    fn validate_authored_snapshot(memories: &[MemoryRecord]) -> Result<(), MemoryError> {
+        crate::store::validate_authored_snapshot(memories, &MemoryLimits::PRODUCTION)
     }
 
     async fn get<Response>(&self, path: &str, replay: Replay) -> Result<Response, RemoteClientError>
@@ -639,17 +672,25 @@ impl MemoryStore for RemoteMemoryClient {
         if response.memories.len() > protocol::MAX_EXPORT_PAGE_RECORDS {
             return Err(MemoryError::InvalidPagination);
         }
-        for record in &response.memories {
-            if !Self::valid_record(record)
-                || record.key.namespace.as_deref() != Some(self.namespace())
-                || record.key.id <= previous
-                || !query.matches(record)
-            {
+        let mut visible = Vec::with_capacity(response.memories.len());
+        for record in response.memories {
+            record
+                .validate(
+                    MemoryRecordScope::Remote(self.namespace()),
+                    &MemoryLimits::PRODUCTION,
+                )
+                .map_err(|_| MemoryError::backend(RemoteClientError::InvalidResponse))?;
+            if record.key.id <= previous || !query.matches(&record) {
                 return Err(MemoryError::InvalidPagination);
             }
             previous = record.key.id;
+            if record.metadata.reject_likely_secret().is_ok()
+                && !crate::secrets::contains_likely_secret(&record.content)
+            {
+                visible.push(record);
+            }
         }
-        Ok(response.memories)
+        Ok(visible)
     }
 
     fn scan(
@@ -703,9 +744,7 @@ impl MemoryStore for RemoteMemoryClient {
         replacement: Option<MemoryKey>,
     ) -> impl std::future::Future<Output = Result<MemoryRecord, MemoryError>> + Send {
         async move {
-            if content.trim().is_empty() {
-                return Err(MemoryError::EmptyContent);
-            }
+            Self::validate_authored_content(content, &crate::MemoryMetadata::default())?;
             Ok(RemoteMemoryClient::put(self, content, replacement.as_ref()).await?)
         }
     }
@@ -715,7 +754,7 @@ impl MemoryStore for RemoteMemoryClient {
         metadata: &crate::MemoryMetadata,
         replacement: Option<MemoryKey>,
     ) -> Result<MemoryRecord, MemoryError> {
-        metadata.validate()?;
+        Self::validate_authored_content(content, metadata)?;
         Ok(self
             .put_metadata(content, metadata, replacement.as_ref())
             .await?)
@@ -730,7 +769,10 @@ impl MemoryStore for RemoteMemoryClient {
         &self,
         memories: &[MemoryRecord],
     ) -> impl std::future::Future<Output = Result<SyncReport, MemoryError>> + Send {
-        async move { Ok(RemoteMemoryClient::sync(self, memories).await?) }
+        async move {
+            Self::validate_authored_snapshot(memories)?;
+            Ok(RemoteMemoryClient::sync(self, memories).await?)
+        }
     }
     fn export_page(
         &self,
@@ -744,22 +786,49 @@ impl MemoryStore for RemoteMemoryClient {
         let cursor = cursor.cloned();
         async move {
             let limit = limit.clamp(1, protocol::MAX_EXPORT_PAGE_RECORDS);
-            let response: ExportResponse = self
-                .post(
-                    protocol::EXPORT_PATH,
-                    &ExportRequest {
-                        namespaces: namespaces.clone(),
-                        cursor: cursor.clone(),
-                        limit,
-                    },
-                    Replay::Safe,
-                )
-                .await?;
-            if response.memories.len() > limit {
-                return Err(RemoteClientError::InvalidResponse.into());
+            let mut request_cursor = cursor;
+            let mut memories = Vec::new();
+            let mut raw_records = 0usize;
+            let mut raw_content_bytes = 0usize;
+            loop {
+                let remaining = limit - memories.len();
+                let response: ExportResponse = self
+                    .post(
+                        protocol::EXPORT_PATH,
+                        &ExportRequest {
+                            namespaces: namespaces.clone(),
+                            cursor: request_cursor.clone(),
+                            limit: remaining,
+                        },
+                        Replay::Safe,
+                    )
+                    .await?;
+                if response.memories.len() > remaining {
+                    return Err(RemoteClientError::InvalidResponse.into());
+                }
+                let response_records = response.memories.len();
+                let (page_bytes, visible) = Self::validate_export_page(
+                    namespaces.as_deref(),
+                    request_cursor.as_ref(),
+                    raw_records,
+                    raw_content_bytes,
+                    &response,
+                )?;
+                raw_records += response_records;
+                raw_content_bytes += page_bytes;
+                memories.extend(visible);
+                let Some(next_cursor) = response.next_cursor else {
+                    return Ok((memories, None));
+                };
+                let last_visible_is_cursor = memories.last().is_some_and(|memory| {
+                    memory.key.namespace.as_deref() == Some(next_cursor.namespace.as_str())
+                        && memory.key.id == next_cursor.id
+                });
+                if last_visible_is_cursor {
+                    return Ok((memories, Some(next_cursor)));
+                }
+                request_cursor = Some(next_cursor);
             }
-            Self::validate_export_page(namespaces.as_deref(), cursor.as_ref(), 0, 0, &response)?;
-            Ok((response.memories, response.next_cursor))
         }
     }
 }
@@ -886,7 +955,7 @@ mod tests {
         }
     }
 
-    fn invalid(result: Result<usize, RemoteClientError>) -> bool {
+    fn invalid<T>(result: Result<T, RemoteClientError>) -> bool {
         matches!(result, Err(RemoteClientError::InvalidResponse))
     }
 
@@ -952,7 +1021,8 @@ mod tests {
                 0,
                 &response(vec![memory("alpha", 1, "one")], Some(("alpha", 1))),
             )
-            .expect("valid page"),
+            .expect("valid page")
+            .0,
             3
         );
         assert!(invalid(RemoteMemoryClient::validate_export_page(
@@ -1003,7 +1073,8 @@ mod tests {
 
         assert_eq!(
             RemoteMemoryClient::validate_export_page(None, None, 0, 0, &first)
-                .expect("valid first page"),
+                .expect("valid first page")
+                .0,
             3
         );
         assert_eq!(
@@ -1014,7 +1085,8 @@ mod tests {
                 3,
                 &second,
             )
-            .expect("valid second page"),
+            .expect("valid second page")
+            .0,
             3
         );
         assert!(invalid(RemoteMemoryClient::validate_export_page(

@@ -394,8 +394,9 @@ The existing `scripts/check-docs.py` still checks links and syntax separately.
 | [README.md](../README.md) #1 | external-service | Downloads repository and crates; not isolated host behavior. |
 | [README.md](../README.md) #2 | external-service | Requires real authentication and an interactive terminal. |
 | [README.md](../README.md) #3 | external-service | Uses a live provider and existing user sessions. |
-| [README.md](../README.md) #4 | external-service | Downloads and installs a binary into the user environment. |
-| [README.md](../README.md) #5 | illustrative | Contributor checks; not an isolated capability scenario. |
+| [README.md](../README.md) #4 | external-service | Reads the user's real configuration and routes installation updates. |
+| [README.md](../README.md) #5 | external-service | Downloads and installs a binary into the user environment. |
+| [README.md](../README.md) #6 | illustrative | Contributor checks; not an isolated capability scenario. |
 | [docs/compaction.md](../docs/compaction.md) #1 | illustrative | Configuration fragment only; does not exercise context projection. |
 | [docs/configuration.md](../docs/configuration.md) #1 | illustrative | Memory configuration fragment; the memory_skills.py scenario separately proves host wiring. |
 | [docs/configuration.md](../docs/configuration.md) #2 | external-service | Needs user credentials and authentication service. |
@@ -404,8 +405,6 @@ The existing `scripts/check-docs.py` still checks links and syntax separately.
 | [docs/configuration.md](../docs/configuration.md) #5 | illustrative | Handler path is a placeholder; runnable hook coverage is below. |
 | [docs/configuration.md](../docs/configuration.md) #6 | illustrative | Visual settings require an interactive terminal. |
 | [docs/configuration.md](../docs/configuration.md) #7 | illustrative | Skill paths are placeholders; memory_skills.py separately proves host catalog and on-demand body delivery. |
-| [docs/configuration.md](../docs/configuration.md) #8 | external-service | Downloads an MCP server and needs a real workspace path. |
-| [docs/configuration.md](../docs/configuration.md) #9 | external-service | Needs an external MCP service and credentials. |
 | [docs/event-intake.md](../docs/event-intake.md) #1 | illustrative | Registration requires existing source/session IDs and user-selected protected checks; real CLI tests supply isolated fixtures. |
 | [docs/event-intake.md](../docs/event-intake.md) #2 | illustrative | Commands depend on source.json, payload.json and an existing configured session; no HTTP server is implied. |
 | [docs/event-intake.md](../docs/event-intake.md) #3 | illustrative | Interval trigger fragment; deterministic cursor/catch-up tests and real CLI tests exercise scheduling. |
@@ -432,5 +431,7 @@ The existing `scripts/check-docs.py` still checks links and syntax separately.
 | [docs/trace-bundles.md](../docs/trace-bundles.md) #2 | external-service | Experimental reexecution needs configured provider credentials and can run tools or incur cost in a fresh workspace. |
 | [docs/trace-bundles.md](../docs/trace-bundles.md) #3 | illustrative | Regeneration and validation commands require a built CLI and local Docker; CI executes the same generator with isolated output. |
 | [docs/tui-scrolling.md](../docs/tui-scrolling.md) #1 | illustrative | Contributor test commands; no terminal interaction is driven here. |
-| [docs/workspace-execution.md](../docs/workspace-execution.md) #1 | illustrative | Workspace placeholder and interactive session; native coverage is below. |
-| [docs/workspace-execution.md](../docs/workspace-execution.md) #2 | illustrative | Platform-specific manual sandbox setup; executable sandbox coverage is below. |
+| [docs/workspace-execution.md](../docs/workspace-execution.md) #1 | external-service | Requires real authentication and an interactive terminal. |
+| [docs/workspace-execution.md](../docs/workspace-execution.md) #2 | illustrative | Workspace placeholder and interactive session; native coverage is below. |
+| [docs/workspace-execution.md](../docs/workspace-execution.md) #3 | illustrative | Configuration fragment only; it does not start the sandbox runtime. |
+| [docs/workspace-execution.md](../docs/workspace-execution.md) #4 | external-service | Builds binaries and requires a local Docker service for the sandbox session. |

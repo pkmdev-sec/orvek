@@ -416,22 +416,13 @@ impl Store {
         session_id: SessionId,
         request: Uuid,
     ) -> Result<(SessionState, TaskState, bool), StoreError> {
-        self.continue_submission_record(session_id, request, true)
-    }
-
-    pub(crate) fn continue_submission_without_budget_limit(
-        &mut self,
-        session_id: SessionId,
-        request: Uuid,
-    ) -> Result<(SessionState, TaskState, bool), StoreError> {
-        self.continue_submission_record(session_id, request, false)
+        self.continue_submission_record(session_id, request)
     }
 
     fn continue_submission_record(
         &mut self,
         session_id: SessionId,
         request: Uuid,
-        enforce_budget: bool,
     ) -> Result<(SessionState, TaskState, bool), StoreError> {
         let submission = self.submission(session_id, request)?;
         let id = if let WorkIntent::Continue { task: id, .. } = submission.intent {
@@ -482,18 +473,15 @@ impl Store {
                 )
             })
             || task.model_reservations.iter().any(|call| {
-                !task.model_receipts.get(call).is_some_and(|receipt| {
-                    receipt.status != ModelCallStatus::Unknown
-                        && (!enforce_budget || receipt.tokens.is_some())
-                })
+                !task
+                    .model_receipts
+                    .get(call)
+                    .is_some_and(|receipt| receipt.status != ModelCallStatus::Unknown)
             })
         {
             return Err(StoreError::Invalid(
                 "reconcile unfinished jobs, effects and provider attempts before continuing",
             ));
-        }
-        if enforce_budget {
-            check_budget(&task)?;
         }
         if !task.directive_scopes.contains_key(&request) {
             append_task_event(
@@ -518,6 +506,7 @@ impl Store {
             },
             &self.artifacts,
         )?;
+        check_budget(&task)?;
         append_session_command(
             &transaction,
             &mut session,

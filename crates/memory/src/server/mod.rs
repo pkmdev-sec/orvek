@@ -5,9 +5,7 @@
 //! request timeouts, and concurrency limits. Backend implementations own durable transactions,
 //! indexing, capacity, telemetry, and stable export pagination.
 //!
-//! Production deployments can bind PlanetScale, Cloudflare, PostgreSQL, or another store through
-//! the same [crate::MemoryStore] contract. The workspace's `orvek-memory-cloudflare` package
-//! demonstrates a Cloudflare Worker backed by D1.
+//! Production deployments can bind a remote store through the same [crate::MemoryStore] contract.
 
 #[cfg(feature = "server")]
 mod credential;

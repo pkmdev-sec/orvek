@@ -19,12 +19,11 @@ client = ["dep:reqwest", "dep:rustls", "dep:tokio", "dep:url", "dep:zeroize"]
 local = ["dep:rustix", "dep:sha2", "dep:rusqlite", "dep:tokio", "dep:zeroize"]
 native-server = ["server", "dep:tokio", "tower/limit"]
 server = ["dep:axum", "dep:sha2", "dep:tower", "dep:tracing", "dep:web-time", "dep:zeroize"]
-tool = ["client", "local", "dep:nanocodex", "dep:zeroize"]
+tool = ["client", "local", "dep:zeroize"]
 
 [dependencies]
 axum = { workspace = true, optional = true }
 const_format.workspace = true
-nanocodex = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 rusqlite = { workspace = true, optional = true }
 rustix = { version = "1.1.4", features = ["fs", "process"], optional = true }
@@ -39,7 +38,7 @@ url = { workspace = true, optional = true }
 web-time = { workspace = true, optional = true }
 zeroize = { workspace = true, optional = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
 tokio = { workspace = true, optional = true }
 
 [dev-dependencies]

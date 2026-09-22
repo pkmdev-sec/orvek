@@ -434,6 +434,11 @@ impl Subagents {
         self.max_children.store(max_children, Ordering::Release);
     }
 
+    /// Whether parent subagent tools are enabled by the installed runtime policy.
+    pub(super) fn enabled(&self) -> bool {
+        self.enabled.load(Ordering::Acquire)
+    }
+
     /// Observer stream of child lifecycle events.
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<SubagentEvent> {
         self.events.subscribe()

@@ -6,19 +6,32 @@ use base64::Engine;
 use orvek_harness::{
     Channel, Digest, Store,
     admission::{RepositoryProfile, RequestPolicy},
+    auxiliary::{
+        AuxiliaryContext, AuxiliaryKind, AuxiliaryLimits, AuxiliaryRecord, AuxiliaryReport,
+        AuxiliarySpec, AuxiliaryStatus,
+    },
     contract::{DeliveryKind, Limits},
     controller::Host,
+    feedback::Disposition,
     inference::{
         Limits as InferenceLimits, ModelSettings, ResponsesClient, Route, Transport, UsdCost,
         auth::{Auth, SecretString},
     },
     input,
+    review::{FileKind, FrozenFile, FrozenTree, ReviewManifest, ReviewRange},
     session::{SessionAdmissionRequest, SessionCommand, SessionEvent, SessionId},
     state::{JobInvocation, JobStatus, Outcome},
-    submission::{Schedule, SubmitIntent, WorkIntent},
+    submission::{Schedule, SubmissionStatus, SubmitIntent, WorkIntent},
 };
+use rusqlite::{Connection, params};
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -215,6 +228,201 @@ async fn tool_output(host: &Host, session: SessionId, call_id: &str) -> Value {
     serde_json::from_str(entry["output"].as_str().unwrap()).unwrap()
 }
 
+fn request_tool_output(request: &Value, call_id: &str) -> Value {
+    let item = request["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|item| item["type"] == "function_call_output" && item["call_id"] == call_id)
+        .unwrap();
+    serde_json::from_str(item["output"].as_str().unwrap()).unwrap()
+}
+
+async fn wait_auxiliary_report(host: &Host, session: SessionId, request: Uuid) -> AuxiliaryReport {
+    let submission = timeout(Duration::from_secs(60), async {
+        loop {
+            let submission = host.submission(session, request).await.unwrap();
+            if !submission.status.pending() {
+                break submission;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(
+            submission.status,
+            SubmissionStatus::Finished {
+                task: None,
+                outcome: None,
+                error: None,
+            }
+        ),
+        "unexpected auxiliary status: {:?}",
+        submission.status
+    );
+    serde_json::from_slice(
+        &artifact_bytes(host, submission.result.expect("durable auxiliary report")).await,
+    )
+    .unwrap()
+}
+
+async fn auxiliary_tool_output(host: &Host, report: &AuxiliaryReport, call_id: &str) -> Value {
+    for digest in &report.records {
+        let record: AuxiliaryRecord =
+            serde_json::from_slice(&artifact_bytes(host, *digest).await).unwrap();
+        if let AuxiliaryRecord::ToolObserved {
+            call_id: observed,
+            output,
+            ..
+        } = record
+            && observed == call_id
+        {
+            return serde_json::from_slice(&artifact_bytes(host, output).await).unwrap();
+        }
+    }
+    panic!("missing auxiliary tool output for {call_id}");
+}
+
+struct ReviewFixture {
+    manifest: Digest,
+    source_identity: Digest,
+}
+
+fn review_fixture(state_root: &Path) -> ReviewFixture {
+    let store = Store::open(state_root).unwrap();
+    let artifacts = store.public_artifacts();
+    let before_content = artifacts.write(b"before\n").unwrap().digest();
+    let after_content = artifacts.write(b"after\n").unwrap().digest();
+    let before = FrozenTree {
+        version: 1,
+        files: BTreeMap::from([(
+            "note.txt".into(),
+            FrozenFile {
+                kind: FileKind::File,
+                mode: 0o100644,
+                permissions: Some(0o644),
+                content: before_content,
+                bytes: 7,
+                git_object: None,
+            },
+        )]),
+    };
+    let after = FrozenTree {
+        version: 1,
+        files: BTreeMap::from([(
+            "note.txt".into(),
+            FrozenFile {
+                kind: FileKind::File,
+                mode: 0o100644,
+                permissions: Some(0o644),
+                content: after_content,
+                bytes: 6,
+                git_object: None,
+            },
+        )]),
+    };
+    let before = artifacts
+        .write(&serde_json::to_vec(&before).unwrap())
+        .unwrap()
+        .digest();
+    let after = artifacts
+        .write(&serde_json::to_vec(&after).unwrap())
+        .unwrap()
+        .digest();
+    let patch = artifacts
+        .write(b"diff --git a/note.txt b/note.txt\n-before\n+after\n")
+        .unwrap()
+        .digest();
+    let range = ReviewRange::Snapshots { before, after };
+    let source_identity = Digest::of_value(&(
+        1u32,
+        &range,
+        &None::<String>,
+        &None::<String>,
+        before,
+        after,
+        patch,
+    ))
+    .unwrap();
+    let manifest = ReviewManifest {
+        version: 1,
+        source_identity,
+        repository: "fixture".into(),
+        range,
+        base_revision: None,
+        head_revision: None,
+        before,
+        after,
+        patch,
+        git_executable: Digest::of(b"fixture git"),
+        metadata_changes: vec![],
+    };
+    ReviewFixture {
+        manifest: artifacts
+            .write(&serde_json::to_vec(&manifest).unwrap())
+            .unwrap()
+            .digest(),
+        source_identity,
+    }
+}
+
+fn create_legacy_database(path: &Path) {
+    let connection = Connection::open(path).unwrap();
+    connection
+        .execute_batch(concat!(
+            "PRAGMA user_version=3;",
+            "CREATE TABLE sessions(",
+            "session_id TEXT PRIMARY KEY,",
+            "parent_session_id TEXT,",
+            "workspace TEXT NOT NULL,",
+            "model TEXT NOT NULL,",
+            "effort TEXT NOT NULL,",
+            "reasoning_mode TEXT NOT NULL,",
+            "fast_mode INTEGER NOT NULL,",
+            "application_version TEXT NOT NULL,",
+            "started_at_ms INTEGER NOT NULL,",
+            "updated_at_ms INTEGER NOT NULL,",
+            "preview TEXT NOT NULL);",
+            "CREATE TABLE events(",
+            "event_id INTEGER PRIMARY KEY AUTOINCREMENT,",
+            "session_id TEXT NOT NULL,",
+            "record_json BLOB NOT NULL,",
+            "prompt_text TEXT,",
+            "prompt_recorded_at_ms INTEGER,",
+            "assistant_stream TEXT);",
+            "CREATE TABLE resume_states(",
+            "session_id TEXT PRIMARY KEY,",
+            "state_zstd BLOB NOT NULL);",
+            "INSERT INTO sessions VALUES (",
+            "'old',NULL,'/old/workspace','gpt-5.6-sol',",
+            "'\"high\"','\"pro\"',0,'old',10,20,'Historical task');"
+        ))
+        .unwrap();
+    for (sequence, kind, payload) in [
+        (
+            1,
+            "session.started",
+            json!({"session_id":"old","workspace":"/old/workspace","model":"gpt-5.6-sol","effort":"high","reasoning_mode":"pro","fast_mode":false,"application_version":"old"}),
+        ),
+        (
+            2,
+            "user.submitted",
+            json!({"id":1,"text":"repair imported behavior"}),
+        ),
+    ] {
+        let record = json!({"schema_version":2,"sequence":sequence,"recorded_at_unix_ms":123,"source":"tact","type":kind,"payload":payload});
+        connection
+            .execute(
+                "INSERT INTO events(session_id,record_json) VALUES ('old',?1)",
+                params![serde_json::to_vec(&record).unwrap()],
+            )
+            .unwrap();
+    }
+}
+
 async fn provider_costs(host: &Host) -> Vec<Option<UsdCost>> {
     host.journal_page(0, 256)
         .await
@@ -275,6 +483,258 @@ impl Fixture {
         .unwrap()
         .id
     }
+}
+
+#[tokio::test]
+async fn auxiliary_review_tools_return_selected_frozen_data_and_effective_config() {
+    let fixture = Fixture::new();
+    let review = review_fixture(&fixture.state_root());
+    let (endpoint, server) = provider(vec![
+        vec![
+            function_call("fc_config", "call_config", "config_show", json!({})),
+            function_call(
+                "fc_config_invalid",
+                "call_config_invalid",
+                "config_show",
+                json!({"unexpected":true}),
+            ),
+            function_call("fc_aux_status", "call_aux_status", "task_status", json!({})),
+            function_call(
+                "fc_review",
+                "call_review",
+                "read_review",
+                json!({"limit":65536}),
+            ),
+            function_call(
+                "fc_review_files",
+                "call_review_files",
+                "list_review_files",
+                json!({"side":"after","limit":8}),
+            ),
+            function_call(
+                "fc_review_file",
+                "call_review_file",
+                "read_review_file",
+                json!({"side":"after","path":"note.txt","offset":1,"limit":3}),
+            ),
+            function_call(
+                "fc_review_missing",
+                "call_review_missing",
+                "read_review_file",
+                json!({"side":"after","path":"missing.txt","limit":8}),
+            ),
+        ],
+        vec![final_message("msg_review_done")],
+    ])
+    .await;
+    let host = fixture.open_host(&endpoint).await;
+    let session = fixture.admit_session(&host).await;
+    let request = Uuid::new_v4();
+    host.submit(
+        session,
+        request,
+        vec![json!({"type":"input_text","text":"Inspect the selected review"})],
+        SubmitIntent::Auxiliary {
+            spec: AuxiliarySpec {
+                kind: AuxiliaryKind::Question,
+                context: AuxiliaryContext::Clean,
+                review: Some(review.manifest),
+                limits: AuxiliaryLimits::default(),
+            },
+        },
+    )
+    .await
+    .unwrap();
+
+    let report = wait_auxiliary_report(&host, session, request).await;
+    assert_eq!(report.status, AuxiliaryStatus::Completed);
+    let config = auxiliary_tool_output(&host, &report, "call_config").await;
+    assert_eq!(config["workspace"], fixture.source.to_str().unwrap());
+    assert_eq!(config["host_config"], json!(Digest::of(b"config")));
+    assert!(config["executor"].is_null());
+    assert!(config["admission"].is_object());
+    assert!(
+        auxiliary_tool_output(&host, &report, "call_config_invalid").await["error"].is_string()
+    );
+    assert!(auxiliary_tool_output(&host, &report, "call_aux_status").await["error"].is_string());
+
+    let selected = auxiliary_tool_output(&host, &report, "call_review").await;
+    assert_eq!(
+        selected["manifest"]["source_identity"],
+        json!(review.source_identity)
+    );
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(selected["patch"]["data"].as_str().unwrap())
+            .unwrap(),
+        b"diff --git a/note.txt b/note.txt\n-before\n+after\n"
+    );
+    let files = auxiliary_tool_output(&host, &report, "call_review_files").await;
+    assert_eq!(files["total"], 1);
+    assert_eq!(files["files"][0][0], "note.txt");
+    assert_eq!(files["files"][0][1]["bytes"], 6);
+    let file = auxiliary_tool_output(&host, &report, "call_review_file").await;
+    assert_eq!(file["file"]["content"], files["files"][0][1]["content"]);
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(file["chunk"]["data"].as_str().unwrap())
+            .unwrap(),
+        b"fte"
+    );
+    assert_eq!(
+        auxiliary_tool_output(&host, &report, "call_review_missing").await,
+        json!({"missing":true})
+    );
+
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        request_tool_output(&requests[1], "call_review_file")["chunk"],
+        file["chunk"]
+    );
+    assert!(request_tool_output(&requests[1], "call_config_invalid")["error"].is_string());
+    assert!(request_tool_output(&requests[1], "call_aux_status")["error"].is_string());
+}
+
+#[tokio::test]
+async fn native_control_tools_report_task_state_and_attached_review_feedback() {
+    let fixture = Fixture::new();
+    let review = review_fixture(&fixture.state_root());
+    let setup = fixture.open_host("http://127.0.0.1:1/v1/responses").await;
+    let session = fixture.admit_session(&setup).await;
+    let feedback = setup
+        .record_review(
+            session,
+            Uuid::new_v4(),
+            review.manifest,
+            review.source_identity,
+            Disposition::Comment,
+            "human feedback".into(),
+        )
+        .await
+        .unwrap();
+    drop(setup);
+    let unattached = Digest::of(b"unattached feedback");
+    let (endpoint, server) = provider(vec![
+        vec![
+            function_call("fc_status", "call_status", "task_status", json!({})),
+            function_call(
+                "fc_status_invalid",
+                "call_status_invalid",
+                "task_status",
+                json!({"unexpected":true}),
+            ),
+            function_call(
+                "fc_feedback",
+                "call_feedback",
+                "read_review_feedback",
+                json!({"digest":feedback,"offset":6,"limit":8}),
+            ),
+            function_call(
+                "fc_feedback_denied",
+                "call_feedback_denied",
+                "read_review_feedback",
+                json!({"digest":unattached,"limit":8}),
+            ),
+        ],
+        vec![final_message("msg_control_done")],
+    ])
+    .await;
+    let host = fixture.open_host(&endpoint).await;
+    let request = Uuid::new_v4();
+    host.submit(
+        session,
+        request,
+        vec![json!({"type":"input_text","text":"Apply the attached review"})],
+        new_task_intent(),
+    )
+    .await
+    .unwrap();
+    let run = wait_submission(&host, session, request).await;
+    assert_eq!(run.task.outcome, Some(Outcome::FinishedUnverified));
+
+    let status = tool_output(&host, session, "call_status").await;
+    assert_eq!(status["request"], "Apply the attached review");
+    assert!(status["outcome"].is_null());
+    assert!(tool_output(&host, session, "call_status_invalid").await["error"].is_string());
+    let page = tool_output(&host, session, "call_feedback").await;
+    assert_eq!(page["feedback"], json!(feedback));
+    assert_eq!(page["source_identity"], json!(review.source_identity));
+    assert_eq!(page["disposition"], "comment");
+    assert_eq!(page["text"], "feedback");
+    assert_eq!(page["offset"], 6);
+    assert!(page["next"].is_null());
+    assert!(tool_output(&host, session, "call_feedback_denied").await["error"].is_string());
+
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        request_tool_output(&requests[1], "call_feedback")["text"],
+        "feedback"
+    );
+    assert!(request_tool_output(&requests[1], "call_feedback_denied")["error"].is_string());
+}
+
+#[tokio::test]
+async fn native_imported_task_reads_only_its_authorized_legacy_archive() {
+    let fixture = Fixture::new();
+    let database = fixture.directory.path().join("legacy.sqlite3");
+    create_legacy_database(&database);
+    let foreign = Digest::of(b"foreign archive");
+    let (endpoint, server) = provider(vec![
+        vec![
+            function_call("fc_legacy", "call_legacy", "read_legacy", json!({})),
+            function_call(
+                "fc_legacy_denied",
+                "call_legacy_denied",
+                "read_legacy",
+                json!({"cursor":{"manifest":foreign,"ordinal":0}}),
+            ),
+        ],
+        vec![final_message("msg_legacy_done")],
+    ])
+    .await;
+    let host = fixture.open_host(&endpoint).await;
+    let imported = host
+        .import_legacy_request(
+            Uuid::new_v4(),
+            database,
+            "old".into(),
+            SessionAdmissionRequest::new(
+                fixture.source.clone(),
+                ModelSettings::default(),
+                orvek_harness::context::DEFAULT_WINDOW_TOKENS,
+                Channel::Stable,
+            ),
+        )
+        .await
+        .unwrap();
+    let request = Uuid::new_v4();
+    host.submit(
+        imported.id,
+        request,
+        vec![json!({"type":"input_text","text":"Continue the imported task"})],
+        new_task_intent(),
+    )
+    .await
+    .unwrap();
+    let run = wait_submission(&host, imported.id, request).await;
+    assert_eq!(run.task.outcome, Some(Outcome::FinishedUnverified));
+
+    let legacy = tool_output(&host, imported.id, "call_legacy").await;
+    assert_eq!(legacy["page"]["total_records"], 2);
+    let submitted: Value =
+        serde_json::from_str(legacy["page"]["records"][1]["raw_json"].as_str().unwrap()).unwrap();
+    assert_eq!(submitted["payload"]["text"], "repair imported behavior");
+    assert!(tool_output(&host, imported.id, "call_legacy_denied").await["error"].is_string());
+
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        request_tool_output(&requests[1], "call_legacy")["page"]["total_records"],
+        2
+    );
+    assert!(request_tool_output(&requests[1], "call_legacy_denied")["error"].is_string());
 }
 
 #[tokio::test]
@@ -752,22 +1212,76 @@ async fn cancelled_provider_turn_can_continue_on_the_same_native_task() {
 
     assert_eq!(continued.task.id, cancelled.task.id);
     assert_eq!(continued.task.outcome, Some(Outcome::FinishedUnverified));
+    assert!(
+        continued.task.model_receipts.values().any(|receipt| {
+            receipt.status == orvek_harness::state::ModelCallStatus::Cancelled
+                && receipt.tokens.is_none()
+        }),
+        "continuation must not normalize uncertain cancelled usage to zero",
+    );
     assert_eq!(server.await.unwrap().len(), 2);
 }
 
 #[tokio::test]
-async fn native_primary_work_ignores_verification_budgets_and_evidence_invalidation() {
+async fn cancelled_provider_turn_reserves_unknown_usage_before_continuing() {
     let fixture = Fixture::new();
-    let outputs = vec![
-        vec![function_call(
-            "fc_exec",
-            "call_exec",
-            "exec_command",
-            json!({"command":"sleep 0.02; printf finished > long-running.txt"}),
-        )],
-        vec![final_message("msg_done")],
-        vec![final_message("msg_followup_done")],
-    ];
+    let (started, answer_started) = oneshot::channel();
+    let (endpoint, server) = scripted_provider(vec![ProviderReply::Stall(started)]).await;
+    let host = fixture.open_host(&endpoint).await;
+    let session = fixture.admit_session(&host).await;
+    let request = Uuid::new_v4();
+    let limits = Limits {
+        tokens: 1,
+        ..Limits::default()
+    };
+    host.submit(
+        session,
+        request,
+        vec![json!({"type":"input_text","text":"Start bounded work"})],
+        SubmitIntent::NewTask {
+            limits,
+            policy: policy(),
+        },
+    )
+    .await
+    .unwrap();
+
+    answer_started.await.unwrap();
+    assert!(host.cancel(session).await);
+    let cancelled = wait_submission(&host, session, request).await;
+
+    let followup = Uuid::new_v4();
+    host.submit(
+        session,
+        followup,
+        vec![json!({"type":"input_text","text":"Continue within the budget"})],
+        SubmitIntent::Continue {
+            task: cancelled.task.id,
+            scope_revision: cancelled.task.scope_revision,
+            schedule: Schedule::Queue,
+        },
+    )
+    .await
+    .unwrap();
+    let continued = wait_submission(&host, session, followup).await;
+
+    assert_eq!(continued.task.outcome, Some(Outcome::BudgetExhausted));
+    assert!(continued.task.model_receipts.values().any(|receipt| {
+        receipt.status == orvek_harness::state::ModelCallStatus::Cancelled
+            && receipt.tokens.is_none()
+    }));
+    assert_eq!(server.await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn native_primary_work_stops_when_declared_budgets_are_exhausted() {
+    let fixture = Fixture::new();
+    let outputs = vec![vec![function_call(
+        "fc_exec",
+        "call_exec",
+        "exec_command",
+        json!({"command":"printf should-not-run > over-budget.txt"}),
+    )]];
     let (endpoint, server) = provider(outputs).await;
     let host = fixture.open_host(&endpoint).await;
     let session = fixture.admit_session(&host).await;
@@ -780,7 +1294,7 @@ async fn native_primary_work_ignores_verification_budgets_and_evidence_invalidat
             limits: Limits {
                 model_calls: 1,
                 tokens: 1,
-                elapsed_ms: 1,
+                elapsed_ms: 60_000,
                 ..Limits::default()
             },
             policy: policy(),
@@ -790,33 +1304,11 @@ async fn native_primary_work_ignores_verification_budgets_and_evidence_invalidat
     .unwrap();
     let run = wait_submission(&host, session, request).await;
 
-    assert_eq!(run.task.outcome, Some(Outcome::FinishedUnverified));
-    assert!(run.task.usage.model_calls > run.task.limits().model_calls);
+    assert_eq!(run.task.outcome, Some(Outcome::BudgetExhausted));
+    assert_eq!(run.task.usage.model_calls, run.task.limits().model_calls);
     assert!(run.task.usage.tokens > run.task.limits().tokens);
-    assert_eq!(run.task.generation, 1);
-    assert_eq!(
-        fs::read_to_string(fixture.source.join("long-running.txt")).unwrap(),
-        "finished"
-    );
-
-    let followup = Uuid::new_v4();
-    host.submit(
-        session,
-        followup,
-        vec![json!({"type":"input_text","text":"Continue after the limits are exhausted"})],
-        SubmitIntent::Continue {
-            task: run.task.id,
-            scope_revision: run.task.scope_revision,
-            schedule: Schedule::Queue,
-        },
-    )
-    .await
-    .unwrap();
-    let continued = wait_submission(&host, session, followup).await;
-    assert_eq!(continued.task.id, run.task.id);
-    assert_eq!(continued.task.outcome, Some(Outcome::FinishedUnverified));
-    assert!(continued.task.usage.model_calls > run.task.usage.model_calls);
-    server.await.unwrap();
+    assert!(!fixture.source.join("over-budget.txt").exists());
+    assert_eq!(server.await.unwrap().len(), 1);
 }
 
 #[tokio::test]

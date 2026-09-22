@@ -16,6 +16,8 @@ Settled successful tool output can have two representations:
 
 The append-only session journal remains authoritative. A projection does not delete, summarize, or rewrite history. `ContextProjected` records only a derived view and its deterministic source manifest.
 
+When history exceeds a bounded request, Orvek divides active work into deterministic cache epochs at complete item boundaries. Each epoch reserves an append allowance derived from the configured maximum model output, fills the remaining space with the newest complete history suffix, and then appends current work without rewriting the prompt. A function call and its output stay in the same unit. Crossing the append allowance starts a new epoch: its first request establishes a new prefix, and later requests append to that prefix. Omission notices are fixed for the epoch, and all omitted records remain available through `read_context`. This avoids retaining older settled history by evicting newer context.
+
 ## Selection and fallback
 
 The host renders eligible settled output after its first native use. It stores immutable pages and exact source bytes in the artifact store. Later requests can reuse those artifacts after appends, resume, or restart.

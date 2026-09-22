@@ -4,6 +4,10 @@
 **Reviewed revision:** `98ae1e120dc0253917a70108c918846e5058b0de` (`feat/language-agnostic-sloppiness`)  
 **Review date:** 2026-09-19
 
+This is a historical snapshot. The later macOS distribution change removed the standalone
+Cloudflare/WASM example and Linux release artifacts; its findings remain evidence for the reviewed
+revision, not a current component inventory.
+
 ## Executive summary
 
 Orvek has strong authority boundaries. The harness owns durable task state, provider calls, sandbox execution, verification, and delivery. Frontends consume the host protocol instead of duplicating that authority. The repository also has broad automated coverage: the full Rust suite, clippy, formatting, web tests, graph checks, documentation checks, and component wiring audit all passed.
@@ -71,7 +75,10 @@ orvek-memory-cloudflare
 └── orvek-memory
 ```
 
-The workspace also patches the vendored `nanocodex-agent` and `nanocodex-oai-api` packages. External dependency relationships are present in the machine-readable graph.
+At the time of this review, the workspace patched vendored `nanocodex-agent` and
+`nanocodex-oai-api` packages. They were removed in the later maintainability-baseline change.
+External dependency relationships for the reviewed snapshot were present in its machine-readable
+graph.
 
 ### Generated module graph
 

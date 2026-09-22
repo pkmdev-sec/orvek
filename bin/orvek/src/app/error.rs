@@ -35,6 +35,8 @@ pub(crate) enum Error {
     ExternalEditor(#[from] ExternalEditorError),
     #[error("host request: {0}")]
     HostRequest(String),
+    #[error("host application: {0:?}")]
+    HostApplication(orvek_harness::ipc::IpcErrorEnvelope),
     #[error(transparent)]
     Inference(#[from] FailureKind),
     #[error(transparent)]
@@ -163,22 +165,8 @@ pub(crate) enum ConfigError {
         "legacy compaction strategy `{0}` is no longer supported; use `provider` context projection"
     )]
     UnsupportedCompactionStrategy(String),
-    #[error("MCP server `{name}` is already configured")]
-    McpServerExists { name: String },
-    #[error("MCP server `{name}` has an invalid URL: {source}")]
-    McpUrl {
-        name: String,
-        #[source]
-        source: McpUrlError,
-    },
     #[error(transparent)]
     RemoteMemory(#[from] RemoteMemoryConfigError),
-    #[error("MCP environment variable {name} is not set")]
-    McpEnvironmentNotPresent { name: String },
-    #[error("MCP environment variable {name} is not valid Unicode")]
-    McpEnvironmentNotUnicode { name: String },
-    #[error("MCP server working directory is not valid Unicode: {0}")]
-    McpWorkingDirectoryNotUnicode(PathBuf),
     #[error("failed to update configuration file {path}: {source}")]
     UpdateParse {
         path: PathBuf,
@@ -194,7 +182,7 @@ pub(crate) enum ConfigError {
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum McpUrlError {
+pub(crate) enum EndpointUrlError {
     #[error("the URL must not be empty or whitespace-only")]
     Empty,
     #[error("the URL is not valid")]
@@ -214,7 +202,7 @@ pub(crate) enum RemoteMemoryConfigError {
     )]
     Incomplete,
     #[error("remote memory endpoint is invalid: {0}")]
-    Endpoint(#[source] McpUrlError),
+    Endpoint(#[source] EndpointUrlError),
     #[error("remote memory namespace must be non-empty and have no leading or trailing whitespace")]
     NamespaceWhitespace,
     #[error("remote memory namespace must not contain control characters")]

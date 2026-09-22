@@ -5,7 +5,7 @@ settings with secrets redacted. The file is optional.
 
 ## Capabilities
 
-### Configuration, authentication, skills, and MCP
+### Configuration, authentication, and skills
 
 Orvek reads an optional TOML file and applies CLI overrides before environment and file settings.
 Use the [path and precedence reference](#paths-and-precedence) to select a configuration directory.
@@ -13,9 +13,8 @@ Use the [path and precedence reference](#paths-and-precedence) to select a confi
 executable helper for short-lived keys. The default host runtime runs tools with your permissions;
 see [Agent settings](#agent-settings) for the optional Docker runtime and model controls.
 
-[Skills](#skills) add trusted local `SKILL.md` instructions. [MCP tools](#mcp-tools) connect local
-stdio or remote servers. Skills can direct tool execution, and local MCP environment values can
-place secrets in the config file. Review those trust and credential requirements before enabling them.
+[Skills](#skills) add trusted local `SKILL.md` instructions. Skills can direct tool execution, so
+review their trust requirements before enabling them.
 
 ### Sessions, review, and reflection
 
@@ -104,8 +103,8 @@ work; frame-rate limits do not guarantee throughput.
 
 Forks retain the root session's provider cache-routing key so an exact shared prefix can be reused.
 Diverged content remains separate, and a cache miss processes the complete projected request. See
-[Performance notes](performance.md) for local benchmarks and optional CodSpeed setup. Those benchmarks
-measure rendering, not model latency or task success.
+[Performance notes](performance.md) for local benchmarks. Those benchmarks measure rendering, not
+model latency or task success.
 
 ### Evaluations
 
@@ -304,8 +303,8 @@ See [Local and remote memory](#local-and-remote-memory) for opt-in storage setup
 [Context projection and legacy compaction data](#context-projection-and-legacy-compaction-data)
 for automatic request views and model-window settings.
 
-Changes to agent tools and instructions apply to new or restored sessions. Reloading configuration
-does not replace a running agent's tool set.
+Changes to skills apply at the next provider-turn boundary. Existing session authority and admitted
+runtime tools remain unchanged.
 
 ## Themes
 
@@ -333,31 +332,6 @@ roots = ["skills", "/path/to/shared-skills"]
 Orvek also searches `$CODEX_HOME/skills` or `~/.codex/skills`, and `~/.agents/skills`. Type `$` in
 the composer to select a skill. New sessions discover current files; restored sessions retain
 their original catalog. Skills can direct tool execution, so treat them as executable guidance.
-
-## MCP tools
-
-Add a local stdio server:
-
-```sh
-orvek mcp add filesystem -- \
-  npx -y @modelcontextprotocol/server-filesystem /path/to/workspace
-```
-
-Use `--cwd PATH` for its working directory. `--env NAME` before `--` copies an environment value
-into the server configuration. That file then contains the secret, even though `config show`
-redacts it.
-
-Remote servers reference environment variables instead of storing their values:
-
-```sh
-orvek mcp add docs --url https://example.com/mcp \
-  --bearer-token-env-var DOCS_MCP_TOKEN \
-  --header-env X-Tenant-ID=DOCS_TENANT_ID
-```
-
-Remote URLs must use HTTPS without embedded credentials. Plain HTTP is accepted only for
-loopback addresses. A failed server does not prevent
-other servers or the session from starting.
 
 ## Package ownership
 

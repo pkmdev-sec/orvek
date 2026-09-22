@@ -8,6 +8,5 @@ Modifications include local bitmap context compaction, exact source archival and
 Orvek product/package branding, the faceted terminal identity, event-driven activity art, and
 repository/distribution configuration. Source attribution is retained in this notice and the dependency notices.
 
-Nanocodex dependency provenance and licenses are retained in vendor/README.md, vendor/LICENSE-MIT
-and vendor/LICENSE-APACHE. The bitmap font has its own public-domain provenance and license beside
-its source asset. These notices do not claim ownership of third-party components.
+The bitmap font has its own public-domain provenance and license beside its source asset. These
+notices do not claim ownership of third-party components.

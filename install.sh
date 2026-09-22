@@ -21,23 +21,11 @@ esac
 
 operating_system=$(uname -s)
 architecture=$(uname -m)
-if [ "$operating_system" = Linux ]; then
-    libc=$(getconf GNU_LIBC_VERSION 2>/dev/null || true)
-    case "$libc" in
-        glibc\ *) ;;
-        *)
-            echo "error: orvek releases require a glibc-based Linux system" >&2
-            exit 1
-            ;;
-    esac
-fi
 case "$operating_system:$architecture" in
-    Linux:x86_64 | Linux:amd64) target="x86_64-unknown-linux-gnu" ;;
-    Linux:aarch64 | Linux:arm64) target="aarch64-unknown-linux-gnu" ;;
     Darwin:x86_64 | Darwin:amd64) target="x86_64-apple-darwin" ;;
     Darwin:arm64 | Darwin:aarch64) target="aarch64-apple-darwin" ;;
     *)
-        echo "error: orvek releases do not support $operating_system $architecture" >&2
+        echo "error: orvek releases support macOS only, not $operating_system $architecture" >&2
         exit 1
         ;;
 esac

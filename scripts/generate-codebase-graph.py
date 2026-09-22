@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import re
 import subprocess
@@ -24,6 +25,11 @@ GRAPH_DIRECTORY = Path("docs/codebase-graph")
 GRAPH_PATH = GRAPH_DIRECTORY / "graph.json"
 DOT_PATH = GRAPH_DIRECTORY / "architecture.dot"
 DERIVED_PATHS = {GRAPH_PATH, DOT_PATH}
+CAPABILITY_LEDGER_PATH = Path("assets/capabilities.json")
+FINGERPRINT_EXCLUDED_PATHS = DERIVED_PATHS | {
+    Path("assets/orvex-differentiators.gif"),
+    Path("assets/orvex-differentiators.png"),
+}
 # During local development these authored inputs are untracked until the patch is
 # committed. Include them now so the generated graph is identical before and
 # after that commit.
@@ -31,9 +37,18 @@ AUTHORED_GRAPH_INPUTS = (
     Path("CODEBASE.md"),
     GRAPH_DIRECTORY / "README.md",
     GRAPH_DIRECTORY / "overview.md",
+    Path("docs/design/maintainability-baseline.md"),
     Path("scripts/generate-codebase-graph.py"),
     Path("scripts/tests/test_generate_codebase_graph.py"),
+    Path("evals/incident_replay/test_contracts.py"),
+    Path(".github/workflows/ci.yaml"),
+    Path(".github/workflows/cache.yaml"),
+    Path(".github/workflows/release.yaml"),
+    Path("docker/development.dockerfile"),
     Path("crates/harness/benches/event_replay.rs"),
+    Path("bin/orvek/src/tui/file_index.rs"),
+    Path("bin/orvek/src/tui/event_loop.rs"),
+    Path("crates/harness/src/controller/task_phases.rs"),
 )
 
 MOD_RE = re.compile(
@@ -59,6 +74,7 @@ COMPONENTS: tuple[dict[str, Any], ...] = (
         "summary": "Parses commands, loads configuration and dispatches terminal, headless, host, memory and review flows.",
         "files": ("bin/orvek/src/main.rs", "bin/orvek/src/app/cli.rs", "bin/orvek/src/app/config.rs"),
     },
+
     {
         "id": "component:session-assembly",
         "label": "Session assembly",
@@ -170,6 +186,7 @@ NODE_KIND_DESCRIPTIONS = {
     "target": "A Rust target group inferred from explicit Cargo declarations and conventional source locations.",
     "module": "A Rust module inferred from a source path.",
     "component": "A curated architectural responsibility spanning one or more files.",
+    "capability": "A source-backed product capability with an explicit status, owner, executable path, proof and documentation.",
 }
 
 EDGE_KIND_DESCRIPTIONS = {
@@ -198,7 +215,107 @@ EDGE_KIND_DESCRIPTIONS = {
     "manages": "The source component manages the target capability through its command surface.",
     "uses": "The source component uses the target capability directly.",
     "packages_and_evaluates": "The source component packages or evaluates the target component.",
+    "owned_by": "The source capability belongs to the target architectural component.",
+    "entered_through": "The source capability is reached through the target file.",
+    "dispatched_by": "The source capability executes through the target file.",
+    "persisted_by": "The source capability stores durable state through the target file.",
+    "proved_by": "The source capability has focused behavioral evidence in the target file.",
+    "documented_by": "The source capability is documented by the target file.",
 }
+
+CAPABILITY_REFERENCE_EDGES = {
+    "entrypoints": "entered_through",
+    "dispatchers": "dispatched_by",
+    "persistence": "persisted_by",
+    "proof": "proved_by",
+    "documentation": "documented_by",
+}
+CAPABILITY_STATUSES = {"implemented", "config_only", "experimental"}
+CAPABILITY_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+CI_WORKFLOW_PATH = Path(".github/workflows/ci.yaml")
+PROOF_MODES = {"ci", "manual", "scheduled"}
+
+
+def ci_owned_checks(contents: dict[Path, str | None]) -> dict[str, str]:
+    content = contents.get(CI_WORKFLOW_PATH)
+    if content is None:
+        raise ValueError(f"CI workflow is missing: {CI_WORKFLOW_PATH}")
+    checks: dict[str, str] = {}
+    current_job: str | None = None
+    step_lines: list[str] = []
+
+    def register_step() -> None:
+        nonlocal step_lines
+        if not step_lines:
+            return
+        check_ids: list[str] = []
+        has_run = False
+        for line in step_lines:
+            if re.fullmatch(r"\s+(?:-\s+)?run:\s*(?:\S.*)?", line):
+                has_run = True
+            check_match = re.fullmatch(
+                r"\s+ORVEK_(?:ADDITIONAL_)?CHECK_IDS?: ([a-z][a-z0-9,-]*)", line
+            )
+            if check_match:
+                check_ids.extend(check_match.group(1).split(","))
+        if check_ids and not has_run:
+            raise ValueError(
+                f"CI check IDs {', '.join(check_ids)} in job {current_job} have no run command in their step"
+            )
+        for check_id in check_ids:
+            if check_id in checks:
+                raise ValueError(f"duplicate CI check ID: {check_id}")
+            assert current_job is not None
+            checks[check_id] = current_job
+        step_lines = []
+
+    for line in content.splitlines():
+        job_match = re.fullmatch(r"  ([a-z][a-z0-9-]*):", line)
+        if job_match:
+            register_step()
+            current_job = job_match.group(1)
+            continue
+        step_match = re.fullmatch(r"      - (?:\S.*)?", line)
+        if step_match:
+            register_step()
+        if current_job is not None and (step_lines or step_match):
+            step_lines.append(line)
+    register_step()
+    return checks
+
+
+def validate_capability_proof(
+    capability_id: str,
+    proof: Any,
+    files: set[Path],
+    contents: dict[Path, str | None],
+    checks: dict[str, str],
+) -> None:
+    expected = {"path", "anchor", "check_id", "ci_job", "platform", "features", "mode"}
+    if not isinstance(proof, dict) or set(proof) != expected:
+        raise ValueError(f"capability {capability_id} proof registration is invalid")
+    validate_capability_reference(
+        capability_id,
+        "proof",
+        {"path": proof.get("path"), "anchor": proof.get("anchor")},
+        files,
+        contents,
+    )
+    check_id = proof.get("check_id")
+    ci_job = proof.get("ci_job")
+    if not isinstance(check_id, str) or check_id not in checks:
+        raise ValueError(f"capability {capability_id} proof check ID {check_id!r} is absent from CI-owned commands")
+    if ci_job != checks[check_id]:
+        raise ValueError(f"capability {capability_id} proof check ID {check_id!r} belongs to CI job {checks[check_id]!r}, not {ci_job!r}")
+    if proof.get("mode") not in PROOF_MODES:
+        raise ValueError(f"capability {capability_id} proof has invalid verification mode")
+    if not isinstance(proof.get("platform"), str) or not proof["platform"].strip():
+        raise ValueError(f"capability {capability_id} proof has no platform")
+    features = proof.get("features")
+    if not isinstance(features, list) or not features or not all(
+        isinstance(feature, str) and feature.strip() for feature in features
+    ):
+        raise ValueError(f"capability {capability_id} proof has invalid features")
 
 
 def relative(path: Path) -> Path:
@@ -214,6 +331,267 @@ def text_or_none(path: Path) -> str | None:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         return None
+
+
+def source_fingerprint(paths: Iterable[Path]) -> str:
+    """Identify the exact authored input snapshot without hashing derived outputs."""
+    digest = hashlib.sha256()
+    for path in sorted(set(paths) - FINGERPRINT_EXCLUDED_PATHS, key=lambda item: item.as_posix()):
+        digest.update(path.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update((ROOT / path).read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def validate_capability_reference(
+    capability_id: str,
+    field: str,
+    reference: Any,
+    files: set[Path],
+    contents: dict[Path, str | None],
+) -> Path:
+    if not isinstance(reference, dict) or set(reference) != {"path", "anchor"}:
+        raise ValueError(
+            f"capability {capability_id} {field} reference must contain path and anchor"
+        )
+    path_value = reference.get("path")
+    anchor = reference.get("anchor")
+    if not isinstance(path_value, str) or not path_value or not isinstance(anchor, str) or not anchor:
+        raise ValueError(f"capability {capability_id} {field} reference is invalid")
+    path = Path(path_value)
+    if path not in files:
+        raise ValueError(f"capability {capability_id} {field} references missing file {path}")
+    content = contents.get(path)
+    if content is None:
+        raise ValueError(f"capability {capability_id} {field} references non-text file {path}")
+    if anchor not in content:
+        raise ValueError(
+            f"capability {capability_id} {field} anchor {anchor!r} is missing from {path}"
+        )
+    return path
+
+
+def reference_identity(reference: dict[str, str]) -> tuple[str, str]:
+    return reference["path"], reference["anchor"]
+
+
+def anchored_scope(path: Path, content: str, anchor: str) -> str:
+    """Return the formatted function/method body introduced by one exact anchor."""
+    if content.count(anchor) != 1:
+        raise ValueError(f"execution scope anchor must occur exactly once in {path}: {anchor}")
+    position = content.index(anchor)
+    line_start = content.rfind("\n", 0, position) + 1
+    lines = content[line_start:].splitlines(keepends=True)
+    indentation = len(lines[0]) - len(lines[0].lstrip(" \t"))
+    if path.suffix == ".py":
+        line_number = content.count("\n", 0, line_start) + 1
+        functions = [
+            node
+            for node in ast.walk(ast.parse(content))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.lineno == line_number
+        ]
+        if len(functions) != 1:
+            raise ValueError(f"execution scope is not a Python function in {path}: {anchor}")
+        function = functions[0]
+        assert function.end_lineno is not None
+        return "".join(content.splitlines(keepends=True)[function.lineno - 1 : function.end_lineno])
+    else:
+        end = next(
+            (
+                index + 1
+                for index, line in enumerate(lines[1:], 1)
+                if line.strip() == "}"
+                and len(line) - len(line.lstrip(" \t")) == indentation
+            ),
+            None,
+        )
+        if end is None:
+            raise ValueError(f"execution scope is not a formatted block in {path}: {anchor}")
+    return "".join(lines[:end])
+
+
+def validate_execution_paths(
+    capability_id: str,
+    execution_paths: Any,
+    references: dict[str, list[Any]],
+    files: set[Path],
+    contents: dict[Path, str | None],
+) -> None:
+    if not isinstance(execution_paths, list) or not execution_paths:
+        raise ValueError(f"capability {capability_id} has no execution paths")
+    entrypoints = {reference_identity(reference) for reference in references["entrypoints"]}
+    dispatchers = {reference_identity(reference) for reference in references["dispatchers"]}
+    reached_dispatchers: set[tuple[str, str]] = set()
+    for path_index, execution_path in enumerate(execution_paths):
+        if not isinstance(execution_path, list) or len(execution_path) < 2:
+            raise ValueError(
+                f"capability {capability_id} execution path {path_index} must have at least two steps"
+            )
+        steps: list[tuple[str, str]] = []
+        for step_index, step in enumerate(execution_path):
+            expected_fields = {"path", "anchor"} if step_index == len(execution_path) - 1 else {
+                "path",
+                "anchor",
+                "call",
+            }
+            if not isinstance(step, dict) or set(step) != expected_fields:
+                raise ValueError(
+                    f"capability {capability_id} execution path {path_index} step {step_index} is invalid"
+                )
+            reference = {"path": step.get("path"), "anchor": step.get("anchor")}
+            source = validate_capability_reference(
+                capability_id, "execution_paths", reference, files, contents
+            )
+            steps.append(reference_identity(reference))
+            if step_index < len(execution_path) - 1:
+                call = step.get("call")
+                if not isinstance(call, str) or not call:
+                    raise ValueError(
+                        f"capability {capability_id} execution path {path_index} has no callsite"
+                    )
+                scope = anchored_scope(source, contents[source] or "", reference["anchor"])
+                if call not in scope:
+                    raise ValueError(
+                        f"capability {capability_id} execution call {call!r} is outside the declared scope in {source}"
+                    )
+        if steps[0] not in entrypoints:
+            raise ValueError(
+                f"capability {capability_id} execution path {path_index} does not start at an entrypoint"
+            )
+        if steps[-1] not in dispatchers:
+            raise ValueError(
+                f"capability {capability_id} execution path {path_index} does not end at a dispatcher"
+            )
+        reached_dispatchers.add(steps[-1])
+    missing = dispatchers - reached_dispatchers
+    if missing:
+        raise ValueError(
+            f"capability {capability_id} dispatchers lack execution paths: {sorted(missing)}"
+        )
+
+
+def load_capability_ledger(
+    files: set[Path], contents: dict[Path, str | None]
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if CAPABILITY_LEDGER_PATH not in files:
+        raise ValueError(f"capability ledger is missing: {CAPABILITY_LEDGER_PATH}")
+    ledger = json.loads((ROOT / CAPABILITY_LEDGER_PATH).read_text(encoding="utf-8"))
+    if ledger.get("schema_version") != 1:
+        raise ValueError("unsupported capability ledger schema")
+    overview = ledger.get("overview")
+    if not isinstance(overview, dict) or not all(
+        isinstance(overview.get(field), str) and overview[field].strip()
+        for field in ("title", "subtitle", "footnote")
+    ):
+        raise ValueError("capability ledger overview is incomplete")
+    capabilities = ledger.get("capabilities")
+    if not isinstance(capabilities, list) or not capabilities:
+        raise ValueError("capability ledger has no capabilities")
+    component_ids = {component["id"] for component in COMPONENTS}
+    seen: set[str] = set()
+    checks = ci_owned_checks(contents)
+    capability_owners: set[str] = set()
+    for capability in capabilities:
+        if not isinstance(capability, dict):
+            raise ValueError("capability ledger entries must be objects")
+        capability_id = capability.get("id")
+        if (
+            not isinstance(capability_id, str)
+            or not CAPABILITY_ID_RE.fullmatch(capability_id)
+            or capability_id in seen
+        ):
+            raise ValueError(f"invalid or duplicate capability ID: {capability_id}")
+        seen.add(capability_id)
+        for field in ("title", "summary"):
+            if not isinstance(capability.get(field), str) or not capability[field].strip():
+                raise ValueError(f"capability {capability_id} has no {field}")
+        status = capability.get("status")
+        if status not in CAPABILITY_STATUSES:
+            raise ValueError(f"capability {capability_id} has invalid status {status}")
+        if capability.get("owner") not in component_ids:
+            raise ValueError(f"capability {capability_id} has unknown owner")
+        capability_owners.add(capability["owner"])
+        modes = capability.get("runtime_modes")
+        if (
+            not isinstance(modes, list)
+            or not modes
+            or len(modes) != len(set(modes))
+            or not all(isinstance(mode, str) and CAPABILITY_ID_RE.fullmatch(mode) for mode in modes)
+        ):
+            raise ValueError(f"capability {capability_id} has invalid runtime modes")
+        limitations = capability.get("limitations")
+        if not isinstance(limitations, list) or not all(
+            isinstance(item, str) and item.strip() for item in limitations
+        ):
+            raise ValueError(f"capability {capability_id} has invalid limitations")
+        if status in {"experimental", "config_only"} and not limitations:
+            raise ValueError(f"capability {capability_id} must document its limitations")
+        diagram = capability.get("diagram")
+        if diagram is not None:
+            lines = diagram.get("lines") if isinstance(diagram, dict) else None
+            if (
+                not isinstance(lines, list)
+                or not 1 <= len(lines) <= 2
+                or not all(isinstance(line, str) and line.strip() for line in lines)
+            ):
+                raise ValueError(f"capability {capability_id} has invalid diagram lines")
+        references: dict[str, list[Any]] = {}
+        for field in CAPABILITY_REFERENCE_EDGES:
+            value = capability.get(field)
+            if not isinstance(value, list):
+                raise ValueError(f"capability {capability_id} {field} must be a list")
+            references[field] = value
+            for reference in value:
+                if field == "proof":
+                    validate_capability_proof(
+                        capability_id, reference, files, contents, checks
+                    )
+                else:
+                    validate_capability_reference(
+                        capability_id, field, reference, files, contents
+                    )
+        for required in ("entrypoints", "proof", "documentation"):
+            if not references[required]:
+                raise ValueError(f"capability {capability_id} has no {required}")
+        if status in {"implemented", "experimental"} and not references["dispatchers"]:
+            raise ValueError(f"capability {capability_id} has no executable dispatcher")
+        if status == "config_only" and references["dispatchers"]:
+            raise ValueError(f"config-only capability {capability_id} claims a dispatcher")
+        execution_paths = capability.get("execution_paths")
+        if status in {"implemented", "experimental"}:
+            validate_execution_paths(
+                capability_id, execution_paths, references, files, contents
+            )
+        elif execution_paths not in (None, []):
+            raise ValueError(f"config-only capability {capability_id} claims an execution path")
+    coverage = ledger.get("capability_coverage")
+    if not isinstance(coverage, dict) or set(coverage) != {"mode", "exempt_components"}:
+        raise ValueError("capability_coverage needs exactly mode and exempt_components")
+    if coverage["mode"] != "complete" or not isinstance(coverage["exempt_components"], list):
+        raise ValueError("the product ledger requires complete capability coverage")
+    exemptions: set[str] = set()
+    for exemption in coverage["exempt_components"]:
+        if not isinstance(exemption, dict) or set(exemption) != {"component", "reason"}:
+            raise ValueError("capability exemptions need exactly component and reason")
+        component, reason = exemption["component"], exemption["reason"]
+        if (
+            not isinstance(component, str)
+            or component not in component_ids
+            or component in exemptions
+            or not isinstance(reason, str)
+            or not reason.strip()
+        ):
+            raise ValueError("capability exemption has an invalid component or reason")
+        exemptions.add(component)
+    overlap = capability_owners & exemptions
+    if overlap:
+        raise ValueError(f"capability owners cannot also be exempt: {sorted(overlap)}")
+    uncovered = component_ids - capability_owners - exemptions
+    if uncovered:
+        raise ValueError(f"complete capability coverage has uncovered components: {sorted(uncovered)}")
+    return ledger, capabilities
 
 
 def tracked_paths() -> list[Path]:
@@ -499,6 +877,8 @@ def render_graph() -> tuple[str, str]:
         nodes[node["id"]] = node
         add_edge(edges, path_id("directory", path.parent), "contains", node["id"])
 
+    capability_ledger, capabilities = load_capability_ledger(files, contents)
+
     workspace_manifest = Path("Cargo.toml")
     root_manifest: dict[str, Any] = {}
     workspace_member_patterns: tuple[str, ...] = ()
@@ -676,6 +1056,30 @@ def render_graph() -> tuple[str, str]:
             add_edge(edges, component["id"], "implemented_by", path_id("file", path))
     for source, target, kind in COMPONENT_EDGES:
         add_edge(edges, source, kind, target)
+    for capability in capabilities:
+        capability_id = f"capability:{capability['id']}"
+        nodes[capability_id] = {
+            "id": capability_id,
+            "kind": "capability",
+            "label": capability["title"],
+            "summary": capability["summary"],
+            "status": capability["status"],
+            "runtime_modes": capability["runtime_modes"],
+            "limitations": capability["limitations"],
+            "references": {
+                field: capability[field] for field in CAPABILITY_REFERENCE_EDGES
+            },
+            "execution_paths": capability.get("execution_paths", []),
+        }
+        add_edge(edges, capability_id, "owned_by", capability["owner"])
+        for field, edge_kind in CAPABILITY_REFERENCE_EDGES.items():
+            for reference in capability[field]:
+                add_edge(
+                    edges,
+                    capability_id,
+                    edge_kind,
+                    path_id("file", Path(reference["path"])),
+                )
 
     if unresolved_static_references:
         details = ", ".join(
@@ -690,7 +1094,7 @@ def render_graph() -> tuple[str, str]:
         for source, kind, target in sorted(edges)
     ]
     graph = {
-        "schema_version": 1,
+        "schema_version": 2,
         "description": "Deterministic navigation graph for the Orvek repository.",
         "generated_by": "scripts/generate-codebase-graph.py",
         "scope": {
@@ -704,6 +1108,7 @@ def render_graph() -> tuple[str, str]:
                 "Rust module links cover file-backed mod declarations, including conditional #[path] alternatives; inline modules and macro-generated code are not expanded.",
                 "Rust import links cover direct first-party package imports; Cargo dependency links are the complete direct package-level view.",
                 "Curated component edges describe architecture and do not replace source-level dependency analysis.",
+                "Capability edges validate declared source anchors and executable ownership; they do not prove live runtime behavior.",
             ],
         },
         "node_kinds": NODE_KIND_DESCRIPTIONS,
@@ -711,7 +1116,14 @@ def render_graph() -> tuple[str, str]:
         "statistics": {
             "nodes": len(ordered_nodes),
             "edges": len(ordered_edges),
+            "source_fingerprint": source_fingerprint(paths),
             "nodes_by_kind": dict(sorted(Counter(node["kind"] for node in ordered_nodes).items())),
+            "capabilities_by_status": dict(
+                sorted(Counter(capability["status"] for capability in capabilities).items())
+            ),
+            "capability_exempt_components": len(
+                capability_ledger["capability_coverage"]["exempt_components"]
+            ),
             "files_by_kind": dict(
                 sorted(
                     Counter(
@@ -733,6 +1145,9 @@ def render_graph() -> tuple[str, str]:
 
 
 def validate_graph(graph: dict[str, Any]) -> None:
+    fingerprint = graph["statistics"].get("source_fingerprint")
+    if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+        raise ValueError("graph source fingerprint is invalid")
     node_ids = [node["id"] for node in graph["nodes"]]
     if len(node_ids) != len(set(node_ids)):
         raise ValueError("graph contains duplicate node IDs")

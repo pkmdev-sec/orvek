@@ -98,6 +98,11 @@ def overview(index):
     draw = ImageDraw.Draw(image)
     phase = index / FRAMES
     data = CONTENT["overview"]
+    cards = [
+        capability["diagram"]
+        for capability in CONTENT["capabilities"]
+        if capability.get("diagram") is not None
+    ]
     for x in range(32, SIZE[0], 32):
         for y in range(32, SIZE[1], 32):
             draw.point((x, y), fill=(36, 31, 46))
@@ -209,11 +214,11 @@ def overview(index):
         ("00001000", "00011100", "01110110", "11000011", "00011000", "00011000", "00011000"),
         ("11000000", "11110000", "00111100", "00001111", "00000011", "00111100", "11111100"),
     )
-    for number, card in enumerate(data["cards"]):
+    for number, card in enumerate(cards):
         column, row = number % 3, number // 3
         x, y = 56 + column * 396, 174 + row * 110
         accent = ACCENTS[number % len(ACCENTS)]
-        energy = max(0, math.cos(math.tau * (phase - number / len(data["cards"])))) ** 8
+        energy = max(0, math.cos(math.tau * (phase - number / len(cards)))) ** 8
         panel(draw, (x + 4, y + 6, x + 374, y + 100), (11, 10, 16), (11, 10, 16))
         panel(
             draw,
@@ -236,7 +241,8 @@ def overview(index):
 
 
 def render_assets():
-    assert len(CONTENT["overview"]["cards"]) == 13
+    assert CONTENT["schema_version"] == 1
+    assert sum(capability.get("diagram") is not None for capability in CONTENT["capabilities"]) == 13
     assert overview(0).tobytes() == overview(FRAMES).tobytes()
     frames = [overview(index) for index in range(FRAMES)]
     samples = Image.new("RGB", (SIZE[0] * 4, SIZE[1] * 4))

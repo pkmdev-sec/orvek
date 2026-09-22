@@ -81,6 +81,7 @@ pub struct FunctionMetric {
     pub path: String,
     pub name: String,
     pub start_line: usize,
+    pub end_line: usize,
     pub source_lines: u32,
     pub cyclomatic_complexity: u32,
     pub mass: f64,
@@ -560,6 +561,7 @@ impl FunctionCollector<'_> {
             name,
             start_line: span.start().line,
             source_lines,
+            end_line: span.end().line,
             cyclomatic_complexity: complexity.count,
             mass: complexity.count as f64 * (source_lines as f64).sqrt(),
         });
@@ -631,6 +633,7 @@ impl<'ast> Visit<'ast> for FunctionCollector<'_> {
             name: format!("<closure@{}>", span.start().line),
             start_line: span.start().line,
             source_lines,
+            end_line: span.end().line,
             cyclomatic_complexity: complexity.count,
             mass: complexity.count as f64 * (source_lines as f64).sqrt(),
         });
@@ -958,11 +961,51 @@ fn redundant(value: bool) -> bool {
     }
 
     #[test]
+    fn rust_function_extent_includes_nested_async_closures_and_blocks() {
+        let root = tempfile::tempdir().unwrap();
+        write(
+            root.path(),
+            "nested.rs",
+            r#"async fn outer() {
+    let worker = || async {
+        let text = "a brace } in a string";
+        // a comment with }
+        if text.is_empty() {
+            return;
+        }
+    };
+    worker().await;
+}
+
+fn after() {}
+"#,
+        );
+
+        let report = analyze(root.path()).unwrap();
+        let outer = report
+            .erosion
+            .hotspots
+            .iter()
+            .find(|metric| metric.name == "outer")
+            .unwrap();
+        assert_eq!((outer.start_line, outer.end_line), (1, 10));
+        assert_eq!(outer.source_lines, 9);
+        let after = report
+            .erosion
+            .hotspots
+            .iter()
+            .find(|metric| metric.name == "after")
+            .unwrap();
+        assert_eq!((after.start_line, after.end_line), (12, 12));
+    }
+
+    #[test]
     fn erosion_uses_complexity_weighted_sqrt_sloc_and_a_strict_threshold() {
         let metric = |name: &str, complexity, source_lines| FunctionMetric {
             path: "fixture.rs".into(),
             name: name.into(),
             start_line: 1,
+            end_line: 1,
             source_lines,
             cyclomatic_complexity: complexity,
             mass: complexity as f64 * (source_lines as f64).sqrt(),

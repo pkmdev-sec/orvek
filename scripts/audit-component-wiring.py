@@ -12,7 +12,7 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUST_MEMBERS = ("bin/orvek", "crates/executor", "crates/harness", "crates/memory", "examples/orvek-memory-cloudflare")
+RUST_MEMBERS = ("bin/orvek", "crates/executor", "crates/harness", "crates/memory")
 IGNORED_PREFIXES = (Path("evals/incident_replay"),)
 BANNED_PATHS = (
     "crates/harness/src/evolution",

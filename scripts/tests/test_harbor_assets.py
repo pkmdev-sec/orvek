@@ -19,7 +19,7 @@ def rejected_assets(tree):
 
 class HarborAssetsTests(unittest.TestCase):
     def test_runtime_assets_are_accepted(self):
-        for tree in ("bin/orvek/src", "crates/executor/src", "crates/harness/src", "crates/memory/src", "examples/orvek-memory-cloudflare/src"):
+        for tree in ("bin/orvek/src", "crates/executor/src", "crates/harness/src", "crates/memory/src"):
             with self.subTest(tree=tree):
                 self.assertEqual(rejected_assets(tree), "", "Harbor build rejects a required runtime asset")
 

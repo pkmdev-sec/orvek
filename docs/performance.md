@@ -32,6 +32,3 @@ cargo bench --locked --bench tui -- 'tui/' \
 
 The fixtures cover large drafts, cursor movement, accumulated Markdown, paging, and expanded tool
 output. They measure local rendering, not model latency or task success.
-
-Hosted CodSpeed upload is optional. Configure repository access with the service, then set the
-GitHub repository variable `ORVEK_ENABLE_CODSPEED` to `true`. Local runs need no hosted account.

@@ -134,8 +134,7 @@ class HostFixture:
             self.stack.callback(self.provider.shutdown)
             config = (f'[agent]\nexecution = "{"sandbox" if self.sandbox else "host"}"\n'
                       f'api_base_url = "http://127.0.0.1:{self.provider.server_port}/v1"\n'
-                      f'workspace = {json.dumps(str(self.workspace))}\n'
-                      'web_search = false\nimage_generation = false\n')
+                      f'workspace = {json.dumps(str(self.workspace))}\n')
             if self.hook:
                 config += f'completion_hook = {json.dumps(self.hook)}\n'
             config += f'[memory]\nenabled = {str(self.memory).lower()}\n'

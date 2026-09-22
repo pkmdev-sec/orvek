@@ -7,7 +7,7 @@ use super::{
 use orvek_harness::{
     admission::{RepositoryProfile, RequestPolicy},
     contract::{DeliveryKind, Limits},
-    ipc::{Command, Request, Response},
+    ipc::{Command, IpcErrorDisposition, Request, Response},
     session::SessionId,
     submission::{Schedule, Submission, SubmitIntent},
 };
@@ -97,26 +97,28 @@ pub(crate) async fn acknowledge(
             error: Box::new(Error::HostRequest("expected a submit command".into())),
         });
     };
-    let mut uncertain = false;
     let mut last_error = None;
     for attempt in 0..3 {
-        match client.call(request, Duration::from_secs(5)).await {
-            Ok(Response::Submission(receipt)) if receipt.id == request.id => return Ok(receipt),
+        let result = client.call(request, Duration::from_secs(5)).await;
+        match &result {
+            Ok(Response::Submission(receipt)) if receipt.id == request.id => {
+                return Ok(receipt.clone());
+            }
             Ok(_) => {
-                uncertain = true;
                 last_error = Some(Error::HostRequest(
                     "submission response identity mismatch".into(),
                 ));
             }
-            Err(error @ Error::HostRequest(_)) if !uncertain => {
+            Err(Error::HostApplication(envelope))
+                if envelope.disposition == IpcErrorDisposition::Reject =>
+            {
                 return Err(SubmitFailure {
                     uncertain: false,
-                    error: error.into(),
+                    error: Box::new(result.unwrap_err()),
                 });
             }
-            Err(error) => {
-                uncertain = true;
-                last_error = Some(error);
+            Err(_) => {
+                last_error = Some(result.unwrap_err());
             }
         }
         if let Ok(Response::Submission(receipt)) = client

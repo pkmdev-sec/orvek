@@ -20,14 +20,9 @@ orvek (terminal binary)
 ├── orvek-harness (authoritative task runtime)
 │   └── orvek-executor (sandbox transport / Linux helper protocol)
 └── orvek-memory (local and optional remote memory)
-
-orvek-memory-cloudflare (example Worker) ──> orvek-memory
-workspace Cargo patches ──> vendor/nanocodex-agent, vendor/nanocodex-oai-api
 ```
 
-The arrows above are direct first-party Cargo dependency edges. The two `vendor/` packages are tracked
-Cargo packages used as root-manifest `crates-io` patches, but are explicitly excluded from the workspace;
-the graph records them with `workspace_member: false` and a `patches` edge. Child-agent behavior has one authoritative implementation in
+The arrows above are direct first-party Cargo dependency edges. Child-agent behavior has one authoritative implementation in
 `crates/harness/src/controller/subagents.rs`. It owns sandboxed admission, session-scoped authority,
 messaging, lifecycle retention, and recovery.
 

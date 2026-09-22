@@ -1,4 +1,4 @@
-use crate::Digest;
+use crate::{Digest, runtime::MAX_EXECUTION_TIMEOUT_MS};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
@@ -235,8 +235,9 @@ impl Contract {
             } else if check.command.is_empty()
                 || check.command[0].is_empty()
                 || check.timeout_ms == 0
+                || check.timeout_ms > MAX_EXECUTION_TIMEOUT_MS
             {
-                Some("a command and positive timeout are required")
+                Some("a command and bounded positive timeout are required")
             } else if !matches!(check.kind, CheckKind::Build | CheckKind::Static)
                 && check.minimum_assertions == 0
             {

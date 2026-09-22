@@ -1,7 +1,7 @@
 use orvek_harness::{
     Store, StoreError,
     contract::*,
-    runtime::DockerExecutor,
+    runtime::{DockerExecutor, MAX_EXECUTION_TIMEOUT_MS},
     state::*,
     verification::{self, CheckProgram, ControlFailure, Expectation, Probe},
     workspace::{Snapshot, SnapshotPolicy},
@@ -195,7 +195,51 @@ async fn real_bug_requires_baseline_failure_and_candidate_success_before_deliver
 }
 
 #[test]
-fn verification_program_rejects_empty_checks_unbounded_probes_and_path_escape() {
+fn verification_program_enforces_command_and_expectation_boundaries() {
+    fn command_program(command: String, expectation: Expectation) -> CheckProgram {
+        CheckProgram {
+            version: 1,
+            probes: vec![Probe::Command {
+                id: "command".into(),
+                command,
+                exit_code: 0,
+                stdout: Some(expectation),
+                stderr: None,
+            }],
+            control_failure: None,
+        }
+    }
+
+    assert!(
+        command_program(
+            "x".repeat(orvek_executor::MAX_COMMAND_BYTES),
+            Expectation::Equals("ok".into()),
+        )
+        .validate()
+        .is_ok()
+    );
+    assert!(
+        command_program(
+            "x".repeat(orvek_executor::MAX_COMMAND_BYTES + 1),
+            Expectation::Equals("ok".into()),
+        )
+        .validate()
+        .is_err()
+    );
+    assert!(
+        command_program("true".into(), Expectation::Contains(String::new()))
+            .validate()
+            .is_err()
+    );
+
+    let mut control = command_program("true".into(), Expectation::Equals("ok".into()));
+    control.control_failure = Some(ControlFailure {
+        probe: "command".into(),
+        stdout: Some(Expectation::Contains(String::new())),
+        stderr: None,
+    });
+    assert!(control.validate().is_err());
+
     assert!(
         CheckProgram {
             version: 1,
@@ -207,18 +251,6 @@ fn verification_program_rejects_empty_checks_unbounded_probes_and_path_escape() 
     );
     let program = CheckProgram {
         version: 1,
-        probes: vec![Probe::Command {
-            id: "fake".into(),
-            command: "true".into(),
-            exit_code: 0,
-            stdout: None,
-            stderr: None,
-        }],
-        control_failure: None,
-    };
-    assert!(program.validate().is_err());
-    let program = CheckProgram {
-        version: 1,
         probes: vec![Probe::File {
             id: "escape".into(),
             path: "../controller".into(),
@@ -227,4 +259,45 @@ fn verification_program_rejects_empty_checks_unbounded_probes_and_path_escape() 
         control_failure: None,
     };
     assert!(program.validate().is_err());
+}
+
+#[test]
+fn contract_enforces_runtime_timeout_boundary() {
+    fn contract(timeout_ms: u64) -> Contract {
+        Contract {
+            request: "request".into(),
+            outcome: "outcome".into(),
+            scope: "scope".into(),
+            requirements: vec![Requirement {
+                id: "requirement".into(),
+                behavior: "behavior".into(),
+                origin: Origin::User("request".into()),
+                checks: vec!["check".into()],
+                depends_on: vec![],
+            }],
+            checks: BTreeMap::from([(
+                "check".into(),
+                CheckDefinition {
+                    purpose: "purpose".into(),
+                    kind: CheckKind::Behavior,
+                    verifier: orvek_harness::Digest::of(b"verifier"),
+                    command: vec!["verify".into()],
+                    timeout_ms,
+                    minimum_assertions: 1,
+                    control: ControlRequirement::None,
+                    control_source: None,
+                    baseline: BaselinePolicy::MustPass,
+                    flake: FlakePolicy::RejectAnyFailure,
+                },
+            )]),
+            protected_behavior: vec![],
+            assumptions: vec![],
+            open_questions: vec![],
+            delivery: DeliveryKind::Patch,
+            limits: Limits::default(),
+        }
+    }
+
+    assert!(contract(MAX_EXECUTION_TIMEOUT_MS).validate().is_ok());
+    assert!(contract(MAX_EXECUTION_TIMEOUT_MS + 1).validate().is_err());
 }

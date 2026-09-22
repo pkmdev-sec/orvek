@@ -239,8 +239,9 @@ temporary data and loopback HTTP, not a live model account.
 
 ## Explicit transfer commands
 
-Transfers use the local store from any directory. They ignore `memory.enabled` and workspace scope.
-Remote push/pull require configured remote credentials. File archives do not.
+Transfer commands use the local store from any directory and run whether `memory.enabled` is true or
+false. They ignore workspace scope and do not enable memory tools in model sessions. Remote push and
+pull require configured remote credentials. File archives do not.
 
 ```sh
 orvek memory export ./memory-archive
@@ -286,7 +287,6 @@ server store's storage rules.
 
 Protocol generation `orvek_memory::VERSION` is currently `2`. Routes and session negotiation use
 that value. Upgrade remote servers and clients together; v1 is intentionally incompatible.
-Apply the Cloudflare `0002_evidence.sql` and `0003_ownership.sql` migrations before using the new Worker.
 
 
 | Route | Required role | Operation |
@@ -312,6 +312,5 @@ content, credentials, or database diagnostics. The `native-server` feature limit
 64 concurrent requests and store operations to 30 seconds. The host owns graceful shutdown and
 storage encryption.
 
-The [Cloudflare example](../examples/orvek-memory-cloudflare/README.md) provides a separate Worker
-and D1 adapter with local development and deployment instructions. It is not part of the installed
-CLI.
+Remote deployments provide their own `MemoryStore` implementation and macOS-hosted service
+operations. Orvek no longer ships a WebAssembly or Cloudflare deployment target.

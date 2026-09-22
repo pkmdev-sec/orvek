@@ -35,9 +35,11 @@ pub(super) async fn client() -> HostClient {
                 };
                 let response = match dispatch(request.command, &artifacts).await {
                     Ok(response) => response,
-                    Err(error) => Response::Error {
-                        message: error.to_string(),
-                    },
+                    Err(error) => Response::Error(ipc::IpcErrorEnvelope::new(
+                        ipc::IpcErrorCode::Internal,
+                        ipc::IpcErrorDisposition::Reject,
+                        error.to_string(),
+                    )),
                 };
                 let _ = ipc::write_frame(&mut stream, &response).await;
             });

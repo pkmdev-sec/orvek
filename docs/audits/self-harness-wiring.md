@@ -90,13 +90,15 @@ The public artifact store remains active and is simpler: one immutable content-a
 
 ## Retained components
 
+This section records the audited revision. The later macOS distribution change removed the
+standalone Cloudflare/WASM example while retaining generic remote memory support.
+
 Every retained production subsystem has an active entry path:
 
 - `bin/orvek`: CLI, configuration, authentication, host bootstrap, headless mode, review service, TUI, and update flow.
 - `crates/harness`: IPC, durable sessions/tasks, inference, tools, workspaces, review, verification, submissions, delivery, imports, subagent orchestration, artifacts, and recovery.
 - `crates/executor`: sandbox process supervision and its binary entry point.
 - `crates/memory`: local and remote memory implementations used by CLI/TUI configuration.
-- `examples/orvek-memory-cloudflare`: the deployable remote-memory worker example.
 - `web/review`: browser review application, build/dev entry points, and test modules.
 - `evals/harbor_adapter` and `evals/snapcompact`: tracked benchmark adapters and analysis entry points.
 
@@ -137,4 +139,7 @@ The final command results are recorded in `/tmp/orvek-component-audit/GATES.md`.
 
 `evals/incident_replay/` contains pre-existing untracked work. This audit does not edit or claim it. The wiring script reports its Python file count as excluded so the boundary is visible rather than silently ignored.
 
-Vendored `nanocodex` crates are third-party snapshots excluded by the workspace and are not first-party component ownership. Generated build output, `.venv`, `node_modules`, and `target` are also outside the source-module inventory.
+At the time of this audit, vendored `nanocodex` crates were third-party snapshots excluded by the
+workspace and were not first-party component ownership. They were removed in the later
+maintainability-baseline change. Generated build output, `.venv`, `node_modules`, and `target` are
+also outside the source-module inventory.

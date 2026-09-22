@@ -11,8 +11,9 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, Mou
 use ratatui::{
     Frame,
     layout::{Position, Rect},
+    style::Style,
     text::{Line, Span},
-    widgets::ListItem,
+    widgets::{ListItem, Paragraph},
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -93,6 +94,7 @@ impl ActionsMenu {
 
     pub(super) fn set_fork_available(&mut self, available: bool) {
         self.availability.fork = available;
+        self.refresh_matches();
     }
 
     fn select_bounded(&mut self, delta: isize) -> ComponentUpdate<ActionsEffect> {
@@ -164,12 +166,14 @@ impl ActionsMenu {
     }
 
     fn refresh_matches(&mut self) {
+        let query = &self.query;
+        let availability = &self.availability;
         self.matches.clear();
         self.matches.extend(
             ACTIONS
                 .iter()
                 .enumerate()
-                .filter(|(_, action)| action.matches(&self.query))
+                .filter(|(_, action)| action.matches(query, availability))
                 .map(|(index, _)| index),
         );
         self.choice.reset(self.matches.len());
@@ -200,6 +204,13 @@ impl ActionsMenu {
         if area.is_empty() {
             return;
         }
+        if self.matches.is_empty() {
+            frame.render_widget(
+                Paragraph::new("  No matching actions").style(Style::default().fg(theme.muted())),
+                area,
+            );
+            return;
+        }
 
         let items = self.matches.iter().enumerate().map(|(row, index)| {
             let action = ACTIONS[*index];
@@ -207,7 +218,7 @@ impl ActionsMenu {
             let selected = self.choice.is_selected(row);
             let typography = ChoiceStyle::new(selected, enabled);
             let mut spans = vec![Span::styled(
-                self.display_label(action),
+                action.display_label(&self.availability),
                 typography.primary(theme),
             )];
             if let Some(alias) = action
@@ -247,33 +258,6 @@ impl ActionsMenu {
             Action::DebugContext => true,
         }
     }
-
-    const fn display_label(&self, action: Action) -> &'static str {
-        match action {
-            Action::NewSession if !self.availability.new_session => {
-                "New session · finish active work first"
-            }
-            Action::ResumeSession if !self.availability.new_session => {
-                "Resume session · finish active work first"
-            }
-            Action::Fork if !self.availability.fork => "Fork session · one fork at a time",
-            Action::Review if !self.availability.new_session => {
-                "Review changes · finish active work first"
-            }
-            Action::Handoff if !self.availability.new_session => {
-                "Prepare handoff · finish active work first"
-            }
-            Action::Reflection if !self.availability.new_session => {
-                "Reflect on session · finish active work first"
-            }
-            Action::FastMode if self.availability.fast_mode => "Disable fast mode",
-            Action::Model if !self.availability.model => "Select model · start a new session first",
-            Action::Memory if !self.availability.memory => {
-                "Memory · enable in config: memory.enabled = true"
-            }
-            _ => action.label(),
-        }
-    }
 }
 
 impl Action {
@@ -298,6 +282,33 @@ impl Action {
         }
     }
 
+    const fn display_label(self, availability: &ActionAvailability) -> &'static str {
+        match self {
+            Self::NewSession if !availability.new_session => {
+                "New session · finish active work first"
+            }
+            Self::ResumeSession if !availability.new_session => {
+                "Resume session · finish active work first"
+            }
+            Self::Fork if !availability.fork => "Fork session · one fork at a time",
+            Self::Review if !availability.new_session => {
+                "Review changes · finish active work first"
+            }
+            Self::Handoff if !availability.new_session => {
+                "Prepare handoff · finish active work first"
+            }
+            Self::Reflection if !availability.new_session => {
+                "Reflect on session · finish active work first"
+            }
+            Self::FastMode if availability.fast_mode => "Disable fast mode",
+            Self::Model if !availability.model => "Select model · start a new session first",
+            Self::Memory if !availability.memory => {
+                "Memory · enable in config: memory.enabled = true"
+            }
+            _ => self.label(),
+        }
+    }
+
     const fn alias(self) -> Option<&'static str> {
         match self {
             Self::Handoff => Some("handoff"),
@@ -317,8 +328,8 @@ impl Action {
         }
     }
 
-    fn matches(self, query: &str) -> bool {
-        contains_ignore_ascii_case(self.label(), query)
+    fn matches(self, query: &str, availability: &ActionAvailability) -> bool {
+        contains_ignore_ascii_case(self.display_label(availability), query)
             || self
                 .alias()
                 .is_some_and(|alias| contains_ignore_ascii_case(alias, query))
@@ -670,6 +681,21 @@ mod tests {
     }
 
     #[test]
+    fn search_matches_the_state_dependent_action_label() {
+        let mut availability = available();
+        availability.fast_mode = true;
+        let mut menu = ActionsMenu::new(availability);
+        for character in "disable".chars() {
+            menu.update(key(KeyCode::Char(character)));
+        }
+
+        assert_eq!(
+            menu.update(key(KeyCode::Enter)).effects,
+            [ActionsEffect::Trigger(Action::FastMode)]
+        );
+    }
+
+    #[test]
     fn config_actions_are_individually_searchable() {
         let mut menu = ActionsMenu::new(available());
         for character in "edit config".chars() {
@@ -823,11 +849,36 @@ mod tests {
     }
 
     #[test]
+    fn availability_changes_refresh_state_dependent_search_results() {
+        let mut availability = available();
+        availability.fork = false;
+        let mut menu = ActionsMenu::new(availability);
+        for character in "one fork at a time".chars() {
+            menu.update(key(KeyCode::Char(character)));
+        }
+        menu.set_fork_available(true);
+
+        assert!(menu.update(key(KeyCode::Enter)).effects.is_empty());
+    }
+
+    #[test]
     fn enter_does_nothing_when_search_has_no_matches() {
         let mut menu = ActionsMenu::new(available());
         menu.update(key(KeyCode::Char('z')));
 
         assert!(menu.update(key(KeyCode::Enter)).effects.is_empty());
+    }
+
+    #[test]
+    fn empty_search_result_explains_that_no_actions_match() {
+        let mut menu = ActionsMenu::new(available());
+        menu.update(key(KeyCode::Char('z')));
+        let terminal = render(&mut menu);
+
+        assert!(
+            (0..20)
+                .any(|row| { row_segment(&terminal, row, 0, 60).contains("No matching actions") })
+        );
     }
 
     #[test]

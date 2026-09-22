@@ -12,7 +12,7 @@ use extensions::{Skill, SkillCatalog};
 use orvek_harness::{
     Channel,
     inference::{Model, ModelSettings},
-    ipc::{Command, Response, SessionView},
+    ipc::{Command, IpcErrorCode, IpcErrorDisposition, Request, Response, SessionView},
     session::{SessionAdmissionRequest, SessionId},
 };
 use orvek_memory::{RemoteMemoryClient, RemoteToken, SelectedMemoryStore};
@@ -77,28 +77,84 @@ impl ConfiguredSession {
             .unwrap_or_default()
             .into();
         let client = HostClient::connect(config).await?;
-        let response = client
-            .query(Command::CreateSession {
-                id: SessionId::new(),
-                request: SessionAdmissionRequest::new(
-                    workspace,
-                    model,
-                    context_window_tokens,
-                    Channel::Stable,
-                ),
-            })
-            .await?;
-        let Response::Session(session) = response else {
-            return Err(Error::HostRequest(
-                "host did not return the created session".into(),
-            ));
+        let id = SessionId::new();
+        let admission = SessionAdmissionRequest::new(
+            workspace.clone(),
+            model,
+            context_window_tokens,
+            Channel::Stable,
+        );
+        let admission_digest = orvek_harness::Digest::of_value(&admission)
+            .map_err(|error| Error::HostRequest(error.to_string()))?;
+        let request = Request::new(Command::CreateSession {
+            id,
+            request: admission,
+        });
+        let matches = |view: &SessionView| {
+            view.id == id
+                && view.workspace == workspace
+                && view.model == model
+                && view.context_window_tokens == context_window_tokens
+                && view.parent.is_none()
+                && view.imported.is_none()
+                && !view.branch.fresh_context
+                && view
+                    .admission
+                    .as_ref()
+                    .is_some_and(|profile| profile.request_digest == admission_digest)
         };
-        Ok(Self {
-            client,
-            session: *session,
-            skills,
-            memory_enabled: config.memory().enabled(),
-        })
+        let mut last = None;
+        for attempt in 0..3 {
+            match client
+                .call(&request, std::time::Duration::from_secs(5))
+                .await
+            {
+                Ok(Response::Session(view)) if matches(&view) => {
+                    return Ok(Self {
+                        client,
+                        session: *view,
+                        skills,
+                        memory_enabled: config.memory().enabled(),
+                    });
+                }
+                Ok(_) => {
+                    return Err(Error::HostRequest(
+                        "session admission response identity mismatch".into(),
+                    ));
+                }
+                Err(Error::HostApplication(envelope))
+                    if envelope.disposition == IpcErrorDisposition::Reject =>
+                {
+                    return Err(Error::HostApplication(envelope));
+                }
+                Err(error) => last = Some(error),
+            }
+            match client.query(Command::Session { id }).await {
+                Ok(Response::Session(view)) if matches(&view) => {
+                    return Ok(Self {
+                        client,
+                        session: *view,
+                        skills,
+                        memory_enabled: config.memory().enabled(),
+                    });
+                }
+                Err(Error::HostApplication(envelope))
+                    if envelope.code == IpcErrorCode::NotFound && attempt < 2 => {}
+                Err(error) => last = Some(error),
+                Ok(_) => {
+                    return Err(Error::HostRequest(
+                        "session reconciliation identity mismatch".into(),
+                    ));
+                }
+            }
+            if attempt < 2 {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+        Err(Error::HostRequest(format!(
+            "session {id} admission may have committed; resume this ID to recover it ({})",
+            last.map(|error| error.to_string()).unwrap_or_default()
+        )))
     }
 
     pub(crate) async fn resume_label(config: &Config, label: &str) -> Result<Self> {
@@ -179,18 +235,24 @@ impl ConfiguredSession {
         });
         let mut last = None;
         for _ in 0..3 {
-            match client
+            let result = client
                 .call(&request, std::time::Duration::from_secs(70))
-                .await
-            {
-                Ok(Response::Session(view)) => return Ok(Self::from_view(config, client, *view)),
+                .await;
+            match &result {
+                Ok(Response::Session(view)) => {
+                    return Ok(Self::from_view(config, client, (**view).clone()));
+                }
                 Ok(_) => {
                     return Err(Error::HostRequest(
                         "unexpected historical import response".into(),
                     ));
                 }
-                Err(error @ Error::HostRequest(_)) => return Err(error),
-                Err(error) => last = Some(error),
+                Err(Error::HostApplication(envelope))
+                    if envelope.disposition == IpcErrorDisposition::Reject =>
+                {
+                    return Err(result.unwrap_err());
+                }
+                Err(_) => last = Some(result.unwrap_err()),
             }
         }
         Err(Error::HostRequest(format!(

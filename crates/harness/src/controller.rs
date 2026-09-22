@@ -55,6 +55,7 @@ pub mod notification;
 mod review;
 pub mod subagents;
 mod submissions;
+mod task_phases;
 mod workspace;
 
 pub use diagnostics::HostWarning;
@@ -423,6 +424,8 @@ pub struct Host {
     queue_stop: CancellationToken,
     context_renders:
         Mutex<HashMap<SessionId, tokio::task::JoinHandle<crate::context::ContextView>>>,
+    #[cfg(test)]
+    derivation_gate: std::sync::Mutex<Option<Arc<workspace::DerivationGate>>>,
 }
 
 impl Host {
@@ -519,6 +522,8 @@ impl Host {
             queue_workers: Mutex::new(std::collections::HashSet::new()),
             queue_wake: tokio::sync::Notify::new(),
             queue_stop: CancellationToken::new(),
+            #[cfg(test)]
+            derivation_gate: std::sync::Mutex::new(None),
             context_renders: Mutex::new(HashMap::new()),
         })
     }
@@ -913,9 +918,11 @@ impl Host {
         id: TaskId,
         cancellation: CancellationToken,
     ) -> Result<ArtifactView, HostError> {
-        let (mut view, baseline, snapshot, artifacts) = {
-            let mut store = self.store.lock().await;
-            let state = store.audit_evidence(id)?;
+        loop {
+            let (state, artifacts) = {
+                let mut store = self.store.lock().await;
+                (store.audit_evidence(id)?, store.artifacts().clone())
+            };
             let pending_writes = state
                 .jobs
                 .values()
@@ -923,7 +930,7 @@ impl Host {
             let baseline = state
                 .baseline
                 .as_ref()
-                .map(|base| Snapshot::load(base.source, store.artifacts()))
+                .map(|base| Snapshot::load(base.source, &artifacts))
                 .transpose()?;
             let working = self
                 .root
@@ -931,52 +938,59 @@ impl Host {
                 .join(id.to_string())
                 .join("working");
             let snapshot = if let Some(source) = state.workspace_override {
-                Some(Snapshot::load(source, store.artifacts())?)
+                Some(Snapshot::load(source, &artifacts)?)
             } else if !pending_writes && working.is_dir() {
                 Some(Snapshot::capture(
                     &working,
                     SnapshotPolicy::default(),
-                    store.artifacts(),
+                    &artifacts,
                 )?)
             } else {
                 state
                     .candidate
                     .as_ref()
-                    .map(|candidate| Snapshot::load(candidate.source, store.artifacts()))
+                    .map(|candidate| Snapshot::load(candidate.source, &artifacts))
                     .transpose()?
             };
             let identity = snapshot
                 .as_ref()
-                .map(|snapshot| snapshot.publish(store.artifacts()))
+                .map(|snapshot| snapshot.publish(&artifacts))
                 .transpose()?;
-            (
-                ArtifactView {
-                    task: id,
-                    revision: state.revision,
-                    baseline: state.baseline.as_ref().map(|base| base.source),
-                    candidate: state.candidate.as_ref().map(|candidate| candidate.source),
-                    snapshot: identity,
-                    patch: None,
-                    pending_writes,
-                    patch_error: None,
-                },
-                baseline,
-                snapshot,
-                store.artifacts().clone(),
-            )
-        };
-        if let (Some(baseline), Some(snapshot)) = (baseline, snapshot) {
-            let scratch = self.root.join("review-scratch");
-            fs::create_dir_all(&scratch)?;
-            match PatchBuilder::new(PatchLimits::default())?
-                .build(&baseline, &snapshot, &artifacts, &scratch, cancellation)
-                .await
-            {
-                Ok(patch) => view.patch = Some(patch.patch),
-                Err(error) => view.patch_error = Some(error.to_string()),
+            let mut view = ArtifactView {
+                task: id,
+                revision: state.revision,
+                baseline: state.baseline.as_ref().map(|base| base.source),
+                candidate: state.candidate.as_ref().map(|candidate| candidate.source),
+                snapshot: identity,
+                patch: None,
+                pending_writes,
+                patch_error: None,
+            };
+            if let (Some(baseline), Some(snapshot)) = (baseline, snapshot) {
+                let scratch = self.root.join("review-scratch");
+                fs::create_dir_all(&scratch)?;
+                match PatchBuilder::new(PatchLimits::default())?
+                    .build(
+                        &baseline,
+                        &snapshot,
+                        &artifacts,
+                        &scratch,
+                        cancellation.clone(),
+                    )
+                    .await
+                {
+                    Ok(patch) => view.patch = Some(patch.patch),
+                    Err(error) => view.patch_error = Some(error.to_string()),
+                }
+            }
+            let current = self.store.lock().await.load(id)?;
+            if workspace::predicates_match(&state, &current) {
+                return Ok(view);
+            }
+            if cancellation.is_cancelled() {
+                return Err(HostError::Invalid("artifact inspection cancelled"));
             }
         }
-        Ok(view)
     }
 
     pub async fn read_artifact(
@@ -1431,15 +1445,19 @@ impl Host {
         let result = async {
             if let Err(error) = &result {
                 self.interpreters.lock().await.remove(&session);
-                let mut store = self.store.lock().await;
-                if let Ok(mut state) = store.load_session(session)
-                    && state.active_request == Some(request)
-                {
-                    if let Some(task) = state
-                        .current_task
-                        .and_then(|id| store.load(id).ok())
-                        .filter(|task| task.outcome.is_none())
-                    {
+                let active = {
+                    let store = self.store.lock().await;
+                    store
+                        .load_session(session)
+                        .ok()
+                        .filter(|state| state.active_request == Some(request))
+                };
+                if let Some(mut state) = active {
+                    if let Some(task_id) = state.current_task {
+                        let task = self.store.lock().await.load(task_id)?;
+                        if task.outcome.is_some() {
+                            return result;
+                        }
                         let outcome = if task.cancellation_requested {
                             Outcome::Cancelled
                         } else if self.native_tools.is_none()
@@ -1451,7 +1469,8 @@ impl Host {
                         } else {
                             Outcome::Failed
                         };
-                        let task = self.checkpoint_workspace(&mut store, task)?;
+                        let task = self.checkpoint_workspace(task.id).await?;
+                        let mut store = self.store.lock().await;
                         let task =
                             store.stop(task.id, task.revision, outcome, error.to_string())?;
                         state = store.save_task_workspace(session, request, task.id)?;
@@ -1481,6 +1500,7 @@ impl Host {
                             message: error.to_string(),
                         });
                     }
+                    let mut store = self.store.lock().await;
                     state = store.load_session(session)?;
                     store.session_command(
                         session,
@@ -1543,805 +1563,6 @@ impl Host {
         result
     }
 
-    async fn run_contract(
-        &self,
-        session_id: SessionId,
-        request: Uuid,
-        admission: TaskRequest,
-        cancellation: CancellationToken,
-        emit: EventSink,
-    ) -> Result<TaskRun, HostError> {
-        let native = self.native_tools.is_some();
-        let (mut session, mut task, created) = {
-            let mut store = self.store.lock().await;
-            match admission {
-                TaskRequest::Continue { request } => {
-                    let classification = store.ordinary_classification(session_id, request)?;
-                    let mut run = if native {
-                        store.continue_submission_without_budget_limit(session_id, request)?
-                    } else {
-                        store.continue_submission(session_id, request)?
-                    };
-                    if let Some((kind, call, receipt, started_ms)) = classification {
-                        let task = if native {
-                            store.account_ordinary_classification_without_budget_limit(
-                                run.1.id, request, kind, call, receipt, started_ms,
-                            )?
-                        } else {
-                            store.account_ordinary_classification(
-                                run.1.id, request, kind, call, receipt, started_ms,
-                            )?
-                        };
-                        run.1 = task;
-                    }
-                    run
-                }
-                TaskRequest::DiscoverInput {
-                    input,
-                    limits,
-                    intake,
-                } => {
-                    let classification = store.ordinary_classification(session_id, request)?;
-                    let mut run =
-                        store.start_prepared_request(session_id, request, input, limits, intake)?;
-                    if let Some((kind, call, receipt, started_ms)) = classification {
-                        let task = if native {
-                            store.account_ordinary_classification_without_budget_limit(
-                                run.1.id, request, kind, call, receipt, started_ms,
-                            )?
-                        } else {
-                            store.account_ordinary_classification(
-                                run.1.id, request, kind, call, receipt, started_ms,
-                            )?
-                        };
-                        run.1 = task;
-                    }
-                    run
-                }
-                TaskRequest::Discover {
-                    input,
-                    limits,
-                    intake,
-                } => store.start_request(session_id, request, input, limits, intake)?,
-                TaskRequest::Start(contract) => store.start_task(session_id, request, *contract)?,
-                TaskRequest::Resume {
-                    task,
-                    revision,
-                    reason,
-                } => {
-                    if native {
-                        store.resume_task_without_budget_limit(
-                            session_id, request, task, revision, reason,
-                        )?
-                    } else {
-                        store.resume_task(session_id, request, task, revision, reason)?
-                    }
-                }
-            }
-        };
-        if !created {
-            task = self.store.lock().await.audit_evidence(task.id)?;
-            return Ok(TaskRun {
-                session: session_id,
-                task,
-                message: "Request was already admitted; inspect its recorded outcome".into(),
-            });
-        }
-        let deadline = (!native).then(|| TaskDeadline::start(&task, cancellation.clone()));
-        let scope_revision = task.scope_revision;
-        // A native task never materializes or removes anything: the session
-        // workspace is the user's live directory and the only copy of the work.
-        let workspace = if native {
-            TaskWorkspace::Native {
-                cwd: session.workspace().clone(),
-            }
-        } else {
-            let (updated, workspace) = self.prepare_isolated_workspace(&session, task).await?;
-            task = updated;
-            workspace
-        };
-        emit(HostUpdate::TaskChanged {
-            session: session_id,
-            task: Arc::new(task.clone()),
-        });
-        let mut provider_retries = 0_u32;
-        let mut context_session = self.open_context(session.workspace())?;
-        if let Some(context) = &mut context_session {
-            context.bind_run(crate::services::ContextRun {
-                session: session_id,
-                request,
-                task: task.id,
-            });
-        }
-        let mut force_native_context = false;
-        loop {
-            self.install_finished_context_render(session_id).await?;
-            task = self.store.lock().await.load(task.id)?;
-            if task.scope_revision != scope_revision {
-                return self.end_task(session_id, request, task.id, Outcome::Blocked, "Turn superseded by a recorded user follow-up; its requirements await admission".into(), emit).await;
-            }
-            if cancellation.is_cancelled() {
-                let outcome = deadline
-                    .as_ref()
-                    .map_or(Outcome::Cancelled, TaskDeadline::cancellation_outcome);
-                return self
-                    .end_task(
-                        session_id,
-                        request,
-                        task.id,
-                        outcome,
-                        if outcome == Outcome::BudgetExhausted {
-                            "Task elapsed-time allowance exhausted"
-                        } else {
-                            "Cancelled by user"
-                        }
-                        .into(),
-                        emit,
-                    )
-                    .await;
-            }
-            let call = Uuid::new_v4();
-            let (projection, prompt_cache_lineage, representation_measurement) = {
-                let mut store = self.store.lock().await;
-                session = store.load_session(session_id)?;
-                self.validate_session_admission(&session)?;
-                let prompt_cache_lineage = store.prompt_cache_lineage(session_id)?;
-                let byte_limit =
-                    crate::context::projection_byte_limit(session.context_window_tokens())?;
-                let mut projection = crate::context::project(&session, byte_limit)?;
-                let native_context_fallback = std::mem::take(&mut force_native_context);
-                let representation_measurement = if !native_context_fallback
-                    && let Some(cached) = &session.context_view
-                {
-                    crate::context::reuse_representations(&mut projection, cached, &session);
-                    let profile = representation_profile(&task, store.artifacts());
-                    select_context_representations(&mut projection, session.model().model, &profile)
-                } else {
-                    None
-                };
-                if projection.manifest.omitted_items > 0
-                    || !projection.manifest.interrupted_calls.is_empty()
-                {
-                    // The projection is already in hand for this turn, so the
-                    // journaled copy is only a cache for later representation
-                    // reuse. A rejected cache write must not fail the turn.
-                    if let Err(error) = store.session_command(
-                        session_id,
-                        session.revision,
-                        Uuid::new_v5(&call, b"context-projection"),
-                        SessionCommand::ContextProjected {
-                            source_revision: session.revision,
-                            view: Some(projection.clone()),
-                            projection: Vec::new(),
-                        },
-                    ) {
-                        let _ = error;
-                    } else {
-                        session = store.load_session(session_id)?;
-                    }
-                }
-                (projection, prompt_cache_lineage, representation_measurement)
-            };
-            let discovery = task.contract.is_none() || task.amendment_pending;
-            let policy = if let Some(intake) = task.intake {
-                self.store
-                    .lock()
-                    .await
-                    .artifacts()
-                    .read(intake)
-                    .map_err(StoreError::from)?
-            } else {
-                Vec::new()
-            };
-            let mut instructions = if native {
-                let mut sections = Vec::with_capacity(5);
-                sections.push(NATIVE_INSTRUCTIONS.to_owned());
-                // Tool-choice advice does not change the persisted admission identity.
-                sections.push("Use direct native tools for normal work. interpreter_eval is optional: use it for data-heavy filtering or multi-step composition that benefits from retained working values. Do not wrap ordinary reads, searches, edits, or commands in interpreter cells. If a cell fails, continue with direct tools when possible. Keep completed inner-call receipts and never automatically repeat an unknown effect.".to_owned());
-                sections.push(format!(
-                    "Pinned harness behavior:\n{}",
-                    session
-                        .behavior_instructions()
-                        .map_err(HostError::Invalid)?
-                ));
-                sections.push(format!("Original user request:\n{}", task.request));
-                sections.push(format!(
-                    "Protected intake policy:\n{}",
-                    String::from_utf8_lossy(&policy)
-                ));
-                sections.join("\n\n")
-            } else {
-                let mut instruction_sections = Vec::with_capacity(5);
-                if task
-                    .contract
-                    .as_ref()
-                    .is_some_and(|contract| !contract.open_questions.is_empty())
-                {
-                    instruction_sections.push("The contract has unresolved product questions. Continue workspace research to ground them; report a precise blocker if user input is needed. Do not claim completion while these questions remain unresolved.".to_owned());
-                }
-                if discovery {
-                    instruction_sections.push(ADMISSION_INSTRUCTIONS.to_owned());
-                }
-                instruction_sections.push(format!(
-                    "Pinned harness behavior:\n{}",
-                    session
-                        .behavior_instructions()
-                        .map_err(HostError::Invalid)?
-                ));
-                instruction_sections.push(format!("Original user request:\n{}", task.request));
-                instruction_sections.push(format!(
-                    "Protected intake policy:\n{}",
-                    String::from_utf8_lossy(&policy)
-                ));
-                instruction_sections.push(format!(
-                    "Authoritative task contract:\n{}",
-                    serde_json::to_string(&task.contract)?
-                ));
-                instruction_sections.join("\n\n")
-            };
-            if !native && task.amendment_pending {
-                let artifacts = self.store.lock().await.artifacts().clone();
-                let directives = task.directives.iter().map(|(id, digest)| Ok(json!({"request":id,"input":crate::input::load(*digest, &artifacts)?.messages}))).collect::<Result<Vec<Value>, StoreError>>()?;
-                instructions.push_str(&format!("\n\nRecorded user follow-ups (data from the authenticated operator):\n{}\nPrefer admitting these follow-ups with propose_contract before implementation; workspace tools remain available. Propose additions with new requirement/check IDs. Existing requirements, checks, limits, protected behavior, original outcome and scope are retained by the host. Reusing an existing ID with changed meaning is rejected. A follow-up cannot silently weaken the previous contract.", serde_json::to_string(&directives)?));
-            }
-            self.prepare_context(
-                &mut context_session,
-                session_id,
-                request,
-                call,
-                &mut instructions,
-                &cancellation,
-            )
-            .await?;
-            let mut definitions = if native {
-                native_tool_definitions()
-            } else {
-                tool_definitions(discovery)
-            };
-            if self.experimental_context_transitions {
-                definitions.push(crate::context::transitions::tool_definition());
-                instructions.push_str(&format!("\n\nExperimental context transitions are enabled. Settled source history: [0, {}). Current request history is a protected native live tail. Use read_context for exact indexed source. Summaries are derived, may omit obligations, and never alter task truth or completion checks.", session.settled_history_items));
-            }
-            let context_definitions = context_session
-                .as_ref()
-                .map(|context| context.definitions(ContextAccess::ReadWrite))
-                .unwrap_or_default();
-            let context_tools = context_definitions
-                .iter()
-                .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
-                .collect::<std::collections::BTreeSet<_>>();
-            definitions.extend(context_definitions);
-            let allowed_tools = definitions
-                .iter()
-                .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
-                .collect::<std::collections::BTreeSet<_>>();
-            let artifacts = self.store.lock().await.artifacts().clone();
-            let mut paired_input_tokens = BTreeMap::new();
-            let (projection, mut materialized_input) =
-                if let Some(segment) = representation_measurement {
-                    let mut bitmap_projection = projection;
-                    let bitmap_input =
-                        materialize_context_projection(&mut bitmap_projection, &artifacts)?;
-                    let mut native_projection = bitmap_projection.clone();
-                    select_native_representation(&mut native_projection, segment);
-                    let native_input =
-                        materialize_context_projection(&mut native_projection, &artifacts)?;
-                    let (native_count, bitmap_count) = tokio::join!(
-                        self.provider
-                            .count_input_tokens(session.model(), &native_input),
-                        self.provider
-                            .count_input_tokens(session.model(), &bitmap_input),
-                    );
-                    match (native_count, bitmap_count) {
-                        (Ok(native), Ok(bitmap)) => {
-                            paired_input_tokens.insert(
-                                segment,
-                                crate::context_cost::PairedInputTokens { native, bitmap },
-                            );
-                            if bitmap < native {
-                                (bitmap_projection, bitmap_input)
-                            } else {
-                                (native_projection, native_input)
-                            }
-                        }
-                        _ => (native_projection, native_input),
-                    }
-                } else {
-                    let mut projection = projection;
-                    let input = materialize_context_projection(&mut projection, &artifacts)?;
-                    (projection, input)
-                };
-            let using_bitmap_context = projection.manifest.segments.iter().any(|segment| {
-                matches!(
-                    segment.representation,
-                    crate::context::ContextRepresentation::Bitmap(_)
-                )
-            });
-            let sent_input = crate::Digest::of_value(&materialized_input)?;
-            let stable_segments = projection
-                .manifest
-                .segments
-                .iter()
-                .filter(|segment| {
-                    matches!(
-                        segment.role,
-                        crate::context::ContextSegmentRole::StableHistory
-                            | crate::context::ContextSegmentRole::DerivedSummary
-                    )
-                })
-                .map(|segment| {
-                    let start = usize::try_from(segment.input_range.start)
-                        .map_err(|_| HostError::Invalid("context segment range is invalid"))?;
-                    let end = usize::try_from(segment.input_range.end)
-                        .map_err(|_| HostError::Invalid("context segment range is invalid"))?;
-                    let input = materialized_input
-                        .get(start..end)
-                        .ok_or(HostError::Invalid("context segment range is invalid"))?;
-                    crate::Digest::of_value(input).map_err(HostError::from)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let live_input = materialized_input.split_off(projection.manifest.stable_input_items);
-            let prompt_input =
-                PromptInput::segmented(materialized_input, live_input, stable_segments)
-                    .map_err(|_| HostError::Invalid("inference context segmentation is invalid"))?;
-            let inference = InferenceRequest::new_segmented(
-                session.model(),
-                prompt_input,
-                definitions,
-                instructions,
-                session_id.to_string(),
-                crate::context::output_token_limit(session.context_window_tokens()),
-            )
-            .and_then(|request| request.with_prompt_cache_key(prompt_cache_lineage.to_string()))
-            .map_err(|_| {
-                HostError::Invalid("inference context could not be represented without loss")
-            })?;
-            {
-                let mut store = self.store.lock().await;
-                if store.load(task.id)?.scope_revision != scope_revision {
-                    drop(store);
-                    return self
-                        .end_task(
-                            session_id,
-                            request,
-                            task.id,
-                            Outcome::Blocked,
-                            "User input superseded this prepared provider request before dispatch"
-                                .into(),
-                            emit,
-                        )
-                        .await;
-                }
-                let reservation = if native {
-                    store.reserve_model_call_without_budget_limit(task.id, call)
-                } else {
-                    store.reserve_model_call(task.id, call)
-                };
-                match reservation {
-                    Ok(state) => task = state,
-                    Err(StoreError::Budget) => {
-                        drop(store);
-                        return self
-                            .end_task(
-                                session_id,
-                                request,
-                                task.id,
-                                Outcome::BudgetExhausted,
-                                "Task execution budget exhausted".into(),
-                                emit,
-                            )
-                            .await;
-                    }
-                    Err(StoreError::Cancelled) => {
-                        drop(store);
-                        return self
-                            .end_task(
-                                session_id,
-                                request,
-                                task.id,
-                                Outcome::Cancelled,
-                                "Cancelled by user".into(),
-                                emit,
-                            )
-                            .await;
-                    }
-                    Err(error) => return Err(error.into()),
-                }
-            }
-            {
-                let mut store = self.store.lock().await;
-                crate::trace::record_dispatch(
-                    &mut store, session_id, request, task.id, None, call, &inference,
-                )?;
-            }
-            let streaming = emit.clone();
-            let response = self
-                .provider
-                .respond(&inference, &cancellation, move |delta| {
-                    streaming(HostUpdate::Provisional {
-                        session: session_id,
-                        request,
-                        delta,
-                    })
-                })
-                .await;
-            self.schedule_context_render(
-                session_id,
-                projection.clone(),
-                session.clone(),
-                cancellation.clone(),
-            )
-            .await;
-            let representation = representation_observation(
-                session.model().model,
-                &projection,
-                inference.cache_identity(),
-                &response,
-                paired_input_tokens,
-            )?;
-            record_provider_cost(&self.store, session_id, request, call, &response).await?;
-            let retryable_rejection = response.retryable_pre_generation_rejection();
-            let tokens = response.accounted_tokens();
-            {
-                let mut store = self.store.lock().await;
-                let report = store
-                    .artifacts()
-                    .put(&serde_json::to_vec(
-                        &json!({"version":3,"model":session.model(),"harness_binding":session.admission().map(SessionAdmissionProfile::binding),"host_config":self.config_identity,"adapter_version":env!("CARGO_PKG_VERSION"),"context":projection.manifest,"cache":inference.cache_identity(),"sent_input":sent_input,"representation":representation,"outcome":response}),
-                    )?)
-                    .map_err(StoreError::from)?;
-                let status = if cancellation.is_cancelled() {
-                    ModelCallStatus::Cancelled
-                } else if response
-                    .response
-                    .as_ref()
-                    .is_some_and(|output| output.status == ResponseStatus::Completed)
-                    && response.failure.is_none()
-                {
-                    ModelCallStatus::Completed
-                } else {
-                    ModelCallStatus::Failed
-                };
-                store.record_model_call(
-                    task.id,
-                    call,
-                    ModelCallReceipt {
-                        status,
-                        tokens,
-                        report,
-                    },
-                )?;
-            }
-            let retry_native_context = using_bitmap_context
-                && response.response.is_none()
-                && response.partial_text.is_empty()
-                && response.partial_items.is_empty()
-                && response.attempts.iter().all(|attempt| !attempt.dispatched)
-                && response.failure.as_ref().is_some_and(|failure| {
-                    matches!(
-                        failure.kind,
-                        crate::inference::FailureKind::InvalidRequest
-                            | crate::inference::FailureKind::SizeLimit
-                    )
-                });
-            if retry_native_context {
-                force_native_context = true;
-                continue;
-            }
-            if self.store.lock().await.load(task.id)?.scope_revision != scope_revision {
-                return self.end_task(session_id, request, task.id, Outcome::Blocked, "Provider response retained as an attempt receipt; its authority was superseded by user input".into(), emit).await;
-            }
-            if retryable_rejection
-                && provider_retries < MAX_RECOVERABLE_PROVIDER_RETRIES
-                && !cancellation.is_cancelled()
-            {
-                // Re-enter admission so each retry keeps its own receipt and budget charge.
-                let retry = provider_retries;
-                provider_retries += 1;
-                if self.wait_for_provider_retry(retry, &cancellation).await {
-                    continue;
-                }
-            }
-            provider_retries = 0;
-            let Some(output) = response.response.filter(|output| {
-                output.status == ResponseStatus::Completed && response.failure.is_none()
-            }) else {
-                let outcome = if cancellation.is_cancelled() {
-                    deadline
-                        .as_ref()
-                        .map_or(Outcome::Cancelled, TaskDeadline::cancellation_outcome)
-                } else {
-                    Outcome::Failed
-                };
-                let mut reason = "Provider request did not complete".to_owned();
-                if let Some(failure) = &response.failure {
-                    reason.push_str(&format!(": {}", failure.kind));
-                    if let Some(status) = failure.http_status {
-                        reason.push_str(&format!(" (HTTP {status})"));
-                    }
-                }
-                reason.push_str("; partial output is not acceptance evidence");
-                return self
-                    .end_task(session_id, request, task.id, outcome, reason, emit)
-                    .await;
-            };
-            if tokens.is_none() && !native {
-                return self.end_task(session_id, request, task.id, Outcome::BudgetExhausted, "Provider token usage is unknown; the configured token allowance cannot be established".into(), emit).await;
-            }
-            {
-                let mut store = self.store.lock().await;
-                task = store.load(task.id)?;
-                let mut state = store.load_session(session_id)?;
-                state = store.session_command(
-                    session_id,
-                    state.revision,
-                    Uuid::new_v5(&call, b"provider-usage"),
-                    SessionCommand::ProviderUsage {
-                        request,
-                        call: Some(call),
-                        usage: output.usage.clone(),
-                        representation: Some(representation.clone()),
-                    },
-                )?;
-                store.session_command(
-                    session_id,
-                    state.revision,
-                    Uuid::new_v5(&call, b"response"),
-                    SessionCommand::Response {
-                        request,
-                        items: output.history_items,
-                    },
-                )?;
-            }
-            let proposals = output
-                .output
-                .into_iter()
-                .filter_map(|item| match item {
-                    OutputItem::ToolProposal(proposal) => Some(proposal),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            if proposals.is_empty() {
-                if native {
-                    // Ordinary prose ends a native task: there is no contract
-                    // and no certificate, only the model's own account.
-                    return self
-                        .end_task(
-                            session_id,
-                            request,
-                            task.id,
-                            Outcome::FinishedUnverified,
-                            "Finished on the native host without verification evidence".into(),
-                            emit,
-                        )
-                        .await;
-                }
-                if discovery {
-                    self.feedback(session_id, "The task still has no accepted executable contract. Inspect the source and submit propose_contract; final prose does not establish a verifiable contract or satisfy the request.").await?;
-                    continue;
-                }
-                let (working, baseline, baseline_path) = workspace.isolated()?;
-                if let Some(completed) = self
-                    .try_complete(
-                        session_id,
-                        request,
-                        task.id,
-                        working,
-                        baseline,
-                        baseline_path,
-                        cancellation.clone(),
-                        emit.clone(),
-                    )
-                    .await?
-                {
-                    return self.finish_run(request, completed, emit).await;
-                }
-                self.feedback(session_id, "The host rejected completion. Use task_status and verify_task to inspect the unmet obligations, change the implementation, then propose completion again. Repeating a final answer cannot satisfy the contract.").await?;
-                continue;
-            }
-            let exclusive_control = proposals.len() == 1;
-            for proposal in proposals {
-                if cancellation.is_cancelled() {
-                    break;
-                }
-                let args = if proposal.validity == ArgumentValidity::JsonObject {
-                    serde_json::from_str::<Value>(&proposal.arguments).ok()
-                } else {
-                    None
-                };
-                emit(HostUpdate::ToolStarted {
-                    session: session_id,
-                    call_id: proposal.call_id.clone(),
-                    name: proposal.name.clone(),
-                    arguments: args.clone().unwrap_or(Value::Null),
-                });
-                let result = match args {
-                    None => {
-                        json!({"error":"tool arguments must be a JSON object; no semantic repair was attempted"})
-                    }
-                    Some(_) if !allowed_tools.contains(&proposal.name) => {
-                        json!({"error":"this tool is not admitted in the current task phase"})
-                    }
-                    Some(args) => {
-                        if matches!(
-                            proposal.name.as_str(),
-                            "propose_completion"
-                                | "report_blocker"
-                                | "propose_contract"
-                                | "transition_context"
-                        ) && !exclusive_control
-                        {
-                            json!({"error":"completion, contract, blocker and context transition proposals must be the only tool call in their response; settle other work first"})
-                        } else if proposal.name == "propose_contract" {
-                            if native {
-                                json!({"error":"native host mode does not admit contracts; continue the work directly and finish with a summary or propose_completion"})
-                            } else {
-                                let (_, baseline, _) = workspace.isolated()?;
-                                self.admit_proposal(task.id, scope_revision, args, baseline)
-                                    .await?
-                            }
-                        } else if context_tools.contains(&proposal.name) {
-                            if self.store.lock().await.load(task.id)?.scope_revision
-                                != scope_revision
-                            {
-                                json!({"error":"tool proposal predates a user follow-up"})
-                            } else {
-                                Self::execute_context_tool(
-                                    context_session
-                                        .as_deref_mut()
-                                        .expect("admitted context service"),
-                                    &proposal.name,
-                                    args,
-                                    ContextAccess::ReadWrite,
-                                    &cancellation,
-                                )
-                                .await
-                            }
-                        } else if proposal.name == "read_review_feedback" {
-                            self.read_review_feedback(session_id, args).await?
-                        } else if proposal.name == "transition_context" {
-                            self.transition_context(session_id, request, &proposal.call_id, args)
-                                .await?
-                        } else if proposal.name == "read_context" {
-                            self.read_context(session_id, args).await?
-                        } else if proposal.name == "interpreter_eval" {
-                            self.evaluate_cell(
-                                session_id,
-                                request,
-                                task.id,
-                                scope_revision,
-                                &proposal.call_id,
-                                args,
-                                &allowed_tools,
-                                &workspace,
-                                cancellation.clone(),
-                                emit.clone(),
-                            )
-                            .await?
-                        } else if proposal.name == "read_legacy" {
-                            #[derive(Deserialize)]
-                            #[serde(deny_unknown_fields)]
-                            struct Query {
-                                #[serde(default)]
-                                cursor: Option<crate::import::ImportCursor>,
-                            }
-                            match serde_json::from_value::<Query>(args) {
-                                Ok(query) => match self
-                                    .legacy_page(session_id, query.cursor, 8, 16 * 1024)
-                                    .await
-                                {
-                                    Ok(page) => {
-                                        json!({"source":"historical data; not current authority or execution evidence","page":page})
-                                    }
-                                    Err(error) => json!({"error":error.to_string()}),
-                                },
-                                Err(error) => json!({"error":error.to_string()}),
-                            }
-                        } else if proposal.name == "propose_completion" {
-                            if !args.as_object().is_some_and(|args| args.is_empty()) {
-                                json!({"error":"propose_completion takes no arguments"})
-                            } else if native {
-                                // An explicit native finish is accepted as-is:
-                                // the task ends without checks or a certificate.
-                                self.record_tool_result(
-                                    session_id,
-                                    request,
-                                    &proposal,
-                                    &json!({"accepted":true,"finished_unverified":true}),
-                                    emit.clone(),
-                                )
-                                .await?;
-                                return self
-                                    .end_task(
-                                        session_id,
-                                        request,
-                                        task.id,
-                                        Outcome::FinishedUnverified,
-                                        "Finished on the native host without verification evidence"
-                                            .into(),
-                                        emit,
-                                    )
-                                    .await;
-                            } else {
-                                let (working, baseline, baseline_path) = workspace.isolated()?;
-                                if let Some(completed) = self
-                                    .try_complete(
-                                        session_id,
-                                        request,
-                                        task.id,
-                                        working,
-                                        baseline,
-                                        baseline_path,
-                                        cancellation.clone(),
-                                        emit.clone(),
-                                    )
-                                    .await?
-                                {
-                                    let result = json!({"accepted":true,"certificate":completed.task.certificates.last()});
-                                    self.record_tool_result(
-                                        session_id,
-                                        request,
-                                        &proposal,
-                                        &result,
-                                        emit.clone(),
-                                    )
-                                    .await?;
-                                    return self.finish_run(request, completed, emit).await;
-                                } else {
-                                    json!({"accepted":false,"reason":"required evidence did not satisfy the completion contract"})
-                                }
-                            }
-                        } else if proposal.name == "report_blocker" {
-                            #[derive(Deserialize)]
-                            #[serde(deny_unknown_fields)]
-                            struct Blocker {
-                                reason: String,
-                            }
-                            match serde_json::from_value::<Blocker>(args) {
-                                Ok(blocker) if !blocker.reason.trim().is_empty() => {
-                                    self.record_tool_result(
-                                        session_id,
-                                        request,
-                                        &proposal,
-                                        &json!({"reported":true,"reason":blocker.reason}),
-                                        emit.clone(),
-                                    )
-                                    .await?;
-                                    return self
-                                        .end_task(
-                                            session_id,
-                                            request,
-                                            task.id,
-                                            Outcome::Blocked,
-                                            blocker.reason,
-                                            emit,
-                                        )
-                                        .await;
-                                }
-                                _ => json!({"error":"a nonempty blocker reason is required"}),
-                            }
-                        } else {
-                            self.dispatch(
-                                session_id,
-                                request,
-                                task.id,
-                                scope_revision,
-                                &proposal.name,
-                                &proposal.call_id,
-                                args,
-                                &workspace,
-                                cancellation.clone(),
-                            )
-                            .await?
-                        }
-                    }
-                };
-                self.record_tool_result(session_id, request, &proposal, &result, emit.clone())
-                    .await?;
-            }
-        }
-    }
-
     /// Materialize the isolated working tree and its immutable baseline from
     /// committed state. Never touches the user's source directory: all copies
     /// live under the host state root, and removals only ever target the
@@ -2355,15 +1576,19 @@ impl Host {
         fs::create_dir_all(&directory)?;
         let working = directory.join("working");
         let baseline_path = directory.join(format!("baseline-{}", task.generation));
-        let baseline = {
-            let mut store = self.store.lock().await;
-            let baseline = if let Some(baseline) = &task.baseline {
-                Snapshot::load(baseline.source, store.artifacts())?
+        loop {
+            let (expected, artifacts) = {
+                let store = self.store.lock().await;
+                (store.load(task.id)?, store.artifacts().clone())
+            };
+            task = expected.clone();
+            let (origin, baseline, baseline_candidate) = if let Some(recorded) = &expected.baseline
+            {
+                (None, Snapshot::load(recorded.source, &artifacts)?, None)
             } else {
-                let (origin, baseline) = self.prepare_workspace(session, store.artifacts())?;
-                let source = baseline.publish(store.artifacts())?;
-                let environment = store
-                    .artifacts()
+                let (origin, baseline) = self.prepare_workspace(session, &artifacts)?;
+                let source = baseline.publish(&artifacts)?;
+                let environment = artifacts
                     .put(&serde_json::to_vec(
                         &self
                             .executor
@@ -2374,76 +1599,94 @@ impl Host {
                             .environment(),
                     )?)
                     .map_err(StoreError::from)?;
-                task = store.establish_workspace(
-                    task.id,
-                    task.revision,
-                    origin,
-                    Candidate {
+                (
+                    Some(origin),
+                    baseline,
+                    Some(Candidate {
                         provenance: None,
                         source,
                         environment,
                         artifact: source,
                         frozen: true,
-                    },
-                )?;
-                baseline
+                    }),
+                )
             };
-            // No actor could have modified this directory before the first
-            // admitted model call/job. Recover an interrupted initial copy from
-            // the already committed baseline, never a changed user workspace.
+            let recovered = expected
+                .workspace_override
+                .or_else(|| {
+                    expected
+                        .candidate
+                        .as_ref()
+                        .map(|candidate| candidate.source)
+                })
+                .map(|source| Snapshot::load(source, &artifacts))
+                .transpose()?
+                .unwrap_or_else(|| baseline.clone());
+            recovered.verify_artifacts(&artifacts)?;
+            #[cfg(test)]
+            let derivation_gate = self
+                .derivation_gate
+                .lock()
+                .expect("derivation gate poisoned")
+                .clone();
+            let staged_working = workspace::StagedTree::materialize(
+                &directory,
+                "working-stage",
+                &recovered,
+                &artifacts,
+                #[cfg(test)]
+                derivation_gate.as_deref(),
+            )
+            .await?;
+            let staged_baseline = workspace::StagedTree::materialize(
+                &directory,
+                "baseline-stage",
+                &baseline,
+                &artifacts,
+                #[cfg(test)]
+                None,
+            )
+            .await?;
+
+            let mut store = self.store.lock().await;
+            let current = store.load(task.id)?;
+            if !workspace::predicates_match(&expected, &current) {
+                drop(store);
+                continue;
+            }
+            if let (Some(origin), Some(candidate)) = (origin, baseline_candidate) {
+                task = store.establish_workspace(task.id, current.revision, origin, candidate)?;
+            } else {
+                task = current;
+            }
+            let retired_working = if working.exists() {
+                Some(staged_working.exchange(&working)?)
+            } else {
+                staged_working.publish_noclobber(&working)?;
+                None
+            };
+            let retired_baseline = if baseline_path.exists() {
+                Some(staged_baseline.exchange(&baseline_path)?)
+            } else {
+                staged_baseline.publish_noclobber(&baseline_path)?;
+                None
+            };
             if let Some(source) = task.workspace_override {
-                let snapshot = Snapshot::load(source, store.artifacts())?;
-                snapshot.verify_artifacts(store.artifacts())?;
-                if working.exists() {
-                    fs::remove_dir_all(&working)?;
-                }
-                snapshot.materialize(&working, store.artifacts(), false)?;
                 task = store.workspace_restored(task.id, task.revision, source)?;
             }
-            if working.exists()
-                && task.model_reservations.is_empty()
-                && task.jobs.is_empty()
-                && task.candidate.is_none()
-                && !baseline.matches_exact(&working)?
-            {
-                fs::remove_dir_all(&working)?;
-            }
-            if working.exists() {
-                Snapshot::capture(&working, SnapshotPolicy::default(), store.artifacts())?;
-            } else {
-                let recovered = task
-                    .candidate
-                    .as_ref()
-                    .map(|candidate| Snapshot::load(candidate.source, store.artifacts()))
-                    .transpose()?
-                    .unwrap_or_else(|| baseline.clone());
-                recovered.materialize(&working, store.artifacts(), false)?;
-            }
-            baseline.materialize(&baseline_path, store.artifacts(), false)?;
-            task = store.set_phase(
-                task.id,
-                task.revision,
-                if task
-                    .contract
-                    .as_ref()
-                    .is_some_and(|contract| contract.open_questions.is_empty())
-                    && !task.amendment_pending
-                {
-                    Phase::Implement
-                } else {
-                    Phase::Understand
+            task = store.set_phase(task.id, task.revision, task_phases::next_phase(&task))?;
+            drop(store);
+            drop(retired_working);
+            drop(retired_baseline);
+            return Ok((
+                task,
+                TaskWorkspace::Isolated {
+                    working,
+                    baseline,
+                    baseline_path,
                 },
-            )?;
-            baseline
-        };
-        Ok((
-            task,
-            TaskWorkspace::Isolated {
-                working,
-                baseline,
-                baseline_path,
-            },
-        ))
+            ));
+        }
     }
 
     async fn install_finished_context_render(
@@ -2936,17 +2179,18 @@ impl Host {
                 input,
                 environment,
             };
-            let (state, job) = if native {
-                store.start_execution_job_without_budget_limit(
-                    task_id,
-                    state.revision,
-                    mutates,
-                    u64::MAX,
-                    invocation,
-                )?
+            let timeout_ms = if native && name == "exec_command" {
+                DEFAULT_EXEC_TIMEOUT_MS
             } else {
-                store.start_execution_job(task_id, state.revision, mutates, 60_000, invocation)?
+                60_000
             };
+            let (state, job) = store.start_execution_job(
+                task_id,
+                state.revision,
+                mutates,
+                timeout_ms,
+                invocation,
+            )?;
             (state, job, mutates)
         };
         // Native jobs address the session workspace directly; isolated jobs
@@ -2980,7 +2224,12 @@ impl Host {
                 let run = native_tools
                     .execute_recorded(name, arguments, context, cancellation.clone())
                     .await;
-                let unreconcilable = run
+                let unreconcilable = run.execution.as_ref().is_some_and(|execution| {
+                    matches!(
+                        execution.status,
+                        crate::capabilities::host::NativeExecutionStatus::Unknown(_)
+                    )
+                }) || run
                     .result
                     .as_ref()
                     .is_err_and(|error| error.requires_reconciliation());
@@ -3010,7 +2259,12 @@ impl Host {
                     ))?
                     .execute_recorded(name, arguments, context, cancellation.clone())
                     .await;
-                let unreconcilable = run
+                let unreconcilable = run.execution.as_ref().is_some_and(|execution| {
+                    matches!(
+                        execution.status,
+                        crate::runtime::ExecutionStatus::Unknown(_)
+                    )
+                }) || run
                     .result
                     .as_ref()
                     .is_err_and(|error| error.requires_reconciliation());
@@ -3063,87 +2317,112 @@ impl Host {
         let executor = self.executor.as_ref().ok_or(HostError::Invalid(
             "candidate freezing requires the Docker executor",
         ))?;
-        let (snapshot, source, environment, state, artifacts) = {
-            let store = self.store.lock().await;
-            let snapshot =
-                Snapshot::capture(working, SnapshotPolicy::default(), store.artifacts())?;
-            let source = snapshot.publish(store.artifacts())?;
-            let environment = store
-                .artifacts()
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(StoreError::Cancelled.into());
+            }
+            let (state, artifacts) = {
+                let store = self.store.lock().await;
+                (store.load(task)?, store.artifacts().clone())
+            };
+            let snapshot = Snapshot::capture(working, SnapshotPolicy::default(), &artifacts)?;
+            let source = snapshot.publish(&artifacts)?;
+            let environment = artifacts
                 .put(&serde_json::to_vec(&executor.environment())?)
                 .map_err(StoreError::from)?;
-            (
-                snapshot,
-                source,
-                environment,
-                store.load(task)?,
-                store.artifacts().clone(),
-            )
-        };
-        let delivery_kind = state.accepted_contract()?.delivery;
-        let cached = state.candidate.as_ref().filter(|candidate| {
-            candidate.source == source
-                && candidate.environment == environment
-                && candidate.frozen
-                && (delivery_kind == DeliveryKind::Source || candidate.provenance.is_some())
-        });
-        let candidate = if let Some(candidate) = cached {
-            candidate.clone()
-        } else if state.accepted_contract()?.delivery == DeliveryKind::Patch {
-            let baseline_source = state
-                .baseline
-                .as_ref()
-                .ok_or(HostError::Invalid("patch requires an immutable baseline"))?
-                .source;
-            let baseline = Snapshot::load(baseline_source, &artifacts)?;
-            let scratch = self.root.join("patch-scratch");
-            fs::create_dir_all(&scratch)?;
-            let patch = PatchBuilder::new(PatchLimits::default())?
-                .build(&baseline, &snapshot, &artifacts, &scratch, cancellation)
-                .await?;
-            Candidate {
-                source,
-                environment,
-                artifact: patch.patch,
-                frozen: true,
-                provenance: Some(patch.receipt_digest),
-            }
-        } else {
-            Candidate {
-                source,
-                environment,
-                artifact: source,
-                frozen: true,
-                provenance: None,
-            }
-        };
-        {
-            let mut store = self.store.lock().await;
-            let current = store.load(task)?;
-            if current.revision != state.revision {
-                return Err(StoreError::Revision {
-                    expected: state.revision,
-                    actual: current.revision,
+            let delivery_kind = state.accepted_contract()?.delivery;
+            let cached = state.candidate.as_ref().filter(|candidate| {
+                candidate.source == source
+                    && candidate.environment == environment
+                    && candidate.frozen
+                    && (delivery_kind == DeliveryKind::Source || candidate.provenance.is_some())
+            });
+            let candidate = if let Some(candidate) = cached {
+                candidate.clone()
+            } else if delivery_kind == DeliveryKind::Patch {
+                let baseline_source = state
+                    .baseline
+                    .as_ref()
+                    .ok_or(HostError::Invalid("patch requires an immutable baseline"))?
+                    .source;
+                let baseline = Snapshot::load(baseline_source, &artifacts)?;
+                let scratch = self.root.join("patch-scratch");
+                fs::create_dir_all(&scratch)?;
+                let patch = PatchBuilder::new(PatchLimits::default())?
+                    .build(
+                        &baseline,
+                        &snapshot,
+                        &artifacts,
+                        &scratch,
+                        cancellation.clone(),
+                    )
+                    .await?;
+                Candidate {
+                    source,
+                    environment,
+                    artifact: patch.patch,
+                    frozen: true,
+                    provenance: Some(patch.receipt_digest),
                 }
-                .into());
+            } else {
+                Candidate {
+                    source,
+                    environment,
+                    artifact: source,
+                    frozen: true,
+                    provenance: None,
+                }
+            };
+            let parent = self.root.join("candidates").join(task.to_string());
+            #[cfg(test)]
+            let derivation_gate = self
+                .derivation_gate
+                .lock()
+                .expect("derivation gate poisoned")
+                .clone();
+            let staged = workspace::StagedTree::materialize(
+                &parent,
+                "candidate-stage",
+                &snapshot,
+                &artifacts,
+                #[cfg(test)]
+                derivation_gate.as_deref(),
+            )
+            .await?;
+            let path = parent.join(source.to_string());
+            let destination_matches = path.exists() && snapshot.matches_exact(&path)?;
+            let mut store = self.store.lock().await;
+            let mut current = store.load(task)?;
+            if !workspace::predicates_match(&state, &current) {
+                drop(store);
+                continue;
+            }
+            if path.exists() {
+                if !destination_matches {
+                    return Err(HostError::Invalid(
+                        "frozen candidate directory changed outside the controller",
+                    ));
+                }
+            } else if !staged.publish_noclobber(&path)? {
+                drop(store);
+                if !snapshot.matches_exact(&path)? {
+                    return Err(HostError::Invalid(
+                        "frozen candidate directory changed outside the controller",
+                    ));
+                }
+                store = self.store.lock().await;
+                current = store.load(task)?;
+                if !workspace::predicates_match(&state, &current) {
+                    drop(store);
+                    continue;
+                }
             }
             if current.candidate.as_ref() != Some(&candidate) {
                 store.select_candidate(task, current.revision, candidate)?;
             }
+            drop(store);
+            return Ok((snapshot, path));
         }
-        let parent = self.root.join("candidates").join(task.to_string());
-        fs::create_dir_all(&parent)?;
-        let path = parent.join(source.to_string());
-        if path.exists() {
-            if !snapshot.matches_exact(&path)? {
-                return Err(HostError::Invalid(
-                    "frozen candidate directory changed outside the controller",
-                ));
-            }
-        } else {
-            snapshot.materialize(&path, &artifacts, false)?;
-        }
-        Ok((snapshot, path))
     }
 
     async fn verify(
@@ -3231,59 +2510,121 @@ impl Host {
                     .await?;
             }
         }
-        let mut store = self.store.lock().await;
-        let mut state = store.load(task)?;
-        let candidate = state
-            .candidate
-            .as_ref()
-            .ok_or(HostError::Invalid("candidate invalidated before delivery"))?
-            .clone();
-        let source = candidate.source;
-        let parent = self.root.join("deliveries").join(task.to_string());
-        fs::create_dir_all(&parent)?;
-        let destination = if state.accepted_contract()?.delivery == DeliveryKind::Patch {
-            use std::io::Write;
-            let destination = parent.join(format!("{}.patch", candidate.artifact));
-            let bytes = store
-                .artifacts()
-                .read(candidate.artifact)
-                .map_err(StoreError::from)?;
-            if !destination.exists() {
+        let destination = loop {
+            if cancellation.is_cancelled() {
+                return Err(StoreError::Cancelled.into());
+            }
+            let (expected, artifacts) = {
+                let store = self.store.lock().await;
+                (store.load(task)?, store.artifacts().clone())
+            };
+            let candidate = expected
+                .candidate
+                .as_ref()
+                .ok_or(HostError::Invalid("candidate invalidated before delivery"))?
+                .clone();
+            let source = candidate.source;
+            let kind = expected.accepted_contract()?.delivery;
+            let parent = self.root.join("deliveries").join(task.to_string());
+            fs::create_dir_all(&parent)?;
+            let (destination, staged) = if kind == DeliveryKind::Patch {
+                use std::io::Write;
+                let destination = parent.join(format!("{}.patch", candidate.artifact));
+                let bytes = artifacts
+                    .read(candidate.artifact)
+                    .map_err(StoreError::from)?;
                 let mut output = tempfile::NamedTempFile::new_in(&parent)?;
                 output.write_all(&bytes)?;
                 output.as_file().sync_all()?;
-                output
-                    .persist_noclobber(&destination)
-                    .map_err(|error| error.error)?;
-                fs::File::open(&parent)?.sync_all()?;
+                (destination, Some(output))
+            } else {
+                (
+                    parent.join(source.to_string()),
+                    None::<tempfile::NamedTempFile>,
+                )
+            };
+            #[cfg(test)]
+            let derivation_gate = self
+                .derivation_gate
+                .lock()
+                .expect("derivation gate poisoned")
+                .clone();
+            let source_stage = if kind == DeliveryKind::Source {
+                Some(
+                    workspace::StagedTree::materialize(
+                        &parent,
+                        "delivery-publish",
+                        &snapshot,
+                        &artifacts,
+                        #[cfg(test)]
+                        derivation_gate.as_deref(),
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
+            let receipt = artifacts
+                .put(&serde_json::to_vec(&json!({"source":source,"artifact":candidate.artifact,"path":destination,"provenance":candidate.provenance,"verified":true}))?)
+                .map_err(StoreError::from)?;
+            let mut store = self.store.lock().await;
+            let current = store.load(task)?;
+            if !workspace::predicates_match(&expected, &current) {
+                drop(store);
+                drop(staged);
+                drop(source_stage);
+                continue;
             }
-            if crate::Digest::of(&fs::read(&destination)?) != candidate.artifact {
-                return Err(HostError::Invalid("delivered patch bytes changed"));
+            if kind == DeliveryKind::Patch {
+                if !destination.exists() {
+                    staged
+                        .expect("patch staging")
+                        .persist_noclobber(&destination)
+                        .map_err(|error| error.error)?;
+                    fs::File::open(&parent)?.sync_all()?;
+                }
+                drop(store);
+                if crate::Digest::of(&fs::read(&destination)?) != candidate.artifact {
+                    return Err(HostError::Invalid("delivered patch bytes changed"));
+                }
+                store = self.store.lock().await;
+                let current = store.load(task)?;
+                if !workspace::predicates_match(&expected, &current) {
+                    drop(store);
+                    continue;
+                }
+            } else {
+                let staged = source_stage.expect("source staging");
+                if !destination.exists() {
+                    staged.publish_noclobber(&destination)?;
+                }
+                drop(store);
+                if !snapshot.matches_exact(&destination)? {
+                    return Err(HostError::Invalid(
+                        "delivered source no longer matches its manifest",
+                    ));
+                }
+                store = self.store.lock().await;
+                let current = store.load(task)?;
+                if !workspace::predicates_match(&expected, &current) {
+                    drop(store);
+                    continue;
+                }
             }
-            destination
-        } else {
-            let destination = parent.join(source.to_string());
-            if !destination.exists() {
-                snapshot.materialize(&destination, store.artifacts(), false)?;
-            }
-            if !snapshot.matches_exact(&destination)? {
-                return Err(HostError::Invalid(
-                    "delivered source no longer matches its manifest",
-                ));
-            }
-            destination
+            store.record_delivery(
+                task,
+                current.revision,
+                Delivery {
+                    kind,
+                    source,
+                    artifact: candidate.artifact,
+                    receipt,
+                },
+            )?;
+            break destination;
         };
-        let receipt = store.artifacts().put(&serde_json::to_vec(&json!({"source":source,"artifact":candidate.artifact,"path":destination,"provenance":candidate.provenance,"verified":true}))?).map_err(StoreError::from)?;
-        state = store.record_delivery(
-            task,
-            state.revision,
-            Delivery {
-                kind: state.accepted_contract()?.delivery,
-                source,
-                artifact: candidate.artifact,
-                receipt,
-            },
-        )?;
+        let mut store = self.store.lock().await;
+        let state = store.load(task)?;
         match store.complete(task, state.revision) {
             Ok(state) => {
                 let message = format!(
@@ -3324,9 +2665,8 @@ impl Host {
         // Children outliving their parent turn are cancelled with it: an
         // unwaited subagent never leaks past the task that spawned it.
         self.subagents.cancel_for_request(request).await;
+        let state = self.checkpoint_workspace(task).await?;
         let mut store = self.store.lock().await;
-        let state = store.load(task)?;
-        let state = self.checkpoint_workspace(&mut store, state)?;
         let state = store.stop(task, state.revision, outcome, reason.clone())?;
         let session_state = store.save_task_workspace(session, request, task)?;
         store.session_command(
@@ -3356,58 +2696,70 @@ impl Host {
         })
     }
 
-    fn checkpoint_workspace(
-        &self,
-        store: &mut Store,
-        mut state: TaskState,
-    ) -> Result<TaskState, HostError> {
-        if state.workspace_override.is_some() || self.native_tools.is_some() {
-            // A native task has no candidate to checkpoint: the user's live
-            // workspace is the only copy of the work.
-            return Ok(state);
+    async fn checkpoint_workspace(&self, task: TaskId) -> Result<TaskState, HostError> {
+        if self.native_tools.is_some() {
+            return Ok(self.store.lock().await.load(task)?);
         }
         let executor = self.executor.as_ref().ok_or(HostError::Invalid(
             "candidate checkpointing requires the Docker executor",
         ))?;
-        let task = state.id;
         let working = self
             .root
             .join("workspaces")
             .join(task.to_string())
             .join("working");
-        if working.is_dir()
-            && state.origin.is_some()
-            && !state
-                .jobs
-                .values()
-                .any(|job| job.mutates_candidate && job.status.unresolved())
-        {
-            let snapshot =
-                Snapshot::capture(&working, SnapshotPolicy::default(), store.artifacts())?;
-            let source = snapshot.publish(store.artifacts())?;
-            if !state
+        loop {
+            let (state, artifacts) = {
+                let store = self.store.lock().await;
+                (store.load(task)?, store.artifacts().clone())
+            };
+            if state.workspace_override.is_some()
+                || !working.is_dir()
+                || state.origin.is_none()
+                || state
+                    .jobs
+                    .values()
+                    .any(|job| job.mutates_candidate && job.status.unresolved())
+            {
+                return Ok(state);
+            }
+            let snapshot = Snapshot::capture(&working, SnapshotPolicy::default(), &artifacts)?;
+            #[cfg(test)]
+            let derivation_gate = self
+                .derivation_gate
+                .lock()
+                .expect("derivation gate poisoned")
+                .clone();
+            #[cfg(test)]
+            if let Some(gate) = derivation_gate {
+                gate.hold(&snapshot).await;
+            }
+            let source = snapshot.publish(&artifacts)?;
+            let environment = artifacts
+                .put(&serde_json::to_vec(&executor.environment())?)
+                .map_err(StoreError::from)?;
+            let candidate = Candidate {
+                source,
+                environment,
+                artifact: source,
+                provenance: None,
+                frozen: true,
+            };
+            let mut store = self.store.lock().await;
+            let current = store.load(task)?;
+            if !workspace::predicates_match(&state, &current) {
+                drop(store);
+                continue;
+            }
+            if current
                 .candidate
                 .as_ref()
-                .is_some_and(|candidate| candidate.frozen && candidate.source == source)
+                .is_some_and(|current| current.frozen && current.source == source)
             {
-                let environment = store
-                    .artifacts()
-                    .put(&serde_json::to_vec(&executor.environment())?)
-                    .map_err(StoreError::from)?;
-                state = store.select_candidate(
-                    task,
-                    state.revision,
-                    Candidate {
-                        source,
-                        environment,
-                        artifact: source,
-                        provenance: None,
-                        frozen: true,
-                    },
-                )?;
+                return Ok(current);
             }
+            return Ok(store.select_candidate(task, current.revision, candidate)?);
         }
-        Ok(state)
     }
 
     async fn reconcile_unresolved(
@@ -3423,7 +2775,38 @@ impl Host {
             .executor
             .as_ref()
             .map(|executor| executor.environment());
+        let native = self.native_tools.is_some();
         let reconcile = async {
+            for call in state.model_reservations.iter().filter(|call| {
+                state.model_receipts.get(call).is_some_and(|receipt| {
+                    receipt.status == ModelCallStatus::Cancelled && receipt.tokens.is_none()
+                })
+            }) {
+                if !native {
+                    continue;
+                }
+                let previous = &state.model_receipts[call];
+                let report = artifacts.read(previous.report).map_err(StoreError::from)?;
+                let outcome: CallOutcome = serde_json::from_value(
+                    serde_json::from_slice::<Value>(&report)?
+                        .get("outcome")
+                        .cloned()
+                        .ok_or(HostError::Invalid(
+                            "provider attempt report has no recorded outcome",
+                        ))?,
+                )?;
+                if outcome.attempts.iter().any(|attempt| {
+                    attempt.status != crate::inference::AttemptStatus::Cancelled
+                        || !attempt.billing_uncertain
+                }) {
+                    return Err(HostError::Invalid(
+                        "cancelled provider attempt report does not match its receipt",
+                    ));
+                }
+                // A cancelled native transport attempt is structurally settled,
+                // but its provider usage remains unknown.
+                debug_assert_eq!(previous.status, ModelCallStatus::Cancelled);
+            }
             for job in state.jobs.values().filter(|job| job.status.unresolved()) {
                 if cancellation.is_cancelled() {
                     return Err(StoreError::Cancelled.into());
@@ -3821,10 +3204,18 @@ fn native_tool_definitions() -> Vec<Value> {
     tools
 }
 
+// Keep the canonical profile roster policy-independent: configuration identity binds
+// runtime policy, while auxiliary turns reuse this roster to select read_context.
 fn tool_definitions(discovery: bool) -> Vec<Value> {
+    sandbox_tool_definitions(discovery, true)
+}
+
+fn sandbox_tool_definitions(discovery: bool, subagents_enabled: bool) -> Vec<Value> {
     let mut tools = WorkspaceTools::definitions();
     tools.push(interpreter::definition());
-    tools.extend(subagents::Subagents::definitions());
+    if subagents_enabled {
+        tools.extend(subagents::Subagents::definitions());
+    }
     for (name, description, properties, required) in [
         (
             "read_legacy",
@@ -3915,6 +3306,32 @@ mod admission_authority_tests {
         }
     }
 
+    #[test]
+    fn sandbox_definitions_follow_subagent_policy() {
+        let names = |enabled| {
+            sandbox_tool_definitions(false, enabled)
+                .into_iter()
+                .map(|tool| tool["name"].as_str().unwrap().to_owned())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let disabled = names(false);
+        let enabled = names(true);
+
+        for tool in [
+            "spawn_agent",
+            "send_agent_message",
+            "list_agents",
+            "wait_agent",
+            "interrupt_agent",
+            "close_agent",
+        ] {
+            assert!(!disabled.contains(tool), "disabled policy exposed {tool}");
+            assert!(enabled.contains(tool), "enabled policy omitted {tool}");
+        }
+        assert!(disabled.contains("read_context"));
+        assert!(enabled.contains("read_context"));
+    }
+
     fn target(model: crate::inference::ModelSettings) -> TargetProfile {
         TargetProfile::new(
             ModelIdentity::from_digest(crate::Digest::of_value(&model).unwrap()),
@@ -3956,5 +3373,231 @@ mod admission_authority_tests {
             admission_authority(target(model), None, &other_window).unwrap(),
             first_authority
         );
+    }
+}
+
+#[cfg(test)]
+mod full_tree_locking_tests {
+    use super::*;
+    use crate::{
+        contract::{
+            BaselinePolicy, CheckDefinition, CheckKind, ControlRequirement, DeliveryKind,
+            FlakePolicy, Limits, Origin, Requirement,
+        },
+        inference::{
+            Limits as InferenceLimits, Route, Transport,
+            auth::{Auth, SecretString},
+        },
+        session::SessionConfig,
+    };
+
+    fn provider() -> ResponsesClient {
+        ResponsesClient::new(
+            Auth::api_key(SecretString::new("fixture".into())).unwrap(),
+            Route::new(Transport::Http, "http://127.0.0.1:1/responses").unwrap(),
+            InferenceLimits {
+                max_attempts: 1,
+                ..InferenceLimits::default()
+            },
+        )
+        .unwrap()
+    }
+
+    async fn fixture() -> (tempfile::TempDir, Arc<Host>, SessionState, TaskState) {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("value"), "baseline").unwrap();
+        let state_root = root.path().join("state");
+        let host =
+            Arc::new(Host::open(&state_root, provider(), DockerExecutor::test_fixture()).unwrap());
+        let session = SessionId::new();
+        let task = {
+            let mut store = host.store.lock().await;
+            store
+                .create_session(
+                    session,
+                    SessionConfig {
+                        workspace: source,
+                        model: crate::inference::ModelSettings::default(),
+                        instructions: String::new(),
+                        context_window_tokens: crate::context::DEFAULT_WINDOW_TOKENS,
+                    },
+                    None,
+                )
+                .unwrap();
+            let verifier = store
+                .artifacts()
+                .write(b"fixture verifier")
+                .unwrap()
+                .digest();
+            let contract = Contract {
+                request: "exercise full-tree derivation".into(),
+                outcome: "derive the current workspace".into(),
+                scope: "workspace".into(),
+                requirements: vec![Requirement {
+                    id: "tree".into(),
+                    behavior: "derive the current workspace".into(),
+                    origin: Origin::User("exercise full-tree derivation".into()),
+                    checks: vec!["tree".into()],
+                    depends_on: vec![],
+                }],
+                checks: BTreeMap::from([(
+                    "tree".into(),
+                    CheckDefinition {
+                        purpose: "fixture".into(),
+                        kind: CheckKind::Behavior,
+                        verifier,
+                        command: vec!["fixture".into()],
+                        timeout_ms: 1_000,
+                        minimum_assertions: 1,
+                        control: ControlRequirement::None,
+                        control_source: None,
+                        baseline: BaselinePolicy::MustPass,
+                        flake: FlakePolicy::RejectAnyFailure,
+                    },
+                )]),
+                protected_behavior: vec![],
+                assumptions: vec![],
+                open_questions: vec![],
+                delivery: DeliveryKind::Source,
+                limits: Limits::default(),
+            };
+            store
+                .start_task(session, Uuid::new_v4(), contract)
+                .unwrap()
+                .1
+        };
+        let session = host.store.lock().await.load_session(session).unwrap();
+        (root, host, session, task)
+    }
+
+    fn install_gate(
+        host: &Host,
+    ) -> (
+        tokio::sync::mpsc::UnboundedReceiver<Snapshot>,
+        tokio::sync::mpsc::UnboundedSender<()>,
+    ) {
+        let (entered_tx, entered_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (release_tx, release_rx) = tokio::sync::mpsc::unbounded_channel();
+        *host
+            .derivation_gate
+            .lock()
+            .expect("derivation gate poisoned") = Some(Arc::new(workspace::DerivationGate {
+            entered: entered_tx,
+            release: tokio::sync::Mutex::new(release_rx),
+        }));
+        (entered_rx, release_tx)
+    }
+
+    #[tokio::test]
+    async fn held_prepare_isolated_workspace_keeps_host_info_and_journal_read_responsive() {
+        let (_root, host, session, task) = fixture().await;
+        let (mut entered, release) = install_gate(&host);
+        let operation = {
+            let host = host.clone();
+            tokio::spawn(async move { host.prepare_isolated_workspace(&session, task).await })
+        };
+
+        let _ = entered.recv().await.unwrap();
+        let info = tokio::time::timeout(Duration::from_millis(250), host.info())
+            .await
+            .expect("Host::info blocked behind full-tree derivation")
+            .unwrap();
+        let journal = tokio::time::timeout(Duration::from_millis(250), host.journal_page(0, 256))
+            .await
+            .expect("journal read blocked behind full-tree derivation")
+            .unwrap();
+        assert!(info.journal_sequence > 0);
+        assert!(!journal.is_empty());
+
+        release.send(()).unwrap();
+        *host
+            .derivation_gate
+            .lock()
+            .expect("derivation gate poisoned") = None;
+        operation.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn checkpoint_workspace_rejects_stale_derivation_then_publishes_only_fresh_candidate() {
+        let (_root, host, session, task) = fixture().await;
+        let (task, workspace) = host
+            .prepare_isolated_workspace(&session, task)
+            .await
+            .unwrap();
+        let TaskWorkspace::Isolated { working, .. } = workspace else {
+            unreachable!()
+        };
+        fs::write(working.join("value"), "stale").unwrap();
+
+        let (mut entered, release) = install_gate(&host);
+        let operation = {
+            let host = host.clone();
+            tokio::spawn(async move { host.checkpoint_workspace(task.id).await })
+        };
+        let stale = entered.recv().await.unwrap();
+        let stale_source = {
+            let store = host.store.lock().await;
+            stale.publish(store.artifacts()).unwrap()
+        };
+
+        fs::write(working.join("value"), "fresh").unwrap();
+        {
+            let mut store = host.store.lock().await;
+            let current = store.load(task.id).unwrap();
+            store
+                .set_phase(task.id, current.revision, Phase::Baseline)
+                .unwrap();
+        }
+        release.send(()).unwrap();
+        let fresh = entered.recv().await.unwrap();
+        let fresh_source = {
+            let store = host.store.lock().await;
+            fresh.publish(store.artifacts()).unwrap()
+        };
+
+        let during = host.task(task.id).await.unwrap();
+        assert_ne!(
+            during.candidate.as_ref().map(|candidate| candidate.source),
+            Some(stale_source)
+        );
+        assert_ne!(
+            during.candidate.as_ref().map(|candidate| candidate.source),
+            Some(fresh_source)
+        );
+        assert_eq!(
+            host.journal_page(0, 256)
+                .await
+                .unwrap()
+                .iter()
+                .filter(|record| {
+                    record.aggregate == task.id.to_string()
+                        && record.event["type"] == "candidate_selected"
+                })
+                .count(),
+            0
+        );
+
+        release.send(()).unwrap();
+        *host
+            .derivation_gate
+            .lock()
+            .expect("derivation gate poisoned") = None;
+        let published = operation.await.unwrap().unwrap();
+        assert_eq!(published.candidate.as_ref().unwrap().source, fresh_source);
+        assert_ne!(published.candidate.as_ref().unwrap().source, stale_source);
+        let selected = host
+            .journal_page(0, 256)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|record| {
+                record.aggregate == task.id.to_string()
+                    && record.event["type"] == "candidate_selected"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].event["data"]["source"], json!(fresh_source));
     }
 }

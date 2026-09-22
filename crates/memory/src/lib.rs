@@ -23,7 +23,7 @@ pub use evidence::{
 #[cfg(feature = "local")]
 pub use sources::WorkspaceSources;
 mod retrieval;
-#[cfg(any(feature = "client", feature = "local"))]
+#[cfg(any(feature = "client", feature = "local", feature = "server"))]
 mod secrets;
 pub mod server;
 mod store;
@@ -43,9 +43,7 @@ pub use store::{MemoryError, MemoryStore};
 #[cfg(feature = "client")]
 pub use store::{RemoteClientError, RemoteMemoryClient, RemoteToken};
 #[cfg(feature = "tool")]
-pub use tool::{
-    MemoryOperationError, MemoryPermission, MemorySession, MemoryTool, MutationAuthorizer,
-};
+pub use tool::{MemoryOperationError, MemoryPermission, MemorySession};
 
 #[cfg(test)]
 mod tests;

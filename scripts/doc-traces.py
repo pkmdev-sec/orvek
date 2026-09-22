@@ -40,7 +40,7 @@ def source_hashes(root):
 def runtime_hash(root):
     # Hash Rust, Cargo and embedded font inputs without checkout-specific paths.
     paths = sorted({*root.glob("Cargo.*"), *root.glob("rust-toolchain*"),
-                    *(p for directory in ("bin", "crates", "vendor", ".cargo")
+                    *(p for directory in ("bin", "crates", ".cargo")
                       for p in (root / directory).rglob("*")
                       if p.is_file() and p.suffix in (".rs", ".toml", ".lock", ".bin"))})
     return sha256(encoded([(str(p.relative_to(root)), sha256(p.read_bytes())) for p in paths]))

@@ -38,10 +38,7 @@ class OrvekAgent(BaseInstalledAgent):
         effort: str = "low",
         reasoning_mode: str = "standard",
         max_subagents: int = 32,
-        web_search: bool = False,
-        image_generation: bool = False,
         install_node: bool = False,
-        append_instructions: str | None = None,
         minimum_subagents: int = 0,
         fail_on_subagent_error: bool = False,
         require_wait: bool = False,
@@ -91,10 +88,7 @@ class OrvekAgent(BaseInstalledAgent):
         self._effort = effort
         self._reasoning_mode = reasoning_mode
         self._max_subagents = max_subagents
-        self._web_search = web_search
-        self._image_generation = image_generation
         self._install_node = install_node
-        self._append_instructions = append_instructions
         self._minimum_subagents = minimum_subagents
         self._fail_on_subagent_error = fail_on_subagent_error
         self._require_wait = require_wait
@@ -184,13 +178,7 @@ class OrvekAgent(BaseInstalledAgent):
             self._reasoning_mode,
             "--max-subagents",
             str(self._max_subagents),
-            "--web-search",
-            str(self._web_search).lower(),
-            "--image-generation",
-            str(self._image_generation).lower(),
         ]
-        if self._append_instructions:
-            arguments.extend(("--append-instructions", self._append_instructions))
         arguments.extend(("run", "--", prompt))
         return arguments
 

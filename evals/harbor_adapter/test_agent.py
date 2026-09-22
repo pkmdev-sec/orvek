@@ -76,9 +76,6 @@ class ArgumentContractTests(unittest.TestCase):
         agent._effort = "low"
         agent._reasoning_mode = "standard"
         agent._max_subagents = 8
-        agent._web_search = False
-        agent._image_generation = False
-        agent._append_instructions = None
         agent._model = MODEL
         agent._auth_proxy = LocalCodexAuthProxy("unused")
 
@@ -784,7 +781,7 @@ class ConfigurationContractTests(unittest.TestCase):
         self.assertFalse((repository / "pyproject.toml").exists())
         self.assertFalse((repository / "uv.lock").exists())
 
-    def test_terminal_bench_is_pinned_and_disables_external_tools(self) -> None:
+    def test_terminal_bench_is_pinned_and_uses_supported_agent_settings(self) -> None:
         evals_directory = Path(__file__).resolve().parents[1]
         config = yaml.safe_load(
             (evals_directory / "terminal-bench.yaml").read_text(encoding="utf-8")
@@ -794,8 +791,8 @@ class ConfigurationContractTests(unittest.TestCase):
         self.assertEqual(config["environment"]["type"], "docker")
         self.assertNotIn("auth_mode", config["agents"][0]["kwargs"])
         self.assertNotIn("env", config["agents"][0])
-        self.assertIs(config["agents"][0]["kwargs"]["web_search"], False)
-        self.assertIs(config["agents"][0]["kwargs"]["image_generation"], False)
+        self.assertNotIn("web_search", config["agents"][0]["kwargs"])
+        self.assertNotIn("image_generation", config["agents"][0]["kwargs"])
 
     def test_harbor_recipe_passes_dataset_for_cli_filters(self) -> None:
         repository = Path(__file__).resolve().parents[2]

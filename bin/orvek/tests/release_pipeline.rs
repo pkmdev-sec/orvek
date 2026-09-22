@@ -1,7 +1,6 @@
 const RELEASE_WORKFLOW: &str = include_str!("../../../.github/workflows/release.yaml");
 const CACHE_WORKFLOW: &str = include_str!("../../../.github/workflows/cache.yaml");
 const CI_WORKFLOW: &str = include_str!("../../../.github/workflows/ci.yaml");
-const CODSPEED_WORKFLOW: &str = include_str!("../../../.github/workflows/codspeed.yml");
 const RELEASE_TEMPLATE: &str = include_str!("../../../.github/RELEASE_TEMPLATE.md");
 const CHANGELOG_CONFIG: &str = include_str!("../../../cliff.toml");
 const RELEASE_INSTRUCTIONS: &str = include_str!("../../../RELEASES.md");
@@ -93,7 +92,6 @@ fn harbor_context_contains_every_workspace_member() {
         "crates/executor/src",
         "crates/harness/src",
         "crates/memory/src",
-        "examples/orvek-memory-cloudflare/src",
     ] {
         assert_contains(JUSTFILE, source_tree);
     }
@@ -117,17 +115,6 @@ fn harbor_context_contains_every_workspace_member() {
         JUSTFILE,
         "cp crates/memory/Cargo.toml crates/memory/README.md \"$build_context/crates/memory/\"",
     );
-    assert_contains(
-        JUSTFILE,
-        "cp examples/orvek-memory-cloudflare/Cargo.toml \"$build_context/examples/orvek-memory-cloudflare/\"",
-    );
-    assert_contains(
-        JUSTFILE,
-        "cp -R examples/orvek-memory-cloudflare/src \"$build_context/examples/orvek-memory-cloudflare/src\"",
-    );
-    assert!(!JUSTFILE.contains(
-        "cp -R examples/orvek-memory-cloudflare \"$build_context/examples/orvek-memory-cloudflare\""
-    ));
     assert_contains(JUSTFILE, "if [[ -n \"{{platform}}\" ]]; then");
     assert_contains(JUSTFILE, "--platform \"{{platform}}\"");
     assert!(!JUSTFILE.contains("${platform_args[@]}"));
@@ -186,12 +173,10 @@ fn ci_runs_the_ignored_docker_security_suites() {
     let workflow = workflow(CI_WORKFLOW);
     let job = &workflow["jobs"]["docker-security"];
     assert_eq!(job["needs"], "cache");
-    assert_eq!(job["runs-on"], "ubuntu-latest");
-    assert_eq!(
-        job["env"]["ORVEK_WORKSPACE_TEST_IMAGE"],
-        "debian:bookworm-slim"
-    );
-    assert_eq!(job["env"]["ORVEK_EXECUTOR_IMAGE"], "debian:bookworm-slim");
+    assert_eq!(job["runs-on"], "ubuntu-22.04");
+    let pinned_runtime = "debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818";
+    assert_eq!(job["env"]["ORVEK_WORKSPACE_TEST_IMAGE"], pinned_runtime);
+    assert_eq!(job["env"]["ORVEK_EXECUTOR_IMAGE"], pinned_runtime);
     assert_eq!(
         job["env"]["ORVEK_EXECUTOR_HELPER"],
         "${{ github.workspace }}/target/executor/orvek-executor-linux-x86_64"
@@ -203,7 +188,7 @@ fn ci_runs_the_ignored_docker_security_suites() {
         .filter_map(|step| step["run"].as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    assert_contains(&commands, "docker pull debian:bookworm-slim");
+    assert_contains(&commands, "docker pull \"${ORVEK_EXECUTOR_IMAGE}\"");
     assert_contains(&commands, "sh crates/executor/build-linux.sh x86_64");
     assert_contains(&commands, "just test-docker --locked");
     let recipe = JUSTFILE
@@ -394,17 +379,7 @@ fn shared_cache_reads_everywhere_and_writes_only_on_main() {
         assert_eq!(ci["jobs"][job]["needs"], "cache");
         assert!(ci["jobs"][job]["if"].is_null());
     }
-    assert_eq!(ci["jobs"]["benchmarks"]["needs"], "cache");
-    assert_eq!(
-        ci["jobs"]["benchmarks"]["if"],
-        "${{ vars.ORVEK_ENABLE_CODSPEED == 'true' }}"
-    );
-    assert_eq!(
-        ci["jobs"]["benchmarks"]["uses"],
-        "./.github/workflows/codspeed.yml"
-    );
     assert_rust_caches_restore_only(CI_WORKFLOW);
-    assert_rust_caches_restore_only(CODSPEED_WORKFLOW);
     assert_contains(RELEASE_INSTRUCTIONS, "`main` CI run");
 }
 
@@ -619,22 +594,19 @@ fn signed_release_assets_stay_outside_the_crate_package() {
 }
 
 #[test]
-fn container_build_uses_the_verified_local_binary() {
+fn release_publishes_only_macos_binaries_and_no_container_image() {
     let workflow: serde_yaml::Value =
         serde_yaml::from_str(RELEASE_WORKFLOW).expect("release workflow should be valid YAML");
-    let steps = workflow["jobs"]["container_build"]["steps"]
+    let targets = workflow["jobs"]["build"]["strategy"]["matrix"]["include"]
         .as_sequence()
-        .expect("container_build should contain steps");
-    let bake = steps
+        .expect("release build should define targets")
         .iter()
-        .find(|step| step["name"] == "Package and push image by digest")
-        .expect("container_build should package the image with Docker Bake");
-
-    assert_eq!(bake["with"]["source"], ".");
-    assert_eq!(
-        bake["env"]["RELEASE_BINARY_CONTEXT"],
-        "target/image-context"
-    );
+        .map(|entry| entry["target"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(targets, ["aarch64-apple-darwin", "x86_64-apple-darwin"]);
+    assert!(workflow["jobs"]["container_build"].is_null());
+    assert!(workflow["jobs"]["container_publish"].is_null());
+    assert!(!RELEASE_WORKFLOW.contains("ghcr.io"));
 }
 
 #[test]

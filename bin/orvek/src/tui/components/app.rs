@@ -11,6 +11,7 @@ use crate::{
     tui::{
         children::ChildUpdate,
         context::SessionCost,
+        file_index::FileIndex,
         pane::PaneId,
         session::{RecentPrompt, SessionSummary},
         theme::{ColorScheme, Theme, ThemeMode},
@@ -68,7 +69,6 @@ pub(crate) enum AppEvent {
         pane: PaneId,
         cost: SessionCost,
     },
-    ViewDisconnected(PaneId),
     Subagent {
         pane: PaneId,
         update: ChildUpdate,
@@ -133,6 +133,10 @@ pub(crate) enum AppEvent {
     SessionsLoaded {
         pane: PaneId,
         sessions: Vec<SessionSummary>,
+    },
+    FileIndexFinished {
+        pane: PaneId,
+        result: Result<FileIndex, String>,
     },
     RecentPromptsLoaded {
         pane: PaneId,
@@ -275,7 +279,6 @@ impl AppNode {
             AppEvent::SessionCost { pane, cost } => {
                 self.update_root(pane, RootEvent::SessionCost(cost))
             }
-            AppEvent::ViewDisconnected(pane) => self.update_root(pane, RootEvent::ViewDisconnected),
             AppEvent::Subagent { pane, update } => {
                 self.update_root(pane, RootEvent::Subagent(update))
             }
@@ -378,6 +381,9 @@ impl AppNode {
             }
             AppEvent::SessionsLoaded { pane, sessions } => {
                 self.update_root(pane, RootEvent::SessionsLoaded(sessions))
+            }
+            AppEvent::FileIndexFinished { pane, result } => {
+                self.update_root(pane, RootEvent::FileIndexFinished(result))
             }
             AppEvent::RecentPromptsLoaded {
                 pane,

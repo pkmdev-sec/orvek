@@ -51,9 +51,6 @@ check-docs:
 check-features *args='':
     cargo hack check --package orvek-memory --feature-powerset --no-dev-deps {{args}}
 
-check-wasm *args='':
-    cargo check --package orvek-memory-cloudflare --target wasm32-unknown-unknown {{args}}
-
 bench *args='':
     cargo bench {{args}}
 
@@ -104,8 +101,7 @@ build-harbor-agent platform='':
         crates/executor/src \
         crates/harness/src \
         crates/harness/benches \
-        crates/memory/src \
-        examples/orvek-memory-cloudflare/src; do
+        crates/memory/src; do
         test -z "$(find "$source_tree" -type l -print -quit)" || {
             echo "refusing to build Harbor agent with symlinks below $source_tree/" >&2
             exit 1
@@ -138,22 +134,6 @@ build-harbor-agent platform='':
     mkdir -p "$build_context/crates/memory"
     cp crates/memory/Cargo.toml crates/memory/README.md "$build_context/crates/memory/"
     cp -R crates/memory/src "$build_context/crates/memory/src"
-    mkdir -p "$build_context/examples/orvek-memory-cloudflare"
-    cp examples/orvek-memory-cloudflare/Cargo.toml "$build_context/examples/orvek-memory-cloudflare/"
-    cp -R examples/orvek-memory-cloudflare/src "$build_context/examples/orvek-memory-cloudflare/src"
-    for package in nanocodex-agent nanocodex-oai-api; do
-        mkdir -p "$build_context/vendor/$package"
-        cp "vendor/$package/Cargo.toml" "vendor/$package/README.md" "$build_context/vendor/$package/"
-        for tree in src tests benches; do
-            test -z "$(find "vendor/$package/$tree" -type l -print -quit)"
-            test -z "$(find "vendor/$package/$tree" -type f ! -name '*.rs' \
-                ! -path 'vendor/nanocodex-agent/tests/fixtures/mcp-stdio-server.mjs' -print -quit)"
-            cp -R "vendor/$package/$tree" "$build_context/vendor/$package/$tree"
-        done
-    done
-    mkdir -p "$build_context/vendor/nanocodex-oai-api/prompts"
-    cp vendor/nanocodex-oai-api/prompts/system.md "$build_context/vendor/nanocodex-oai-api/prompts/"
-    cp vendor/LICENSE-APACHE vendor/LICENSE-MIT "$build_context/vendor/"
     if [[ -n "{{platform}}" ]]; then
         docker --context "$docker_context" buildx build \
             --platform "{{platform}}" \

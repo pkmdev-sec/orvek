@@ -1,15 +1,14 @@
 # Releases
 
-Orvek currently ships from source. No Orvek crates, signed binaries, or container images are
-published. The release workflow is not ready until these prerequisites are complete:
+Orvek currently ships from source. No Orvek crates or signed macOS binaries are published. The
+release workflow is not ready until these prerequisites are complete:
 
-- Release or upstream the pinned Nanocodex extensions and update dependencies.
 - Resolve the `orvek-harness` dependency on the non-publishable, path-only
   `orvek-executor` crate. Choose and verify a publishable dependency graph before
   enabling crate publication; the current workflow does not publish these prerequisites.
 - Establish ownership of every publishable crate in that graph on crates.io.
 - Set `CARGO_REGISTRY_TOKEN` with permission to publish those crates.
-- Allow GitHub Actions to create releases and publish GHCR packages.
+- Allow GitHub Actions to create releases.
 
 Do not bypass package verification.
 
@@ -35,16 +34,15 @@ Never move or reuse a published release tag.
 The tag workflow checks the version, main ancestry, and a successful main-push CI run for the
 exact tagged commit. Missing, pending, and failed CI results block the release. It then:
 
-1. Builds Linux x86-64/ARM64 and macOS Intel/Apple Silicon binaries.
+1. Builds macOS Intel and Apple Silicon binaries.
 2. Packages, checksums, and signs binary archives and the review bundle.
 3. Publishes the library crates and binary crate with signing metadata.
 4. Creates a GitHub Release from `.github/RELEASE_TEMPLATE.md` and `git-cliff` history.
-5. Publishes GHCR images containing the verified Linux binaries.
 
 Use Conventional Commits for changelog entries. Non-conventional messages are omitted. Release
-publication waits for crates.io; container publication waits for the GitHub Release.
+publication waits for crates.io.
 
 ## Retry a failed release
 
-Keep the original tag and reuse its saved signing bundle. Check what crates.io, GitHub, and GHCR
-already accepted before rerunning jobs. If source changes are needed, use a new version and tag.
+Keep the original tag and reuse its saved signing bundle. Check what crates.io and GitHub already
+accepted before rerunning jobs. If source changes are needed, use a new version and tag.

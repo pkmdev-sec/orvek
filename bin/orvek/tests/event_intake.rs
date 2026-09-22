@@ -305,7 +305,7 @@ async fn cli_duplicate_ack_loss_restart_and_hostile_payload_keep_one_bound_task(
                 payload: "changed".into()
             })
             .await,
-        Response::Error { .. }
+        Response::Error(_)
     ));
     fixture.stop().await;
     fixture.start().await;

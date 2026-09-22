@@ -12,7 +12,7 @@ keeps resumable sessions, and uses your configured model provider for inference.
 
 <a href="docs/configuration.md#capabilities"><picture>
   <source media="(prefers-reduced-motion: reduce)" srcset="assets/orvex-differentiators.png">
-  <img src="assets/orvex-differentiators.gif" alt="Thirteen capability areas: configuration and extensions; sessions and review; memory; context projection; subagents; diagnostics; performance; evaluations; trace replay; optional interpreter; event intake; monitoring; experimental context transitions." width="1280">
+  <img src="assets/orvex-differentiators.gif" alt="Source-backed capability areas: configuration and extensions; sessions and review; memory; context projection; subagents; diagnostics; performance; evaluations; trace replay; optional interpreter; event intake; monitoring; experimental context transitions." width="1280">
 </picture></a>
 
 See the [Configuration guide](docs/configuration.md#capabilities) for behavior, setup, and limitations.
@@ -36,7 +36,8 @@ Sources checked 20 September 2026: [Codex CLI](https://developers.openai.com/cod
 
 Local shell commands run with your permissions. See the [Configuration guide](docs/configuration.md#agent-settings) for sandbox requirements.
 
-Requires Rust 1.97 or newer and a C toolchain. Orvek currently ships from source:
+Requires macOS on Intel or Apple Silicon, Rust 1.97 or newer, and a C toolchain. Orvek currently
+ships from source:
 
 ```sh
 git clone https://github.com/pkmdev-sec/orvek.git
@@ -44,7 +45,7 @@ cd orvek
 cargo install --locked --path bin/orvek
 ```
 
-No Orvek crate, signed binary release, or container image is published yet.
+No Orvek crate or signed macOS binary release is published yet.
 
 ## Start
 
@@ -70,15 +71,26 @@ orvek --resume SESSION_ID           # Resume a known session.
 ```sh
 orvek config path
 orvek config show
-cargo install --git https://github.com/pkmdev-sec/orvek --locked --bin orvek
+orvek update
 ```
 
 The default configuration is `~/.orvek/config.toml`. See the configuration guide for path overrides
 and saved-data handling.
 
+`orvek update` is available for the source installation above. It prints the `cargo install` command
+for the detected Cargo install root; run that command to rebuild and install the current source. You
+can run the default command directly:
+
+```sh
+cargo install --git https://github.com/pkmdev-sec/orvek --locked --bin orvek
+```
+
+No Orvek crate or signed macOS binary release is published yet, so the update command cannot download
+or install a signed release archive today.
+
 ## Guides
 
-- [Configuration, authentication, skills, and MCP](docs/configuration.md)
+- [Configuration, authentication, and skills](docs/configuration.md)
 - [Sessions, review, and reflection](docs/sessions.md)
 - [Executable host examples and coverage limits](docs/executable-examples.md)
 - [Local and remote memory](docs/memory.md)
@@ -104,5 +116,5 @@ credentials, and build outputs must stay out of Git.
 
 ## License
 
-Orvek is distributed under [Apache-2.0](LICENSE.md). Attribution and dependency notices, including
-the remaining Nanocodex-derived support crates, are in [NOTICE.md](NOTICE.md) and `vendor/`.
+Orvek is distributed under [Apache-2.0](LICENSE.md). Source attribution is retained in
+[NOTICE.md](NOTICE.md).

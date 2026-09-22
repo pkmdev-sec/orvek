@@ -321,7 +321,7 @@ fn make_removable(path: &Path) {
         }
     }
 }
-fn exchange(first: &Path, second: &Path) -> Result<(), RuntimeError> {
+pub(crate) fn exchange(first: &Path, second: &Path) -> Result<(), RuntimeError> {
     rustix::fs::renameat_with(
         rustix::fs::CWD,
         first,

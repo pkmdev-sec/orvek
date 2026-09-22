@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
 # Docker resolves FROM before it can read the tool manifest from the build context.
-FROM ghcr.io/pkmdev-sec/orvek:latest AS orvek
+ARG ORVEK_IMAGE=ghcr.io/pkmdev-sec/orvek@sha256:8d4f1a50ca170bb0c5e1840037410f78ddfc1cce3bd45cae11a0198e896e6ea2
+FROM ${ORVEK_IMAGE} AS orvek
 
 FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS toolchain
 
