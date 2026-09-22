@@ -156,12 +156,6 @@ pub enum EvidenceState {
 impl MemoryMetadata {
     pub fn validate(&self) -> Result<(), MemoryError> {
         let invalid = || MemoryError::InvalidMetadata;
-        #[cfg(any(feature = "local", feature = "client"))]
-        if crate::secrets::contains_likely_secret(
-            &serde_json::to_string(self).map_err(MemoryError::backend)?,
-        ) {
-            return Err(MemoryError::SecretRejected);
-        }
         if serde_json::to_vec(self)
             .map_err(MemoryError::backend)?
             .len()
@@ -258,6 +252,16 @@ impl MemoryMetadata {
                     }
                 }
             }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn reject_likely_secret(&self) -> Result<(), MemoryError> {
+        #[cfg(any(feature = "local", feature = "client", feature = "server"))]
+        if crate::secrets::contains_likely_secret(
+            &serde_json::to_string(self).map_err(MemoryError::backend)?,
+        ) {
+            return Err(MemoryError::SecretRejected);
         }
         Ok(())
     }

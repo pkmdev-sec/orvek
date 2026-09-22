@@ -82,10 +82,174 @@ fn tiny_limits() -> MemoryLimits {
     }
 }
 
+fn local_record(id: i64, content: &str) -> MemoryRecord {
+    MemoryRecord {
+        metadata: Default::default(),
+        key: MemoryKey::local(id, 1),
+        content: content.to_owned(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        last_scanned_at_ms: None,
+        scan_count: 0,
+        last_used_at_ms: None,
+        use_count: 0,
+        probation_until_ms: None,
+    }
+}
+
+fn invalid_record_cases() -> Vec<MemoryRecord> {
+    let mut reversed = local_record(2, "reversed timestamps");
+    reversed.updated_at_ms = 0;
+
+    let mut oversized_counter = local_record(3, "oversized counter");
+    oversized_counter.last_scanned_at_ms = Some(1);
+    oversized_counter.scan_count = i64::MAX as u64 + 1;
+
+    let mut invalid_metadata = local_record(4, "invalid metadata");
+    invalid_metadata.metadata.ownership_id = Some("not-an-ownership-id".to_owned());
+
+    let mut incoherent_telemetry = local_record(5, "incoherent telemetry");
+    incoherent_telemetry.scan_count = 1;
+
+    vec![
+        reversed,
+        oversized_counter,
+        invalid_metadata,
+        incoherent_telemetry,
+    ]
+}
+
+fn write_archive_record(directory: &std::path::Path, record: &MemoryRecord) {
+    let bytes = serde_json::to_vec_pretty(record).unwrap();
+    let digest = super::sources::digest(&bytes);
+    std::fs::write(directory.join(format!("{digest}.json")), bytes).unwrap();
+    let archive = super::MemoryArchive {
+        version: 1,
+        records: vec![super::ArchiveEntry {
+            key: record.key.clone(),
+            digest,
+        }],
+    };
+    std::fs::write(
+        directory.join("manifest.json"),
+        serde_json::to_vec_pretty(&archive).unwrap(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn local_sync_rejects_each_structural_record_class_without_mutation() {
+    for invalid in invalid_record_cases() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = ProductionMemoryStore::new(directory.path().join("memory/v1.sqlite3"));
+        let existing = store.put("existing local value", None).await.unwrap();
+
+        assert!(matches!(
+            super::MemoryStore::sync(&store, &[invalid]).await,
+            Err(MemoryError::InvalidMetadata)
+        ));
+        assert_eq!(store.list().await.unwrap(), [existing]);
+    }
+}
+
+#[tokio::test]
+async fn local_import_and_archive_reject_each_structural_record_class_without_mutation() {
+    for invalid in invalid_record_cases() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = ProductionMemoryStore::new(directory.path().join("memory/v1.sqlite3"));
+        let existing = store.put("existing imported value", None).await.unwrap();
+
+        assert!(matches!(
+            store.import_records(vec![invalid.clone()]).await,
+            Err(MemoryError::InvalidMetadata)
+        ));
+        assert_eq!(store.list().await.unwrap(), std::slice::from_ref(&existing));
+
+        let archive = tempfile::tempdir().unwrap();
+        write_archive_record(archive.path(), &invalid);
+        assert!(matches!(
+            super::MemoryArchive::import(archive.path(), &store).await,
+            Err(MemoryError::InvalidMetadata)
+        ));
+        assert_eq!(store.list().await.unwrap(), [existing]);
+    }
+}
+
+#[tokio::test]
+async fn future_timestamps_survive_read_and_scan_without_regressing_telemetry() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = ProductionMemoryStore::new(directory.path().join("memory/v1.sqlite3"));
+    let future = i64::MAX - MemoryLimits::PRODUCTION.probation_duration_ms - 2;
+    let record = local_record(1, "future telemetry marker");
+    let mut record = MemoryRecord {
+        created_at_ms: future,
+        updated_at_ms: future,
+        probation_until_ms: Some(future + MemoryLimits::PRODUCTION.probation_duration_ms),
+        ..record
+    };
+    super::MemoryStore::sync(&store, std::slice::from_ref(&record))
+        .await
+        .unwrap();
+
+    let read = store
+        .read_local(&[(record.key.id, None)], future - 1)
+        .unwrap();
+    assert_eq!(read[0].last_used_at_ms, Some(future));
+    assert_eq!(read[0].use_count, 1);
+    record = read[0].clone();
+
+    let scan = store.scan_local("future telemetry", 1, future - 1).unwrap();
+    assert_eq!(scan.candidates.len(), 1);
+    let listed = store.list().await.unwrap();
+    assert_eq!(listed[0].created_at_ms, future);
+    assert_eq!(listed[0].updated_at_ms, future);
+    assert!(listed[0].last_scanned_at_ms.unwrap() >= future);
+    assert_eq!(listed[0].scan_count, 1);
+    assert_eq!(listed[0].last_used_at_ms, record.last_used_at_ms);
+}
+
+#[test]
+fn max_telemetry_counters_fail_without_mutation() {
+    for (column, timestamp_column) in [
+        ("scan_count", "last_scanned_at_ms"),
+        ("use_count", "last_used_at_ms"),
+    ] {
+        let (_directory, store) = store();
+        let record = store.put("counter overflow marker", None, 1).unwrap();
+        let connection = store.open().unwrap();
+        connection
+            .execute(
+                &format!(
+                    "UPDATE memories SET {column} = ?1, {timestamp_column} = updated_at_ms, probation_until_ms = NULL WHERE id = ?2"
+                ),
+                params![i64::MAX, record.key.id],
+            )
+            .unwrap();
+        drop(connection);
+
+        let result = if column == "scan_count" {
+            store.scan("counter overflow", 1, 2).map(|_| ())
+        } else {
+            store.read(&[record.key.id], 2).map(|_| ())
+        };
+        assert!(matches!(result, Err(MemoryError::InvalidMetadata)));
+
+        let connection = Connection::open(store.local().path.as_path()).unwrap();
+        let persisted: i64 = connection
+            .query_row(
+                &format!("SELECT {column} FROM memories WHERE id = ?1"),
+                [record.key.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(persisted, i64::MAX);
+    }
+}
+
 #[tokio::test]
 async fn local_sync_preserves_complete_state_and_the_id_high_water_mark() {
     let directory = tempfile::tempdir().unwrap();
-    let store = ProductionMemoryStore::new(directory.path().join("memory.sqlite3"));
+    let store = ProductionMemoryStore::new(directory.path().join("memory/v1.sqlite3"));
     let first = super::MemoryStore::put(&store, "first", None)
         .await
         .unwrap();
@@ -104,7 +268,7 @@ async fn local_sync_preserves_complete_state_and_the_id_high_water_mark() {
     duplicate.content = "duplicate id".to_owned();
     assert!(matches!(
         super::MemoryStore::sync(&store, &[first.clone(), duplicate]).await,
-        Err(MemoryError::Conflict)
+        Err(MemoryError::InvalidMetadata)
     ));
 
     super::MemoryStore::sync(&store, &[]).await.unwrap();
@@ -121,7 +285,7 @@ fn enforces_exact_ascii_and_unicode_byte_bounds() {
         query_bytes: 8,
         ..tiny_limits()
     };
-    let store = MemoryStore::with_limits(directory.path().join("memory.sqlite3"), limits);
+    let store = MemoryStore::with_limits(directory.path().join("memory/v1.sqlite3"), limits);
 
     store.put("12345678", None, 0).unwrap();
     assert!(matches!(
@@ -165,7 +329,7 @@ fn replacement_preserves_id_checks_version_and_adjusts_accounting() {
         total_content_bytes: 10,
         ..tiny_limits()
     };
-    let store = MemoryStore::with_limits(directory.path().join("memory.sqlite3"), limits);
+    let store = MemoryStore::with_limits(directory.path().join("memory/v1.sqlite3"), limits);
     let original = store.put("123456", None, 1).unwrap();
     store.scan("123456", 1, 2).unwrap();
     store.read(&[original.key.id], 3).unwrap();
@@ -200,7 +364,7 @@ fn record_capacity_is_derived_from_live_rows() {
         records: 2,
         ..tiny_limits()
     };
-    let store = MemoryStore::with_limits(directory.path().join("memory.sqlite3"), limits);
+    let store = MemoryStore::with_limits(directory.path().join("memory/v1.sqlite3"), limits);
     let first = store.put("one", None, 0).unwrap();
     store.put("two", None, 0).unwrap();
     assert!(matches!(
@@ -228,7 +392,7 @@ fn delete_requires_the_current_version() {
 #[test]
 fn probation_prunes_at_the_exact_deadline() {
     let directory = tempfile::tempdir().unwrap();
-    let store = MemoryStore::with_limits(directory.path().join("memory.sqlite3"), tiny_limits());
+    let store = MemoryStore::with_limits(directory.path().join("memory/v1.sqlite3"), tiny_limits());
     store.put("expires", None, 100).unwrap();
 
     assert_eq!(store.list(109).unwrap().len(), 1);
@@ -238,7 +402,7 @@ fn probation_prunes_at_the_exact_deadline() {
 #[test]
 fn pre_expiry_read_clears_probation() {
     let directory = tempfile::tempdir().unwrap();
-    let store = MemoryStore::with_limits(directory.path().join("memory.sqlite3"), tiny_limits());
+    let store = MemoryStore::with_limits(directory.path().join("memory/v1.sqlite3"), tiny_limits());
     let record = store.put("keep this", None, 100).unwrap();
 
     let read = store.read(&[record.key.id], 109).unwrap();
@@ -438,7 +602,14 @@ fn database_uses_delete_journaling_and_the_page_limit() {
 #[test]
 fn newer_database_schema_versions_are_rejected_without_relabeling_them() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("memory.sqlite3");
+    let parent = directory.path().join("memory");
+    std::fs::create_dir(&parent).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let path = directory.path().join("memory/v1.sqlite3");
     let connection = Connection::open(&path).unwrap();
     connection.pragma_update(None, "user_version", 4).unwrap();
     drop(connection);
@@ -457,6 +628,45 @@ fn newer_database_schema_versions_are_rejected_without_relabeling_them() {
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
     assert_eq!(schema_version, 4);
+}
+
+#[test]
+fn schema_version_is_rechecked_after_waiting_for_the_write_lock() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("memory/v1.sqlite3");
+    let store = MemoryStore::new(&path);
+    store.list(0).unwrap();
+
+    let mut migrator = Connection::open(&path).unwrap();
+    let migration = migrator
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .unwrap();
+    migration.pragma_update(None, "user_version", 4).unwrap();
+
+    let barrier = std::sync::Arc::new(Barrier::new(2));
+    let waiter = {
+        let store = ProductionMemoryStore::with_migration_barrier(&path, barrier.clone());
+        thread::spawn(move || store.list_local(0))
+    };
+    barrier.wait();
+    migration.commit().unwrap();
+    drop(migrator);
+    barrier.wait();
+
+    assert!(matches!(
+        waiter.join().unwrap(),
+        Err(MemoryError::UnsupportedSchemaVersion {
+            found: 4,
+            supported: 3
+        })
+    ));
+    let connection = Connection::open(path).unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        4
+    );
 }
 
 #[test]
@@ -498,16 +708,77 @@ fn replacement_of_a_legacy_row_does_not_require_reading_its_content() {
 
 #[cfg(unix)]
 #[test]
-fn creates_a_private_database_directory() {
+fn creates_owner_only_database_path() {
     use std::os::unix::fs::PermissionsExt;
 
     let directory = tempfile::tempdir().unwrap();
     let parent = directory.path().join("memory");
-    let store = MemoryStore::new(parent.join("v1.sqlite3"));
+    let path = parent.join("v1.sqlite3");
+    let store = MemoryStore::new(&path);
     store.list(0).unwrap();
 
+    let parent_mode = std::fs::metadata(parent).unwrap().permissions().mode() & 0o777;
+    let database_mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(parent_mode, 0o700);
+    assert_eq!(database_mode, 0o600);
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_final_directory_and_database_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().unwrap();
+    let actual_parent = directory.path().join("actual-memory");
+    std::fs::create_dir(&actual_parent).unwrap();
+    let linked_parent = directory.path().join("linked-memory");
+    symlink(&actual_parent, &linked_parent).unwrap();
+    assert!(matches!(
+        MemoryStore::new(linked_parent.join("v1.sqlite3")).list(0),
+        Err(MemoryError::InvalidMetadata)
+    ));
+
+    let parent = directory.path().join("memory");
+    std::fs::create_dir(&parent).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let actual_database = directory.path().join("actual.sqlite3");
+    std::fs::File::create(&actual_database).unwrap();
+    symlink(&actual_database, parent.join("v1.sqlite3")).unwrap();
+    let error = MemoryStore::new(parent.join("v1.sqlite3"))
+        .list(0)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        MemoryError::Backend { .. } | MemoryError::InvalidMetadata
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_bare_relative_database_paths() {
+    assert!(matches!(
+        MemoryStore::new("memory.sqlite3").list(0),
+        Err(MemoryError::InvalidMetadata)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_non_private_existing_directory_without_changing_its_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let parent = directory.path().join("memory");
+    std::fs::create_dir(&parent).unwrap();
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o750)).unwrap();
+
+    assert!(matches!(
+        MemoryStore::new(parent.join("v1.sqlite3")).list(0),
+        Err(MemoryError::InvalidMetadata)
+    ));
     let mode = std::fs::metadata(parent).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode, 0o700);
+    assert_eq!(mode, 0o750);
 }
 
 #[test]

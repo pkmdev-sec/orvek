@@ -38,7 +38,7 @@ url = { workspace = true, optional = true }
 web-time = { workspace = true, optional = true }
 zeroize = { workspace = true, optional = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
 tokio = { workspace = true, optional = true }
 
 [dev-dependencies]

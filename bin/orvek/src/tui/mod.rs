@@ -6,6 +6,8 @@ mod clipboard;
 pub(crate) mod components;
 mod context;
 mod editor;
+mod event_loop;
+mod file_index;
 #[cfg(test)]
 // Fixture builders exist for the test and bench targets only; compiling them
 // into an ordinary build would ship unused sample data.
@@ -42,7 +44,7 @@ pub(crate) async fn run(
     shutdown: CancellationToken,
 ) -> Result<Option<String>> {
     ensure_interactive()?;
-    client::run(config, startup, shutdown).await
+    event_loop::run(config, startup, shutdown).await
 }
 pub(crate) fn ensure_interactive() -> Result<()> {
     if io::stdin().is_terminal() && io::stdout().is_terminal() {

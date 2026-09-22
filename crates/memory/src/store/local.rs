@@ -3,7 +3,7 @@
 use super::{MemoryError, MemoryStore, current_time_ms};
 use crate::{
     MemoryImportReport, MemoryKey, MemoryLimits, MemoryRecord, MemoryScan,
-    model::StoredMemory,
+    model::{MemoryRecordScope, StoredMemory},
     secrets::contains_likely_secret,
     server::protocol::{self, ExportCursor, SyncReport},
 };
@@ -48,6 +48,8 @@ enum LocalStoreError {
 pub struct LocalMemoryStore {
     pub(crate) path: Arc<PathBuf>,
     limits: MemoryLimits,
+    #[cfg(test)]
+    migration_barrier: Option<Arc<std::sync::Barrier>>,
 }
 
 impl LocalMemoryStore {
@@ -56,6 +58,8 @@ impl LocalMemoryStore {
         Self {
             path: Arc::new(path.into()),
             limits: MemoryLimits::PRODUCTION,
+            #[cfg(test)]
+            migration_barrier: None,
         }
     }
 
@@ -64,6 +68,19 @@ impl LocalMemoryStore {
         Self {
             path: Arc::new(path.into()),
             limits,
+            migration_barrier: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_migration_barrier(
+        path: impl Into<PathBuf>,
+        barrier: Arc<std::sync::Barrier>,
+    ) -> Self {
+        Self {
+            path: Arc::new(path.into()),
+            limits: MemoryLimits::PRODUCTION,
+            migration_barrier: Some(barrier),
         }
     }
 
@@ -108,9 +125,12 @@ impl LocalMemoryStore {
             .map_err(sqlite_error)?;
         prune_expired(&transaction, now_ms)?;
 
-        let memories = load_all(&transaction)?
+        let memories = load_all(&transaction, &self.limits)?
             .into_iter()
-            .filter(|memory| !contains_likely_secret(&memory.content))
+            .filter(|memory| {
+                memory.metadata.reject_likely_secret().is_ok()
+                    && !contains_likely_secret(&memory.content)
+            })
             .filter(|memory| {
                 scope.is_none_or(|scope| memory.metadata.visible_in(scope.repository.as_deref()))
             })
@@ -120,14 +140,19 @@ impl LocalMemoryStore {
         let scan = MemoryScan::rank(query, &memories, limit);
 
         for candidate in &scan.candidates {
-            transaction
+            let changed = transaction
                 .execute(
                     "UPDATE memories
-                     SET last_scanned_at_ms = ?1, scan_count = scan_count + 1
-                     WHERE id = ?2",
-                    params![now_ms, candidate.key.id],
+                     SET last_scanned_at_ms = MAX(?1, updated_at_ms,
+                                                   COALESCE(last_scanned_at_ms, ?1)),
+                         scan_count = scan_count + 1
+                     WHERE id = ?2 AND scan_count < ?3",
+                    params![now_ms, candidate.key.id, i64::MAX],
                 )
                 .map_err(sqlite_error)?;
+            if changed != 1 {
+                return Err(MemoryError::InvalidMetadata);
+            }
         }
         transaction.commit().map_err(sqlite_error)?;
 
@@ -157,29 +182,39 @@ impl LocalMemoryStore {
         let mut seen = HashSet::new();
         let mut records = Vec::with_capacity(references.len());
         for &(id, version) in references {
-            let memory = load_one(&transaction, id)?;
+            let memory = load_one(&transaction, id, &self.limits)?;
             let Some(mut memory) = memory else {
                 continue;
             };
             if scope.is_some_and(|scope| !memory.metadata.visible_in(scope.repository.as_deref()))
                 || version.is_some_and(|version| version != memory.version)
+                || memory.metadata.reject_likely_secret().is_err()
                 || contains_likely_secret(&memory.content)
                 || !seen.insert(id)
             {
                 continue;
             }
 
-            transaction
+            let last_used_at_ms = now_ms
+                .max(memory.updated_at_ms)
+                .max(memory.last_used_at_ms.unwrap_or(i64::MIN));
+            let changed = transaction
                 .execute(
                     "UPDATE memories
                      SET last_used_at_ms = ?1, use_count = use_count + 1,
                          probation_until_ms = NULL
-                     WHERE id = ?2",
-                    params![now_ms, id],
+                     WHERE id = ?2 AND use_count < ?3",
+                    params![last_used_at_ms, id, i64::MAX],
                 )
                 .map_err(sqlite_error)?;
-            memory.last_used_at_ms = Some(now_ms);
-            memory.use_count = memory.use_count.saturating_add(1);
+            if changed != 1 {
+                return Err(MemoryError::InvalidMetadata);
+            }
+            memory.last_used_at_ms = Some(last_used_at_ms);
+            memory.use_count = memory
+                .use_count
+                .checked_add(1)
+                .ok_or(MemoryError::InvalidMetadata)?;
             memory.probation_until_ms = None;
             records.push(memory.into());
         }
@@ -249,8 +284,7 @@ impl LocalMemoryStore {
         replacement: Option<MemoryKey>,
         now_ms: i64,
     ) -> Result<MemoryRecord, MemoryError> {
-        metadata.validate()?;
-        validate_content(content, &self.limits)?;
+        crate::store::validate_authored_content(content, metadata, &self.limits)?;
         let mut metadata = metadata.clone();
         let mut connection = self.open()?;
         let transaction = connection
@@ -259,7 +293,7 @@ impl LocalMemoryStore {
         prune_expired(&transaction, now_ms)?;
 
         metadata.ownership_id = match &replacement {
-            Some(key) => match load_one(&transaction, key.id)?
+            Some(key) => match load_one(&transaction, key.id, &self.limits)?
                 .and_then(|record| record.metadata.ownership_id)
             {
                 Some(identity) => Some(identity),
@@ -274,7 +308,8 @@ impl LocalMemoryStore {
             None => self.insert(&transaction, content, &normalized_identity, now_ms),
         }?;
         save_metadata(&transaction, result.id, &metadata)?;
-        let result = load_one(&transaction, result.id)?.ok_or(MemoryError::NotFound)?;
+        let result =
+            load_one(&transaction, result.id, &self.limits)?.ok_or(MemoryError::NotFound)?;
         transaction.commit().map_err(sqlite_error)?;
         Ok(result.into())
     }
@@ -341,14 +376,7 @@ impl LocalMemoryStore {
         now_ms: i64,
     ) -> Result<MemoryImportReport, MemoryError> {
         for memory in &memories {
-            if !memory
-                .key
-                .namespace
-                .as_deref()
-                .is_some_and(protocol::is_valid_namespace)
-            {
-                return Err(MemoryError::Conflict);
-            }
+            memory.validate(MemoryRecordScope::AnyRemote, &self.limits)?;
         }
         self.import_records_local(memories, now_ms)
     }
@@ -368,12 +396,12 @@ impl LocalMemoryStore {
         now_ms: i64,
     ) -> Result<MemoryImportReport, MemoryError> {
         for memory in &memories {
-            validate_content(&memory.content, &self.limits)?;
-            memory.metadata.validate()?;
-            if memory.key.id <= 0 || memory.key.version == 0 || memory.key.version > i64::MAX as u64
-            {
-                return Err(MemoryError::Conflict);
-            }
+            memory.validate(MemoryRecordScope::Portable, &self.limits)?;
+            crate::store::validate_authored_content(
+                &memory.content,
+                &memory.metadata,
+                &self.limits,
+            )?;
         }
         let mut connection = self.open()?;
         let transaction = connection
@@ -381,7 +409,7 @@ impl LocalMemoryStore {
             .map_err(sqlite_error)?;
         prune_expired(&transaction, now_ms)?;
         let mut report = MemoryImportReport::default();
-        let mut existing = load_all(&transaction)?;
+        let mut existing = load_all(&transaction, &self.limits)?;
         for memory in memories {
             let mut metadata = memory.metadata;
             // Old archives had no owning-store identity. Do not invent shared ownership from ID 1.
@@ -449,7 +477,9 @@ impl LocalMemoryStore {
             transaction.execute("UPDATE memories SET version = ?1, created_at_ms = ?2, updated_at_ms = ?3, last_scanned_at_ms = ?4, scan_count = ?5, last_used_at_ms = ?6, use_count = ?7, probation_until_ms = ?8 WHERE id = ?9",
                 params![memory.key.version as i64, memory.created_at_ms, memory.updated_at_ms, memory.last_scanned_at_ms, memory.scan_count as i64, memory.last_used_at_ms, memory.use_count as i64, memory.probation_until_ms, inserted.id]).map_err(sqlite_write_error)?;
             save_metadata(&transaction, inserted.id, &metadata)?;
-            existing.push(load_one(&transaction, inserted.id)?.ok_or(MemoryError::NotFound)?);
+            existing.push(
+                load_one(&transaction, inserted.id, &self.limits)?.ok_or(MemoryError::NotFound)?,
+            );
             report.inserted += 1;
         }
         transaction.commit().map_err(sqlite_write_error)?;
@@ -462,9 +492,12 @@ impl LocalMemoryStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_error)?;
         prune_expired(&transaction, now_ms)?;
-        let records = load_all(&transaction)?
+        let records = load_all(&transaction, &self.limits)?
             .into_iter()
-            .filter(|memory| !contains_likely_secret(&memory.content))
+            .filter(|memory| {
+                memory.metadata.reject_likely_secret().is_ok()
+                    && !contains_likely_secret(&memory.content)
+            })
             .map(MemoryRecord::from)
             .collect();
         transaction.commit().map_err(sqlite_error)?;
@@ -501,7 +534,7 @@ impl LocalMemoryStore {
                 params![id, content, normalized_identity, now_ms, probation_until_ms],
             )
             .map_err(sqlite_write_error)?;
-        load_one(transaction, id)?.ok_or(MemoryError::NotFound)
+        load_one(transaction, id, &self.limits)?.ok_or(MemoryError::NotFound)
     }
 
     fn replace(
@@ -559,7 +592,7 @@ impl LocalMemoryStore {
                 ],
             )
             .map_err(sqlite_write_error)?;
-        load_one(transaction, key.id)?.ok_or(MemoryError::NotFound)
+        load_one(transaction, key.id, &self.limits)?.ok_or(MemoryError::NotFound)
     }
 
     fn check_content_capacity(
@@ -580,8 +613,8 @@ impl LocalMemoryStore {
     }
 
     pub(crate) fn open(&self) -> Result<Connection, MemoryError> {
-        prepare_private_parent(&self.path)?;
-        let mut connection = Connection::open(self.path.as_path()).map_err(sqlite_error)?;
+        let database_path = prepare_private_path(&self.path)?;
+        let mut connection = open_private_database(&database_path)?;
         connection
             .busy_timeout(BUSY_TIMEOUT)
             .map_err(sqlite_error)?;
@@ -594,23 +627,44 @@ impl LocalMemoryStore {
                 supported: SCHEMA_VERSION,
             });
         }
-        connection
-            .pragma_update(None, "journal_mode", "DELETE")
+        let journal_mode = connection
+            .query_row("PRAGMA journal_mode = DELETE", [], |row| {
+                row.get::<_, String>(0)
+            })
             .map_err(sqlite_error)?;
-        connection
-            .pragma_update(None, "page_size", DATABASE_PAGE_SIZE_BYTES as i64)
-            .map_err(sqlite_error)?;
-        let page_size = connection
-            .query_row("PRAGMA page_size", [], |row| row.get::<_, i64>(0))
-            .map_err(sqlite_error)? as usize;
-        let maximum_pages = self.limits.database_bytes.div_ceil(page_size).max(1);
-        connection
-            .pragma_update(None, "max_page_count", maximum_pages as i64)
-            .map_err(sqlite_error)?;
+        if !journal_mode.eq_ignore_ascii_case("delete") {
+            return Err(MemoryError::InvalidMetadata);
+        }
+        #[cfg(test)]
+        if let Some(barrier) = &self.migration_barrier {
+            barrier.wait();
+            barrier.wait();
+        }
         // The allocator table is a backward-compatible schema-v1 extension. Older builds ignore
         // it; current builds retain identity history even when every memory row is deleted.
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sqlite_error)?;
+        let schema_version = transaction
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .map_err(sqlite_error)?;
+        if !(0..=SCHEMA_VERSION).contains(&schema_version) {
+            return Err(MemoryError::UnsupportedSchemaVersion {
+                found: schema_version,
+                supported: SCHEMA_VERSION,
+            });
+        }
+        if schema_version == 0 {
+            transaction
+                .pragma_update(None, "page_size", DATABASE_PAGE_SIZE_BYTES as i64)
+                .map_err(sqlite_error)?;
+        }
+        let page_size = transaction
+            .query_row("PRAGMA page_size", [], |row| row.get::<_, i64>(0))
+            .map_err(sqlite_error)? as usize;
+        let maximum_pages = self.limits.database_bytes.div_ceil(page_size).max(1);
+        transaction
+            .pragma_update(None, "max_page_count", maximum_pages as i64)
             .map_err(sqlite_error)?;
         transaction
             .execute_batch(
@@ -633,10 +687,6 @@ impl LocalMemoryStore {
                  );",
             )
             .map_err(sqlite_write_error)?;
-        // A concurrent opener may have migrated while this connection waited for the writer lock.
-        let schema_version = transaction
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .map_err(sqlite_error)?;
         if schema_version < 2 {
             transaction
                 .execute_batch(
@@ -689,44 +739,14 @@ impl LocalMemoryStore {
         memories: &[MemoryRecord],
         now_ms: i64,
     ) -> Result<SyncReport, MemoryError> {
-        let mut identities = HashSet::new();
-        let mut ids = HashSet::new();
-        let content_bytes = memories.iter().try_fold(0usize, |total, memory| {
-            if !memory.key.is_local()
-                || memory.key.id <= 0
-                || memory.key.version == 0
-                || !ids.insert(memory.key.id)
-            {
-                return Err(MemoryError::Conflict);
-            }
-            validate_content(&memory.content, &self.limits)?;
-            memory.metadata.validate()?;
-            if !identities.insert(memory.metadata.identity(&memory.content)) {
-                return Err(MemoryError::Duplicate);
-            }
-            total
-                .checked_add(memory.content.len())
-                .ok_or(MemoryError::ContentCapacity {
-                    maximum_bytes: self.limits.total_content_bytes,
-                })
-        })?;
-        if memories.len() > self.limits.records {
-            return Err(MemoryError::RecordCapacity {
-                maximum: self.limits.records,
-            });
-        }
-        if content_bytes > self.limits.total_content_bytes {
-            return Err(MemoryError::ContentCapacity {
-                maximum_bytes: self.limits.total_content_bytes,
-            });
-        }
+        crate::store::validate_authored_snapshot(memories, &self.limits)?;
 
         let mut connection = self.open()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_error)?;
         prune_expired(&transaction, now_ms)?;
-        let existing = load_all(&transaction)?;
+        let existing = load_all(&transaction, &self.limits)?;
         let previous = existing
             .iter()
             .cloned()
@@ -1034,7 +1054,10 @@ fn save_metadata(
     Ok(())
 }
 
-fn load_all(transaction: &Transaction<'_>) -> Result<Vec<StoredMemory>, MemoryError> {
+fn load_all(
+    transaction: &Transaction<'_>,
+    limits: &MemoryLimits,
+) -> Result<Vec<StoredMemory>, MemoryError> {
     let mut statement = transaction
         .prepare(
             "SELECT id, content, created_at_ms, updated_at_ms,
@@ -1047,10 +1070,15 @@ fn load_all(transaction: &Transaction<'_>) -> Result<Vec<StoredMemory>, MemoryEr
     let rows = statement
         .query_map([], row_to_memory)
         .map_err(sqlite_error)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error)
+    rows.map(|row| validate_loaded(row.map_err(sqlite_error)?, limits))
+        .collect()
 }
 
-fn load_one(transaction: &Transaction<'_>, id: i64) -> Result<Option<StoredMemory>, MemoryError> {
+fn load_one(
+    transaction: &Transaction<'_>,
+    id: i64,
+    limits: &MemoryLimits,
+) -> Result<Option<StoredMemory>, MemoryError> {
     transaction
         .query_row(
             "SELECT id, content, created_at_ms, updated_at_ms,
@@ -1062,7 +1090,17 @@ fn load_one(transaction: &Transaction<'_>, id: i64) -> Result<Option<StoredMemor
             row_to_memory,
         )
         .optional()
-        .map_err(sqlite_error)
+        .map_err(sqlite_error)?
+        .map(|memory| validate_loaded(memory, limits))
+        .transpose()
+}
+
+fn validate_loaded(
+    memory: StoredMemory,
+    limits: &MemoryLimits,
+) -> Result<StoredMemory, MemoryError> {
+    MemoryRecord::from(memory.clone()).validate(MemoryRecordScope::Local, limits)?;
+    Ok(memory)
 }
 
 fn row_to_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMemory> {
@@ -1115,39 +1153,82 @@ fn sqlite_write_error(source: rusqlite::Error) -> MemoryError {
     }
 }
 
-pub(crate) fn prepare_private_parent(path: &Path) -> Result<(), MemoryError> {
-    let Some(parent) = path.parent() else {
-        return Ok(());
-    };
-    if parent.as_os_str().is_empty() {
-        return Ok(());
-    }
-    fs::create_dir_all(parent)
-        .map_err(|source| MemoryError::backend(LocalStoreError::Directory(source)))?;
+#[cfg(unix)]
+fn prepare_private_path(path: &Path) -> Result<PathBuf, MemoryError> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 
-    #[cfg(unix)]
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or(MemoryError::InvalidMetadata)?;
+    let filename = path.file_name().ok_or(MemoryError::InvalidMetadata)?;
+    match fs::symlink_metadata(parent) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut builder = fs::DirBuilder::new();
+            builder.recursive(true).mode(0o700);
+            match builder.create(parent) {
+                Ok(()) => {}
+                Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(source) => {
+                    return Err(MemoryError::backend(LocalStoreError::Directory(source)));
+                }
+            }
+        }
+        Err(error) => return Err(MemoryError::backend(error)),
+    }
+    let owner = rustix::process::geteuid().as_raw();
+    let parent_metadata = fs::symlink_metadata(parent).map_err(MemoryError::backend)?;
+    if !parent_metadata.is_dir()
+        || parent_metadata.file_type().is_symlink()
+        || parent_metadata.uid() != owner
     {
-        use std::os::unix::fs::PermissionsExt;
-
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-            .map_err(|source| MemoryError::backend(LocalStoreError::Directory(source)))?;
+        return Err(MemoryError::InvalidMetadata);
     }
-    Ok(())
+    if parent_metadata.permissions().mode() & 0o777 != 0o700 {
+        return Err(MemoryError::InvalidMetadata);
+    }
+    let canonical_path = fs::canonicalize(parent)
+        .map_err(MemoryError::backend)?
+        .join(filename);
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .open(&canonical_path)
+        .map_err(MemoryError::backend)?;
+    let metadata = file.metadata().map_err(MemoryError::backend)?;
+    if !metadata.is_file() || metadata.uid() != owner {
+        return Err(MemoryError::InvalidMetadata);
+    }
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(MemoryError::backend)?;
+    Ok(canonical_path)
 }
 
-pub(crate) fn validate_content(content: &str, limits: &MemoryLimits) -> Result<(), MemoryError> {
-    if content.trim().is_empty() {
-        return Err(MemoryError::EmptyContent);
-    }
-    if content.len() > limits.content_bytes {
-        return Err(MemoryError::ContentTooLarge {
-            maximum_bytes: limits.content_bytes,
-        });
-    }
-    if contains_likely_secret(content) {
-        return Err(MemoryError::SecretRejected);
-    }
-    Ok(())
+#[cfg(not(unix))]
+fn prepare_private_path(_path: &Path) -> Result<PathBuf, MemoryError> {
+    Err(MemoryError::InvalidMetadata)
+}
+
+#[cfg(unix)]
+fn open_private_database(path: &Path) -> Result<Connection, MemoryError> {
+    use rusqlite::OpenFlags;
+
+    Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .map_err(sqlite_error)
+}
+
+#[cfg(not(unix))]
+fn open_private_database(_path: &Path) -> Result<Connection, MemoryError> {
+    Err(MemoryError::InvalidMetadata)
 }
 
 #[cfg(test)]
@@ -1157,7 +1238,7 @@ mod allocator_tests {
     #[test]
     fn allocation_reconciles_rows_inserted_by_a_legacy_writer() {
         let directory = tempfile::tempdir().unwrap();
-        let store = LocalMemoryStore::new(directory.path().join("memory.sqlite3"));
+        let store = LocalMemoryStore::new(directory.path().join("memory/v1.sqlite3"));
         let mut connection = store.open().unwrap();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1177,7 +1258,7 @@ mod allocator_tests {
     #[test]
     fn legacy_writers_cannot_reuse_retired_ids() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("memory.sqlite3");
+        let path = directory.path().join("memory/v1.sqlite3");
         let store = LocalMemoryStore::new(&path);
         let memory = store.put_local("retired", None, 1).unwrap();
         store.delete_local(memory.key).unwrap();

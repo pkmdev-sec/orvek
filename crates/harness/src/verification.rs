@@ -6,6 +6,7 @@ use crate::{
     store::VerificationLease,
     workspace::Snapshot,
 };
+use orvek_executor::MAX_COMMAND_BYTES;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path};
 use tokio_util::sync::CancellationToken;
@@ -64,6 +65,9 @@ impl Expectation {
             }
         }
     }
+    fn valid(&self) -> bool {
+        !matches!(self, Self::Contains(text) if text.is_empty())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -93,9 +97,18 @@ impl CheckProgram {
                     stderr,
                     ..
                 } => {
-                    if command.trim().is_empty() || (stdout.is_none() && stderr.is_none()) {
+                    if command.trim().is_empty()
+                        || command.len() > MAX_COMMAND_BYTES
+                        || (stdout.is_none() && stderr.is_none())
+                        || stdout
+                            .as_ref()
+                            .is_some_and(|expectation| !expectation.valid())
+                        || stderr
+                            .as_ref()
+                            .is_some_and(|expectation| !expectation.valid())
+                    {
                         return Err(StoreError::Invalid(
-                            "command probes require an observable output expectation",
+                            "command probes require a bounded command and observable output expectation",
                         ));
                     }
                 }
@@ -112,10 +125,18 @@ impl CheckProgram {
         }
         if let Some(control) = &self.control_failure
             && (!ids.contains(control.probe.as_str())
-                || (control.stdout.is_none() && control.stderr.is_none()))
+                || (control.stdout.is_none() && control.stderr.is_none())
+                || control
+                    .stdout
+                    .as_ref()
+                    .is_some_and(|expectation| !expectation.valid())
+                || control
+                    .stderr
+                    .as_ref()
+                    .is_some_and(|expectation| !expectation.valid()))
         {
             return Err(StoreError::Invalid(
-                "control must name a probe and an expected behavioral failure",
+                "control must name a probe and a non-empty expected behavioral failure",
             ));
         }
         Ok(())

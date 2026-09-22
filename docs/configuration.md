@@ -103,8 +103,8 @@ work; frame-rate limits do not guarantee throughput.
 
 Forks retain the root session's provider cache-routing key so an exact shared prefix can be reused.
 Diverged content remains separate, and a cache miss processes the complete projected request. See
-[Performance notes](performance.md) for local benchmarks and optional CodSpeed setup. Those benchmarks
-measure rendering, not model latency or task success.
+[Performance notes](performance.md) for local benchmarks. Those benchmarks measure rendering, not
+model latency or task success.
 
 ### Evaluations
 

@@ -4,6 +4,16 @@
     {
       "kind": "dispatched_by",
       "source": "capability:configuration-authentication-skills",
+      "target": "file:bin/orvek/src/app/auth.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:configuration-authentication-skills",
+      "target": "file:bin/orvek/src/app/cli.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:configuration-authentication-skills",
       "target": "file:bin/orvek/src/core/context.rs"
     },
     {
@@ -32,6 +42,16 @@
       "target": "file:bin/orvek/src/app/config.rs"
     },
     {
+      "kind": "persisted_by",
+      "source": "capability:configuration-authentication-skills",
+      "target": "file:crates/harness/src/inference/auth.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:configuration-authentication-skills",
+      "target": "file:bin/orvek/src/app/auth.rs"
+    },
+    {
       "kind": "proved_by",
       "source": "capability:configuration-authentication-skills",
       "target": "file:bin/orvek/src/app/host_context_tests.rs"
@@ -54,7 +74,7 @@
     {
       "kind": "entered_through",
       "source": "capability:context-projection",
-      "target": "file:crates/harness/src/controller.rs"
+      "target": "file:crates/harness/src/controller/task_phases.rs"
     },
     {
       "kind": "owned_by",
@@ -84,7 +104,7 @@
     {
       "kind": "entered_through",
       "source": "capability:context-transitions",
-      "target": "file:crates/harness/src/controller.rs"
+      "target": "file:crates/harness/src/controller/task_phases.rs"
     },
     {
       "kind": "owned_by",
@@ -103,13 +123,163 @@
     },
     {
       "kind": "dispatched_by",
+      "source": "capability:durable-completion-hooks",
+      "target": "file:crates/harness/src/controller/notification.rs"
+    },
+    {
+      "kind": "documented_by",
+      "source": "capability:durable-completion-hooks",
+      "target": "file:docs/configuration.md"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:durable-completion-hooks",
+      "target": "file:crates/harness/src/controller.rs"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:durable-completion-hooks",
+      "target": "file:crates/harness/src/ipc.rs"
+    },
+    {
+      "kind": "owned_by",
+      "source": "capability:durable-completion-hooks",
+      "target": "component:harness"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:durable-completion-hooks",
+      "target": "file:crates/harness/src/controller/notification.rs"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:durable-completion-hooks",
+      "target": "file:crates/harness/src/session.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:durable-completion-hooks",
+      "target": "file:bin/orvek/tests/completion_hook.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:durable-queue-steering",
+      "target": "file:crates/harness/src/controller/submissions.rs"
+    },
+    {
+      "kind": "documented_by",
+      "source": "capability:durable-queue-steering",
+      "target": "file:docs/sessions.md"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:durable-queue-steering",
+      "target": "file:bin/orvek/src/tui/event_loop.rs"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:durable-queue-steering",
+      "target": "file:crates/harness/src/ipc.rs"
+    },
+    {
+      "kind": "owned_by",
+      "source": "capability:durable-queue-steering",
+      "target": "component:harness"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:durable-queue-steering",
+      "target": "file:crates/harness/src/store/submissions.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:durable-queue-steering",
+      "target": "file:bin/orvek/src/tui/components/root.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:durable-queue-steering",
+      "target": "file:crates/harness/tests/task_admission.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/context_transitions/run_paired.py"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/harbor_adapter/agent.py"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/incident_replay/analyze.py"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/incident_replay/generate.py"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/incident_replay/scoring.py"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/snapcompact/paired_report.py"
+    },
+    {
+      "kind": "dispatched_by",
       "source": "capability:evaluations",
       "target": "file:evals/snapcompact/run_paired.py"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/snapcompact/score.py"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:evaluations",
+      "target": "file:examples/host-docs/fixture.py"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:evaluations",
+      "target": "file:scripts/analyze-context-cost.py"
     },
     {
       "kind": "documented_by",
       "source": "capability:evaluations",
       "target": "file:evals/README.md"
+    },
+    {
+      "kind": "documented_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/context_cost/README.md"
+    },
+    {
+      "kind": "documented_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/context_transitions/README.md"
+    },
+    {
+      "kind": "documented_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/snapcompact/README.md"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:evaluations",
+      "target": "file:evals/context_transitions/run_paired.py"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:evaluations",
+      "target": "file:evals/context_transitions/verify_sandbox.py"
     },
     {
       "kind": "entered_through",
@@ -119,7 +289,37 @@
     {
       "kind": "entered_through",
       "source": "capability:evaluations",
+      "target": "file:evals/incident_replay/analyze.py"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:evaluations",
+      "target": "file:evals/incident_replay/generate.py"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:evaluations",
+      "target": "file:evals/incident_replay/scoring.py"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:evaluations",
+      "target": "file:evals/snapcompact/paired_report.py"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:evaluations",
       "target": "file:evals/snapcompact/run_paired.py"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:evaluations",
+      "target": "file:evals/snapcompact/score.py"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:evaluations",
+      "target": "file:scripts/analyze-context-cost.py"
     },
     {
       "kind": "owned_by",
@@ -129,12 +329,77 @@
     {
       "kind": "persisted_by",
       "source": "capability:evaluations",
-      "target": "file:evals/snapcompact/results/2026-09-19/report.json"
+      "target": "file:evals/context_transitions/run_paired.py"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/harbor_adapter/agent.py"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/incident_replay/generate.py"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/incident_replay/scoring.py"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/snapcompact/paired_report.py"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/snapcompact/run_paired.py"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/context_transitions/test_accounting.py"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/context_transitions/verify_sandbox.py"
     },
     {
       "kind": "proved_by",
       "source": "capability:evaluations",
       "target": "file:evals/harbor_adapter/test_agent.py"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/incident_replay/generate.py"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/snapcompact/test_paired_report.py"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/snapcompact/test_run_paired.py"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:evaluations",
+      "target": "file:evals/snapcompact/test_score.py"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:evaluations",
+      "target": "file:scripts/tests/test_analyze_context_cost.py"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:event-intake",
+      "target": "file:bin/orvek/src/app/host.rs"
     },
     {
       "kind": "dispatched_by",
@@ -145,6 +410,11 @@
       "kind": "documented_by",
       "source": "capability:event-intake",
       "target": "file:docs/event-intake.md"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:event-intake",
+      "target": "file:bin/orvek/src/app/event_intake.rs"
     },
     {
       "kind": "entered_through",
@@ -164,7 +434,82 @@
     {
       "kind": "proved_by",
       "source": "capability:event-intake",
-      "target": "file:crates/harness/src/controller/event_intake.rs"
+      "target": "file:bin/orvek/tests/event_intake.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:experimental-trace-reexecution",
+      "target": "file:bin/orvek/src/app/trace.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:experimental-trace-reexecution",
+      "target": "file:crates/harness/src/controller/submissions.rs"
+    },
+    {
+      "kind": "documented_by",
+      "source": "capability:experimental-trace-reexecution",
+      "target": "file:docs/trace-bundles.md"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:experimental-trace-reexecution",
+      "target": "file:bin/orvek/src/app/cli.rs"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:experimental-trace-reexecution",
+      "target": "file:bin/orvek/src/app/trace.rs"
+    },
+    {
+      "kind": "owned_by",
+      "source": "capability:experimental-trace-reexecution",
+      "target": "component:cli"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:experimental-trace-reexecution",
+      "target": "file:crates/harness/src/store.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:experimental-trace-reexecution",
+      "target": "file:bin/orvek/tests/trace_cli.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:installation-updates",
+      "target": "file:bin/orvek/src/app/update.rs"
+    },
+    {
+      "kind": "documented_by",
+      "source": "capability:installation-updates",
+      "target": "file:README.md"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:installation-updates",
+      "target": "file:bin/orvek/src/app/cli.rs"
+    },
+    {
+      "kind": "owned_by",
+      "source": "capability:installation-updates",
+      "target": "component:cli"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:installation-updates",
+      "target": "file:bin/orvek/src/app/update.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:installation-updates",
+      "target": "file:bin/orvek/src/app/cli.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:installation-updates",
+      "target": "file:bin/orvek/src/app/update.rs"
     },
     {
       "kind": "dispatched_by",
@@ -179,7 +524,7 @@
     {
       "kind": "entered_through",
       "source": "capability:interpreter",
-      "target": "file:crates/harness/src/controller.rs"
+      "target": "file:crates/harness/src/controller/task_phases.rs"
     },
     {
       "kind": "owned_by",
@@ -198,6 +543,61 @@
     },
     {
       "kind": "dispatched_by",
+      "source": "capability:legacy-session-import",
+      "target": "file:crates/harness/src/controller.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:legacy-session-import",
+      "target": "file:crates/harness/src/controller/imports.rs"
+    },
+    {
+      "kind": "documented_by",
+      "source": "capability:legacy-session-import",
+      "target": "file:docs/sessions.md"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:legacy-session-import",
+      "target": "file:bin/orvek/src/core/mod.rs"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:legacy-session-import",
+      "target": "file:crates/harness/src/ipc.rs"
+    },
+    {
+      "kind": "owned_by",
+      "source": "capability:legacy-session-import",
+      "target": "component:harness"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:legacy-session-import",
+      "target": "file:crates/harness/src/session.rs"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:legacy-session-import",
+      "target": "file:crates/harness/src/store/imports.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:legacy-session-import",
+      "target": "file:crates/harness/tests/legacy_import.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:legacy-session-import",
+      "target": "file:crates/harness/tests/native_import_requests.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:memory",
+      "target": "file:bin/orvek/src/app/cli.rs"
+    },
+    {
+      "kind": "dispatched_by",
       "source": "capability:memory",
       "target": "file:crates/memory/src/tool.rs"
     },
@@ -205,6 +605,11 @@
       "kind": "documented_by",
       "source": "capability:memory",
       "target": "file:docs/memory.md"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:memory",
+      "target": "file:bin/orvek/src/app/cli.rs"
     },
     {
       "kind": "entered_through",
@@ -219,6 +624,11 @@
     {
       "kind": "persisted_by",
       "source": "capability:memory",
+      "target": "file:crates/memory/src/archive.rs"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:memory",
       "target": "file:crates/memory/src/store/local.rs"
     },
     {
@@ -229,7 +639,27 @@
     {
       "kind": "proved_by",
       "source": "capability:memory",
+      "target": "file:bin/orvek/src/app/cli.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:memory",
       "target": "file:bin/orvek/src/app/host_context_tests.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:memory",
+      "target": "file:crates/memory/src/tests.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:memory",
+      "target": "file:crates/memory/tests/evidence.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:monitoring",
+      "target": "file:bin/orvek/src/app/host.rs"
     },
     {
       "kind": "dispatched_by",
@@ -264,7 +694,177 @@
     {
       "kind": "proved_by",
       "source": "capability:monitoring",
+      "target": "file:bin/orvek/tests/monitor.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:monitoring",
       "target": "file:crates/harness/src/controller/monitor/tests.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:multimodal-image-submission",
+      "target": "file:bin/orvek/src/app/submission.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:multimodal-image-submission",
+      "target": "file:bin/orvek/src/tui/clipboard.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:multimodal-image-submission",
+      "target": "file:bin/orvek/src/tui/prompt.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:multimodal-image-submission",
+      "target": "file:crates/harness/src/controller/submissions.rs"
+    },
+    {
+      "kind": "documented_by",
+      "source": "capability:multimodal-image-submission",
+      "target": "file:docs/sessions.md"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:multimodal-image-submission",
+      "target": "file:bin/orvek/src/tui/client.rs"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:multimodal-image-submission",
+      "target": "file:bin/orvek/src/tui/event_loop.rs"
+    },
+    {
+      "kind": "owned_by",
+      "source": "capability:multimodal-image-submission",
+      "target": "component:harness"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:multimodal-image-submission",
+      "target": "file:crates/harness/src/input.rs"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:multimodal-image-submission",
+      "target": "file:crates/harness/src/store/submissions.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:multimodal-image-submission",
+      "target": "file:bin/orvek/src/tui/components/composer.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:multimodal-image-submission",
+      "target": "file:bin/orvek/src/tui/components/root.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:multimodal-image-submission",
+      "target": "file:crates/harness/tests/user_input.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:operator-shell-submissions",
+      "target": "file:crates/harness/src/controller/manual.rs"
+    },
+    {
+      "kind": "documented_by",
+      "source": "capability:operator-shell-submissions",
+      "target": "file:docs/workspace-execution.md"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:operator-shell-submissions",
+      "target": "file:bin/orvek/src/tui/event_loop.rs"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:operator-shell-submissions",
+      "target": "file:crates/harness/src/ipc.rs"
+    },
+    {
+      "kind": "owned_by",
+      "source": "capability:operator-shell-submissions",
+      "target": "component:harness"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:operator-shell-submissions",
+      "target": "file:crates/harness/src/session.rs"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:operator-shell-submissions",
+      "target": "file:crates/harness/src/store/manual.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:operator-shell-submissions",
+      "target": "file:bin/orvek/src/tui/components/root.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:operator-shell-submissions",
+      "target": "file:crates/harness/tests/controller_execution.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:session-handoff",
+      "target": "file:bin/orvek/src/app/auxiliary.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:session-handoff",
+      "target": "file:bin/orvek/src/tui/handoff_controller.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:session-handoff",
+      "target": "file:crates/harness/src/controller.rs"
+    },
+    {
+      "kind": "documented_by",
+      "source": "capability:session-handoff",
+      "target": "file:docs/sessions.md"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:session-handoff",
+      "target": "file:bin/orvek/src/tui/handoff_controller.rs"
+    },
+    {
+      "kind": "entered_through",
+      "source": "capability:session-handoff",
+      "target": "file:crates/harness/src/ipc.rs"
+    },
+    {
+      "kind": "owned_by",
+      "source": "capability:session-handoff",
+      "target": "component:harness"
+    },
+    {
+      "kind": "persisted_by",
+      "source": "capability:session-handoff",
+      "target": "file:crates/harness/src/store.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:session-handoff",
+      "target": "file:bin/orvek/src/tui/components/app.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:session-handoff",
+      "target": "file:bin/orvek/src/tui/components/root.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:session-handoff",
+      "target": "file:bin/orvek/src/tui/handoff_controller.rs"
     },
     {
       "kind": "dispatched_by",
@@ -275,6 +875,11 @@
       "kind": "dispatched_by",
       "source": "capability:sessions-review-reflection",
       "target": "file:crates/harness/src/controller/review.rs"
+    },
+    {
+      "kind": "dispatched_by",
+      "source": "capability:sessions-review-reflection",
+      "target": "file:crates/harness/src/controller/submissions.rs"
     },
     {
       "kind": "documented_by",
@@ -314,7 +919,17 @@
     {
       "kind": "proved_by",
       "source": "capability:sessions-review-reflection",
+      "target": "file:bin/orvek/src/tui/components/root.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:sessions-review-reflection",
       "target": "file:bin/orvek/src/tui/host_projection.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:sessions-review-reflection",
+      "target": "file:crates/harness/tests/session_journal.rs"
     },
     {
       "kind": "dispatched_by",
@@ -404,7 +1019,7 @@
     {
       "kind": "dispatched_by",
       "source": "capability:terminal-performance",
-      "target": "file:bin/orvek/src/tui/client.rs"
+      "target": "file:bin/orvek/src/tui/event_loop.rs"
     },
     {
       "kind": "documented_by",
@@ -425,6 +1040,16 @@
       "kind": "proved_by",
       "source": "capability:terminal-performance",
       "target": "file:bin/orvek/src/tui/bench.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:terminal-performance",
+      "target": "file:bin/orvek/src/tui/components/transcript/mod.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:terminal-performance",
+      "target": "file:bin/orvek/src/tui/scheduler.rs"
     },
     {
       "kind": "dispatched_by",
@@ -517,6 +1142,11 @@
       "target": "file:crates/harness/src/capabilities.rs"
     },
     {
+      "kind": "dispatched_by",
+      "source": "capability:workspace-execution",
+      "target": "file:crates/harness/src/capabilities/host.rs"
+    },
+    {
       "kind": "documented_by",
       "source": "capability:workspace-execution",
       "target": "file:docs/workspace-execution.md"
@@ -535,6 +1165,16 @@
       "kind": "persisted_by",
       "source": "capability:workspace-execution",
       "target": "file:crates/harness/src/store.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:workspace-execution",
+      "target": "file:crates/harness/src/capabilities/host.rs"
+    },
+    {
+      "kind": "proved_by",
+      "source": "capability:workspace-execution",
+      "target": "file:crates/harness/tests/native_host.rs"
     },
     {
       "kind": "proved_by",
@@ -964,11 +1604,6 @@
     {
       "kind": "contains",
       "source": "directory:.github/workflows",
-      "target": "file:.github/workflows/codspeed.yml"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:.github/workflows",
       "target": "file:.github/workflows/release.yaml"
     },
     {
@@ -1270,6 +1905,16 @@
       "kind": "contains",
       "source": "directory:bin/orvek/src/tui",
       "target": "file:bin/orvek/src/tui/editor.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:bin/orvek/src/tui",
+      "target": "file:bin/orvek/src/tui/event_loop.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:bin/orvek/src/tui",
+      "target": "file:bin/orvek/src/tui/file_index.rs"
     },
     {
       "kind": "contains",
@@ -2089,6 +2734,11 @@
     {
       "kind": "contains",
       "source": "directory:crates/harness/src/controller",
+      "target": "file:crates/harness/src/controller/task_phases.rs"
+    },
+    {
+      "kind": "contains",
+      "source": "directory:crates/harness/src/controller",
       "target": "file:crates/harness/src/controller/workspace.rs"
     },
     {
@@ -2538,11 +3188,6 @@
     },
     {
       "kind": "contains",
-      "source": "directory:docker",
-      "target": "file:docker/release.dockerfile"
-    },
-    {
-      "kind": "contains",
       "source": "directory:docker/dev",
       "target": "file:docker/dev/README.md"
     },
@@ -2983,6 +3628,11 @@
     },
     {
       "kind": "contains",
+      "source": "directory:evals/incident_replay",
+      "target": "file:evals/incident_replay/test_contracts.py"
+    },
+    {
+      "kind": "contains",
       "source": "directory:evals/snapcompact",
       "target": "directory:evals/snapcompact/fixtures"
     },
@@ -3063,11 +3713,6 @@
     },
     {
       "kind": "contains",
-      "source": "directory:examples",
-      "target": "directory:examples/orvek-memory-cloudflare"
-    },
-    {
-      "kind": "contains",
       "source": "directory:examples/host-docs",
       "target": "directory:examples/host-docs/traces"
     },
@@ -3135,106 +3780,6 @@
       "kind": "contains",
       "source": "directory:examples/host-docs/traces",
       "target": "file:examples/host-docs/traces/sandbox.trace.json"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare",
-      "target": "directory:examples/orvek-memory-cloudflare/migrations"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare",
-      "target": "directory:examples/orvek-memory-cloudflare/scripts"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare",
-      "target": "directory:examples/orvek-memory-cloudflare/src"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare",
-      "target": "file:examples/orvek-memory-cloudflare/Cargo.toml"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare",
-      "target": "file:examples/orvek-memory-cloudflare/README.md"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare",
-      "target": "file:examples/orvek-memory-cloudflare/credentials.example.toml"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare",
-      "target": "file:examples/orvek-memory-cloudflare/package-lock.json"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare",
-      "target": "file:examples/orvek-memory-cloudflare/package.json"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare",
-      "target": "file:examples/orvek-memory-cloudflare/wrangler.jsonc"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare/migrations",
-      "target": "file:examples/orvek-memory-cloudflare/migrations/0001_initial.sql"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare/migrations",
-      "target": "file:examples/orvek-memory-cloudflare/migrations/0002_evidence.sql"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare/migrations",
-      "target": "file:examples/orvek-memory-cloudflare/migrations/0003_ownership.sql"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare/scripts",
-      "target": "file:examples/orvek-memory-cloudflare/scripts/credentials.test.ts"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare/scripts",
-      "target": "file:examples/orvek-memory-cloudflare/scripts/credentials.ts"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare/src",
-      "target": "directory:examples/orvek-memory-cloudflare/src/store"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare/src",
-      "target": "file:examples/orvek-memory-cloudflare/src/auth.rs"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare/src",
-      "target": "file:examples/orvek-memory-cloudflare/src/config.rs"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare/src",
-      "target": "file:examples/orvek-memory-cloudflare/src/lib.rs"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare/src",
-      "target": "file:examples/orvek-memory-cloudflare/src/store.rs"
-    },
-    {
-      "kind": "contains",
-      "source": "directory:examples/orvek-memory-cloudflare/src/store",
-      "target": "file:examples/orvek-memory-cloudflare/src/store/row.rs"
     },
     {
       "kind": "contains",
@@ -4213,11 +4758,6 @@
     },
     {
       "kind": "links_to",
-      "source": "file:docs/memory.md",
-      "target": "file:examples/orvek-memory-cloudflare/README.md"
-    },
-    {
-      "kind": "links_to",
       "source": "file:docs/sessions.md",
       "target": "file:docs/compaction.md"
     },
@@ -4308,6 +4848,11 @@
     },
     {
       "kind": "imports_local",
+      "source": "file:evals/incident_replay/test_contracts.py",
+      "target": "file:evals/incident_replay/__init__.py"
+    },
+    {
+      "kind": "imports_local",
       "source": "file:evals/snapcompact/run_paired.py",
       "target": "file:evals/snapcompact/paired_report.py"
     },
@@ -4320,16 +4865,6 @@
       "kind": "imports_local",
       "source": "file:evals/snapcompact/test_score.py",
       "target": "file:evals/snapcompact/score.py"
-    },
-    {
-      "kind": "links_to",
-      "source": "file:examples/orvek-memory-cloudflare/README.md",
-      "target": "file:docs/memory.md"
-    },
-    {
-      "kind": "imports_local",
-      "source": "file:examples/orvek-memory-cloudflare/scripts/credentials.test.ts",
-      "target": "file:examples/orvek-memory-cloudflare/scripts/credentials.ts"
     },
     {
       "kind": "imports_local",
@@ -4924,6 +5459,11 @@
     {
       "kind": "declares_module",
       "source": "module:orvek-harness:lib::controller",
+      "target": "module:orvek-harness:lib::controller::task_phases"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek-harness:lib::controller",
       "target": "module:orvek-harness:lib::controller::workspace"
     },
     {
@@ -5005,6 +5545,11 @@
       "kind": "implemented_by",
       "source": "module:orvek-harness:lib::controller::submissions",
       "target": "file:crates/harness/src/controller/submissions.rs"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek-harness:lib::controller::task_phases",
+      "target": "file:crates/harness/src/controller/task_phases.rs"
     },
     {
       "kind": "implemented_by",
@@ -5362,6 +5907,11 @@
       "target": "file:crates/harness/src/verification.rs"
     },
     {
+      "kind": "imports",
+      "source": "module:orvek-harness:lib::verification",
+      "target": "package:orvek-executor"
+    },
+    {
       "kind": "declares_module",
       "source": "module:orvek-harness:lib::workspace",
       "target": "module:orvek-harness:lib::workspace::reconcile"
@@ -5665,86 +6215,6 @@
       "kind": "imports",
       "source": "module:orvek-harness:test:workspace_tools::tests::workspace_tools",
       "target": "package:orvek-harness"
-    },
-    {
-      "kind": "declares_module",
-      "source": "module:orvek-memory-cloudflare:lib",
-      "target": "module:orvek-memory-cloudflare:lib::auth"
-    },
-    {
-      "kind": "declares_module",
-      "source": "module:orvek-memory-cloudflare:lib",
-      "target": "module:orvek-memory-cloudflare:lib::config"
-    },
-    {
-      "kind": "declares_module",
-      "source": "module:orvek-memory-cloudflare:lib",
-      "target": "module:orvek-memory-cloudflare:lib::store"
-    },
-    {
-      "kind": "implemented_by",
-      "source": "module:orvek-memory-cloudflare:lib",
-      "target": "file:examples/orvek-memory-cloudflare/src/lib.rs"
-    },
-    {
-      "kind": "imports",
-      "source": "module:orvek-memory-cloudflare:lib",
-      "target": "package:orvek-memory"
-    },
-    {
-      "kind": "implemented_by",
-      "source": "module:orvek-memory-cloudflare:lib::auth",
-      "target": "file:examples/orvek-memory-cloudflare/src/auth.rs"
-    },
-    {
-      "kind": "imports",
-      "source": "module:orvek-memory-cloudflare:lib::auth",
-      "target": "package:orvek-memory"
-    },
-    {
-      "kind": "implemented_by",
-      "source": "module:orvek-memory-cloudflare:lib::config",
-      "target": "file:examples/orvek-memory-cloudflare/src/config.rs"
-    },
-    {
-      "kind": "declares_module",
-      "source": "module:orvek-memory-cloudflare:lib::store",
-      "target": "module:orvek-memory-cloudflare:lib::store::row"
-    },
-    {
-      "kind": "implemented_by",
-      "source": "module:orvek-memory-cloudflare:lib::store",
-      "target": "file:examples/orvek-memory-cloudflare/src/store.rs"
-    },
-    {
-      "kind": "imports",
-      "source": "module:orvek-memory-cloudflare:lib::store",
-      "target": "package:orvek-memory"
-    },
-    {
-      "kind": "includes",
-      "source": "module:orvek-memory-cloudflare:lib::store",
-      "target": "file:examples/orvek-memory-cloudflare/migrations/0001_initial.sql"
-    },
-    {
-      "kind": "includes",
-      "source": "module:orvek-memory-cloudflare:lib::store",
-      "target": "file:examples/orvek-memory-cloudflare/migrations/0002_evidence.sql"
-    },
-    {
-      "kind": "includes",
-      "source": "module:orvek-memory-cloudflare:lib::store",
-      "target": "file:examples/orvek-memory-cloudflare/migrations/0003_ownership.sql"
-    },
-    {
-      "kind": "implemented_by",
-      "source": "module:orvek-memory-cloudflare:lib::store::row",
-      "target": "file:examples/orvek-memory-cloudflare/src/store/row.rs"
-    },
-    {
-      "kind": "imports",
-      "source": "module:orvek-memory-cloudflare:lib::store::row",
-      "target": "package:orvek-memory"
     },
     {
       "kind": "declares_module",
@@ -6484,6 +6954,16 @@
     {
       "kind": "declares_module",
       "source": "module:orvek:bin:orvek::tui",
+      "target": "module:orvek:bin:orvek::tui::event_loop"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek:bin:orvek::tui",
+      "target": "module:orvek:bin:orvek::tui::file_index"
+    },
+    {
+      "kind": "declares_module",
+      "source": "module:orvek:bin:orvek::tui",
       "target": "module:orvek:bin:orvek::tui::fixtures"
     },
     {
@@ -6575,11 +7055,6 @@
       "kind": "imports",
       "source": "module:orvek:bin:orvek::tui::client",
       "target": "package:orvek-harness"
-    },
-    {
-      "kind": "imports",
-      "source": "module:orvek:bin:orvek::tui::client",
-      "target": "package:orvek-memory"
     },
     {
       "kind": "implemented_by",
@@ -7158,6 +7633,26 @@
     },
     {
       "kind": "implemented_by",
+      "source": "module:orvek:bin:orvek::tui::event_loop",
+      "target": "file:bin/orvek/src/tui/event_loop.rs"
+    },
+    {
+      "kind": "imports",
+      "source": "module:orvek:bin:orvek::tui::event_loop",
+      "target": "package:orvek-harness"
+    },
+    {
+      "kind": "imports",
+      "source": "module:orvek:bin:orvek::tui::event_loop",
+      "target": "package:orvek-memory"
+    },
+    {
+      "kind": "implemented_by",
+      "source": "module:orvek:bin:orvek::tui::file_index",
+      "target": "file:bin/orvek/src/tui/file_index.rs"
+    },
+    {
+      "kind": "implemented_by",
       "source": "module:orvek:bin:orvek::tui::fixtures",
       "target": "file:bin/orvek/src/tui/fixtures.rs"
     },
@@ -7360,11 +7855,6 @@
       "kind": "includes",
       "source": "module:orvek:test:release_pipeline::tests::release_pipeline",
       "target": "file:.github/workflows/ci.yaml"
-    },
-    {
-      "kind": "includes",
-      "source": "module:orvek:test:release_pipeline::tests::release_pipeline",
-      "target": "file:.github/workflows/codspeed.yml"
     },
     {
       "kind": "includes",
@@ -8177,76 +8667,6 @@
       "target": "workspace:orvek"
     },
     {
-      "kind": "declared_in",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "file:examples/orvek-memory-cloudflare/Cargo.toml"
-    },
-    {
-      "kind": "defines",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "target:orvek-memory-cloudflare:lib"
-    },
-    {
-      "kind": "depends_on",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "dependency:axum"
-    },
-    {
-      "kind": "depends_on",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "dependency:rusqlite"
-    },
-    {
-      "kind": "depends_on",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "dependency:serde"
-    },
-    {
-      "kind": "depends_on",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "dependency:serde_json"
-    },
-    {
-      "kind": "depends_on",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "dependency:thiserror"
-    },
-    {
-      "kind": "depends_on",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "dependency:tower"
-    },
-    {
-      "kind": "depends_on",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "dependency:tracing-subscriber"
-    },
-    {
-      "kind": "depends_on",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "dependency:tracing-web"
-    },
-    {
-      "kind": "depends_on",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "dependency:worker"
-    },
-    {
-      "kind": "depends_on",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "dependency:zeroize"
-    },
-    {
-      "kind": "depends_on",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "package:orvek-memory"
-    },
-    {
-      "kind": "member_of",
-      "source": "package:orvek-memory-cloudflare",
-      "target": "workspace:orvek"
-    },
-    {
       "kind": "contains",
       "source": "repository:orvek",
       "target": "directory:."
@@ -8415,6 +8835,11 @@
       "kind": "contains",
       "source": "target:orvek-harness:lib",
       "target": "module:orvek-harness:lib::controller::submissions"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek-harness:lib",
+      "target": "module:orvek-harness:lib::controller::task_phases"
     },
     {
       "kind": "contains",
@@ -8790,31 +9215,6 @@
       "kind": "contains",
       "source": "target:orvek-harness:test:workspace_tools",
       "target": "module:orvek-harness:test:workspace_tools::tests::workspace_tools"
-    },
-    {
-      "kind": "contains",
-      "source": "target:orvek-memory-cloudflare:lib",
-      "target": "module:orvek-memory-cloudflare:lib"
-    },
-    {
-      "kind": "contains",
-      "source": "target:orvek-memory-cloudflare:lib",
-      "target": "module:orvek-memory-cloudflare:lib::auth"
-    },
-    {
-      "kind": "contains",
-      "source": "target:orvek-memory-cloudflare:lib",
-      "target": "module:orvek-memory-cloudflare:lib::config"
-    },
-    {
-      "kind": "contains",
-      "source": "target:orvek-memory-cloudflare:lib",
-      "target": "module:orvek-memory-cloudflare:lib::store"
-    },
-    {
-      "kind": "contains",
-      "source": "target:orvek-memory-cloudflare:lib",
-      "target": "module:orvek-memory-cloudflare:lib::store::row"
     },
     {
       "kind": "contains",
@@ -9394,6 +9794,16 @@
     {
       "kind": "contains",
       "source": "target:orvek:bin:orvek",
+      "target": "module:orvek:bin:orvek::tui::event_loop"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek:bin:orvek",
+      "target": "module:orvek:bin:orvek::tui::file_index"
+    },
+    {
+      "kind": "contains",
+      "source": "target:orvek:bin:orvek",
       "target": "module:orvek:bin:orvek::tui::fixtures"
     },
     {
@@ -9530,6 +9940,50 @@
       "execution_paths": [
         [
           {
+            "anchor": "async fn run_with_config(self, config: &Config) -> Result<()>",
+            "call": "Self::Auth { command } => command.run(config).await.map_err(Into::into)",
+            "path": "bin/orvek/src/app/cli.rs"
+          },
+          {
+            "anchor": "async fn run(self, config: &Config) -> AuthResult<()>",
+            "path": "bin/orvek/src/app/cli.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn run(self, config: &Config) -> AuthResult<()>",
+            "call": "Self::Login => config.auth().login().await",
+            "path": "bin/orvek/src/app/cli.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn login(&self) -> AuthResult<()>",
+            "path": "bin/orvek/src/app/auth.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn run(self, config: &Config) -> AuthResult<()>",
+            "call": "Self::Status => config.auth().status().await",
+            "path": "bin/orvek/src/app/cli.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn status(&self) -> AuthResult<()>",
+            "path": "bin/orvek/src/app/auth.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn run(self, config: &Config) -> AuthResult<()>",
+            "call": "Self::Logout => config.auth().logout()",
+            "path": "bin/orvek/src/app/cli.rs"
+          },
+          {
+            "anchor": "pub(crate) fn logout(&self) -> AuthResult<()>",
+            "path": "bin/orvek/src/app/auth.rs"
+          }
+        ],
+        [
+          {
             "anchor": "pub(crate) async fn serve(config: &Config)",
             "call": "ConfiguredContext::new(",
             "path": "bin/orvek/src/app/host.rs"
@@ -9544,10 +9998,27 @@
       "kind": "capability",
       "label": "Configuration, authentication, and skills",
       "limitations": [
-        "Skills are disabled by default and are reference data rather than task authority."
+        "Skills are disabled by default and are reference data rather than task authority.",
+        "Environment API keys are not persisted; ChatGPT credentials use the shared Codex auth file, so logout signs both Orvek and Codex out."
       ],
       "references": {
         "dispatchers": [
+          {
+            "anchor": "async fn run(self, config: &Config) -> AuthResult<()>",
+            "path": "bin/orvek/src/app/cli.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn login(&self) -> AuthResult<()>",
+            "path": "bin/orvek/src/app/auth.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn status(&self) -> AuthResult<()>",
+            "path": "bin/orvek/src/app/auth.rs"
+          },
+          {
+            "anchor": "pub(crate) fn logout(&self) -> AuthResult<()>",
+            "path": "bin/orvek/src/app/auth.rs"
+          },
           {
             "anchor": "impl ContextSession for ConfiguredContextSession",
             "path": "bin/orvek/src/core/context.rs"
@@ -9557,11 +10028,23 @@
           {
             "anchor": "### Configuration, authentication, and skills",
             "path": "docs/configuration.md"
+          },
+          {
+            "anchor": "## Authentication",
+            "path": "docs/configuration.md"
           }
         ],
         "entrypoints": [
           {
             "anchor": "pub(crate) async fn run(self) -> Result<()>",
+            "path": "bin/orvek/src/app/cli.rs"
+          },
+          {
+            "anchor": "async fn run_with_config(self, config: &Config) -> Result<()>",
+            "path": "bin/orvek/src/app/cli.rs"
+          },
+          {
+            "anchor": "async fn run(self, config: &Config) -> AuthResult<()>",
             "path": "bin/orvek/src/app/cli.rs"
           },
           {
@@ -9571,23 +10054,76 @@
         ],
         "persistence": [
           {
-            "anchor": "pub(crate) struct Config {",
+            "anchor": "fn write_document(path: &Path, document: DocumentMut) -> Result<()>",
             "path": "bin/orvek/src/app/config.rs"
+          },
+          {
+            "anchor": "fn write_store(path: &Path, document: &SecretJson) -> Result<(), AuthError>",
+            "path": "crates/harness/src/inference/auth.rs"
+          },
+          {
+            "anchor": "pub fn logout_chatgpt(path: impl AsRef<Path>) -> Result<bool, AuthError>",
+            "path": "crates/harness/src/inference/auth.rs"
           }
         ],
         "proof": [
           {
             "anchor": "configured_context_reaches_native_requests_over_ipc",
-            "path": "bin/orvek/src/app/host_context_tests.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/app/host_context_tests.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "auto_prefers_an_existing_chatgpt_file_without_reading_the_api_key",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/app/auth.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "auto_falls_back_to_an_api_key_when_chatgpt_is_absent",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/app/auth.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "logout_is_idempotent",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/app/auth.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
       "runtime_modes": [
+        "client",
         "host",
         "sandbox"
       ],
       "status": "implemented",
-      "summary": "Loads bounded local configuration and credentials, admits a durable session, and exposes refreshed skill metadata and bodies through the host context service."
+      "summary": "Loads bounded local configuration and credentials, dispatches login/status/logout, admits durable sessions, and exposes refreshed skill metadata and bodies through the host context service."
     },
     {
       "execution_paths": [
@@ -9595,7 +10131,7 @@
           {
             "anchor": "async fn run_contract(",
             "call": "crate::context::project(&session, byte_limit)",
-            "path": "crates/harness/src/controller.rs"
+            "path": "crates/harness/src/controller/task_phases.rs"
           },
           {
             "anchor": "pub fn project(",
@@ -9604,9 +10140,9 @@
         ],
         [
           {
-            "anchor": "async fn run_contract(",
+            "anchor": "async fn execute_proposals(",
             "call": "self.read_context(",
-            "path": "crates/harness/src/controller.rs"
+            "path": "crates/harness/src/controller/task_phases.rs"
           },
           {
             "anchor": "async fn read_context(",
@@ -9640,7 +10176,11 @@
         "entrypoints": [
           {
             "anchor": "async fn run_contract(",
-            "path": "crates/harness/src/controller.rs"
+            "path": "crates/harness/src/controller/task_phases.rs"
+          },
+          {
+            "anchor": "async fn execute_proposals(",
+            "path": "crates/harness/src/controller/task_phases.rs"
           }
         ],
         "persistence": [
@@ -9652,7 +10192,15 @@
         "proof": [
           {
             "anchor": "exact_projection_preserves_original_authority_and_has_reproducible_identity",
-            "path": "crates/harness/tests/context_projection.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/context_projection.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
@@ -9667,9 +10215,9 @@
       "execution_paths": [
         [
           {
-            "anchor": "async fn run_contract(",
+            "anchor": "async fn execute_proposals(",
             "call": "self.transition_context(",
-            "path": "crates/harness/src/controller.rs"
+            "path": "crates/harness/src/controller/task_phases.rs"
           },
           {
             "anchor": "async fn transition_context(",
@@ -9699,7 +10247,11 @@
         "entrypoints": [
           {
             "anchor": "async fn run_contract(",
-            "path": "crates/harness/src/controller.rs"
+            "path": "crates/harness/src/controller/task_phases.rs"
+          },
+          {
+            "anchor": "async fn execute_proposals(",
+            "path": "crates/harness/src/controller/task_phases.rs"
           }
         ],
         "persistence": [
@@ -9711,7 +10263,15 @@
         "proof": [
           {
             "anchor": "restart_preserves_accepted_transition_and_exact_multibyte_source_without_reexecution",
-            "path": "crates/harness/tests/context_transitions.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/context_transitions.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
@@ -9726,67 +10286,774 @@
       "execution_paths": [
         [
           {
-            "anchor": "def main(",
-            "call": "run_condition(args, model, condition",
+            "anchor": "pub(super) async fn execute_task_request(",
+            "call": "self.arm_completion_hook(session, request).await?",
+            "path": "crates/harness/src/controller.rs"
+          },
+          {
+            "anchor": "pub(super) async fn arm_completion_hook(",
+            "path": "crates/harness/src/controller/notification.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "pub(super) async fn execute_task_request(",
+            "call": "self.deliver_completion_hooks(session).await.is_err()",
+            "path": "crates/harness/src/controller.rs"
+          },
+          {
+            "anchor": "pub(super) async fn deliver_completion_hooks(",
+            "path": "crates/harness/src/controller/notification.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<()>",
+            "call": "recovery_host.recover_completion_hooks()",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn recover_completion_hooks(&self) -> Result<(), HostError>",
+            "call": "self.deliver_completion_hooks(session.id).await?",
+            "path": "crates/harness/src/controller/notification.rs"
+          },
+          {
+            "anchor": "pub(super) async fn deliver_completion_hooks(",
+            "path": "crates/harness/src/controller/notification.rs"
+          }
+        ]
+      ],
+      "id": "capability:durable-completion-hooks",
+      "kind": "capability",
+      "label": "Durable completion hooks",
+      "limitations": [
+        "Hooks cover terminal task outcomes only; conversation-only turns, auxiliary requests, local shell submissions, and requests rejected before a task exists do not notify.",
+        "The command runs on the host through /bin/sh even for sandbox tasks. A claimed effect without a recorded result remains unknown and is not automatically retried; arbitrary shell effects are not exactly once."
+      ],
+      "references": {
+        "dispatchers": [
+          {
+            "anchor": "pub(super) async fn arm_completion_hook(",
+            "path": "crates/harness/src/controller/notification.rs"
+          },
+          {
+            "anchor": "pub(super) async fn deliver_completion_hooks(",
+            "path": "crates/harness/src/controller/notification.rs"
+          }
+        ],
+        "documentation": [
+          {
+            "anchor": "### Completion notifications",
+            "path": "docs/configuration.md"
+          }
+        ],
+        "entrypoints": [
+          {
+            "anchor": "pub(super) async fn execute_task_request(",
+            "path": "crates/harness/src/controller.rs"
+          },
+          {
+            "anchor": "pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<()>",
+            "path": "crates/harness/src/ipc.rs"
+          }
+        ],
+        "persistence": [
+          {
+            "anchor": "CompletionHook(DeliveryEvent),",
+            "path": "crates/harness/src/session.rs"
+          },
+          {
+            "anchor": "pub(super) async fn deliver_completion_hooks(",
+            "path": "crates/harness/src/controller/notification.rs"
+          }
+        ],
+        "proof": [
+          {
+            "anchor": "configured_hook_runs_for_headless_and_terminal_ipc_without_reconnect_duplicates",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/tests/completion_hook.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "crash_after_external_effect_keeps_delivery_unknown_without_retry",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/tests/completion_hook.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "sandbox_headless_and_terminal_ipc_use_the_same_host_hook",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/tests/completion_hook.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          }
+        ]
+      },
+      "runtime_modes": [
+        "host",
+        "sandbox"
+      ],
+      "status": "implemented",
+      "summary": "Pins a configured host shell notification before each task request, delivers it after terminal task settlement, and journals intent, claim, and result so restart recovery resumes only unclaimed effects."
+    },
+    {
+      "execution_paths": [
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.move_submission(",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub async fn move_submission(",
+            "path": "crates/harness/src/controller/submissions.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.edit_submission(",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub async fn edit_submission(",
+            "path": "crates/harness/src/controller/submissions.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.cancel_submission(",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub async fn cancel_submission(",
+            "path": "crates/harness/src/controller/submissions.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.submit(session, request.id, content, intent).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub async fn submit(",
+            "call": "self.wake_queue(session).await",
+            "path": "crates/harness/src/controller/submissions.rs"
+          },
+          {
+            "anchor": "async fn wake_queue(self: &Arc<Self>, session: SessionId)",
+            "call": "host.run_queue(session).await",
+            "path": "crates/harness/src/controller/submissions.rs"
+          },
+          {
+            "anchor": "async fn run_queue(",
+            "path": "crates/harness/src/controller/submissions.rs"
+          }
+        ]
+      ],
+      "id": "capability:durable-queue-steering",
+      "kind": "capability",
+      "label": "Durable submission queue and steering",
+      "limitations": [
+        "Edits and moves succeed only while a submission remains queued and its expected input digest still matches; promotion is semantically distinct from reordering.",
+        "The queue is bounded to 16 pending submissions per session and 128 across the host. The detached host, not the TUI, owns durable order and recovery."
+      ],
+      "references": {
+        "dispatchers": [
+          {
+            "anchor": "pub async fn move_submission(",
+            "path": "crates/harness/src/controller/submissions.rs"
+          },
+          {
+            "anchor": "pub async fn edit_submission(",
+            "path": "crates/harness/src/controller/submissions.rs"
+          },
+          {
+            "anchor": "pub async fn cancel_submission(",
+            "path": "crates/harness/src/controller/submissions.rs"
+          },
+          {
+            "anchor": "async fn run_queue(",
+            "path": "crates/harness/src/controller/submissions.rs"
+          }
+        ],
+        "documentation": [
+          {
+            "anchor": "## Queue and steer follow-ups",
+            "path": "docs/sessions.md"
+          }
+        ],
+        "entrypoints": [
+          {
+            "anchor": "pub(super) async fn run(",
+            "path": "bin/orvek/src/tui/event_loop.rs"
+          },
+          {
+            "anchor": "async fn execute(",
+            "path": "crates/harness/src/ipc.rs"
+          }
+        ],
+        "persistence": [
+          {
+            "anchor": "pub fn submit(",
+            "path": "crates/harness/src/store/submissions.rs"
+          },
+          {
+            "anchor": "pub fn edit_submission(",
+            "path": "crates/harness/src/store/submissions.rs"
+          },
+          {
+            "anchor": "pub fn move_submission(",
+            "path": "crates/harness/src/store/submissions.rs"
+          },
+          {
+            "anchor": "pub fn set_submission_status(",
+            "path": "crates/harness/src/store/submissions.rs"
+          }
+        ],
+        "proof": [
+          {
+            "anchor": "queue_edits_reordering_and_promotion_are_atomic_and_distinct_from_normal_queueing",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/task_admission.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "queued_followups_revoke_old_authority_and_keep_obligations_workspace_and_spend",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/task_admission.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "enter_in_an_empty_composer_steers_the_selected_queued_message",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/tui/components/root.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "queue_edit_uses_frozen_input_identity_and_preserves_unrelated_draft",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/tui/components/root.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          }
+        ]
+      },
+      "runtime_modes": [
+        "client",
+        "host",
+        "sandbox"
+      ],
+      "status": "implemented",
+      "summary": "Admits idempotent host-owned submissions and applies expected-input-guarded editing, promotion, cancellation, and reordering while one recovery worker consumes durable queue order."
+    },
+    {
+      "execution_paths": [
+        [
+          {
+            "anchor": "    async def run(",
+            "call": "self._run_to_completion(",
+            "path": "evals/harbor_adapter/agent.py"
+          },
+          {
+            "anchor": "    async def _run_to_completion(",
+            "path": "evals/harbor_adapter/agent.py"
+          }
+        ],
+        [
+          {
+            "anchor": "def main():",
+            "call": "run_condition(args, model, condition, repetition, fixture_digest, output)",
             "path": "evals/snapcompact/run_paired.py"
           },
           {
             "anchor": "def run_condition(",
             "path": "evals/snapcompact/run_paired.py"
           }
+        ],
+        [
+          {
+            "anchor": "def main():",
+            "call": "result = report(records)",
+            "path": "evals/snapcompact/paired_report.py"
+          },
+          {
+            "anchor": "def report(records):",
+            "path": "evals/snapcompact/paired_report.py"
+          }
+        ],
+        [
+          {
+            "anchor": "def main():",
+            "call": "report = summarize(",
+            "path": "evals/snapcompact/score.py"
+          },
+          {
+            "anchor": "def summarize(events):",
+            "path": "evals/snapcompact/score.py"
+          }
+        ],
+        [
+          {
+            "anchor": "def main() -> None:",
+            "call": "analyze(load_document(args.source))",
+            "path": "scripts/analyze-context-cost.py"
+          },
+          {
+            "anchor": "def analyze(document: dict[str, Any]) -> dict[str, Any]:",
+            "path": "scripts/analyze-context-cost.py"
+          }
+        ],
+        [
+          {
+            "anchor": "def main():",
+            "call": "run_condition(args.binary,args.output,condition,args.phases,records)",
+            "path": "evals/context_transitions/run_paired.py"
+          },
+          {
+            "anchor": "def run_condition(",
+            "path": "evals/context_transitions/run_paired.py"
+          }
+        ],
+        [
+          {
+            "anchor": "def main(binary):",
+            "call": "host.query(\"execute_contract\"",
+            "path": "evals/context_transitions/verify_sandbox.py"
+          },
+          {
+            "anchor": "    def query(self, kind, **data):",
+            "path": "examples/host-docs/fixture.py"
+          }
+        ],
+        [
+          {
+            "anchor": "def main() -> None:",
+            "call": "generate_tasks(args.output)",
+            "path": "evals/incident_replay/generate.py"
+          },
+          {
+            "anchor": "def generate_tasks(output: Path) -> None:",
+            "path": "evals/incident_replay/generate.py"
+          }
+        ],
+        [
+          {
+            "anchor": "def main() -> None:",
+            "call": "rewards, report = score_events(variant, events, invalid_lines)",
+            "path": "evals/incident_replay/scoring.py"
+          },
+          {
+            "anchor": "def score_events(",
+            "path": "evals/incident_replay/scoring.py"
+          }
+        ],
+        [
+          {
+            "anchor": "def main() -> None:",
+            "call": "summary = summarize(args.paths)",
+            "path": "evals/incident_replay/analyze.py"
+          },
+          {
+            "anchor": "def summarize(paths: Iterable[Path]) -> dict[str, Any]:",
+            "path": "evals/incident_replay/analyze.py"
+          }
         ]
       ],
       "id": "capability:evaluations",
       "kind": "capability",
-      "label": "Evaluation lab",
+      "label": "Evaluation tooling",
       "limitations": [
-        "Live trials require external providers and credentials; deterministic checks do not establish benchmark quality."
+        "Harbor and live SnapCompact trials require external providers, credentials, and local Docker; the Harbor Docker execution path is documented as not validated for Orvek 0.1.0.",
+        "The SnapCompact runner does not implement the fork case, host-mode tasks cannot provide the required settled fork checkpoint, and missing usage or receipts remain unknown rather than zero.",
+        "Context-cost output is descriptive; its 3.7x input counterfactual is not a billed value or an Orvek savings claim.",
+        "Context transitions are default-disabled and have deterministic wiring evidence only; live-model quality and full-cost acceptance remain pending. The sandbox verifier additionally requires Docker and ORVEK_EXECUTOR_HELPER.",
+        "Incident replay is an incident-inspired proxy, not Anthropic's environment and not a direct Mythos-rate comparison. It has an embedded deterministic verifier but no dedicated README or focused generator/analyzer contract test.",
+        "The checked-in 2026-09-19 SnapCompact report is historical legacy evidence and is intentionally not cited as current persistence or qualification proof."
       ],
       "references": {
         "dispatchers": [
           {
+            "anchor": "    async def _run_to_completion(",
+            "path": "evals/harbor_adapter/agent.py"
+          },
+          {
             "anchor": "def run_condition(",
             "path": "evals/snapcompact/run_paired.py"
+          },
+          {
+            "anchor": "def report(records):",
+            "path": "evals/snapcompact/paired_report.py"
+          },
+          {
+            "anchor": "def summarize(events):",
+            "path": "evals/snapcompact/score.py"
+          },
+          {
+            "anchor": "def analyze(document: dict[str, Any]) -> dict[str, Any]:",
+            "path": "scripts/analyze-context-cost.py"
+          },
+          {
+            "anchor": "def run_condition(",
+            "path": "evals/context_transitions/run_paired.py"
+          },
+          {
+            "anchor": "    def query(self, kind, **data):",
+            "path": "examples/host-docs/fixture.py"
+          },
+          {
+            "anchor": "def generate_tasks(output: Path) -> None:",
+            "path": "evals/incident_replay/generate.py"
+          },
+          {
+            "anchor": "def score_events(",
+            "path": "evals/incident_replay/scoring.py"
+          },
+          {
+            "anchor": "def summarize(paths: Iterable[Path]) -> dict[str, Any]:",
+            "path": "evals/incident_replay/analyze.py"
           }
         ],
         "documentation": [
           {
             "anchor": "# Harbor evaluations",
             "path": "evals/README.md"
+          },
+          {
+            "anchor": "# Paired context-representation evaluation",
+            "path": "evals/snapcompact/README.md"
+          },
+          {
+            "anchor": "# Context-cost analysis",
+            "path": "evals/context_cost/README.md"
+          },
+          {
+            "anchor": "# Experimental context transitions",
+            "path": "evals/context_transitions/README.md"
           }
         ],
         "entrypoints": [
           {
-            "anchor": "class OrvekAgent",
+            "anchor": "    async def run(",
             "path": "evals/harbor_adapter/agent.py"
           },
           {
-            "anchor": "def main(",
+            "anchor": "def main():",
             "path": "evals/snapcompact/run_paired.py"
+          },
+          {
+            "anchor": "def main():",
+            "path": "evals/snapcompact/paired_report.py"
+          },
+          {
+            "anchor": "def main():",
+            "path": "evals/snapcompact/score.py"
+          },
+          {
+            "anchor": "def main() -> None:",
+            "path": "scripts/analyze-context-cost.py"
+          },
+          {
+            "anchor": "def main():",
+            "path": "evals/context_transitions/run_paired.py"
+          },
+          {
+            "anchor": "def main(binary):",
+            "path": "evals/context_transitions/verify_sandbox.py"
+          },
+          {
+            "anchor": "def main() -> None:",
+            "path": "evals/incident_replay/generate.py"
+          },
+          {
+            "anchor": "def main() -> None:",
+            "path": "evals/incident_replay/scoring.py"
+          },
+          {
+            "anchor": "def main() -> None:",
+            "path": "evals/incident_replay/analyze.py"
           }
         ],
         "persistence": [
           {
-            "anchor": "\"version\": 1",
-            "path": "evals/snapcompact/results/2026-09-19/report.json"
+            "anchor": "    async def _run_to_completion(",
+            "path": "evals/harbor_adapter/agent.py"
+          },
+          {
+            "anchor": "def write_record(output, record):",
+            "path": "evals/snapcompact/run_paired.py"
+          },
+          {
+            "anchor": "def main():",
+            "path": "evals/snapcompact/paired_report.py"
+          },
+          {
+            "anchor": "def main():",
+            "path": "evals/context_transitions/run_paired.py"
+          },
+          {
+            "anchor": "def generate_tasks(output: Path) -> None:",
+            "path": "evals/incident_replay/generate.py"
+          },
+          {
+            "anchor": "def main() -> None:",
+            "path": "evals/incident_replay/scoring.py"
           }
         ],
         "proof": [
           {
             "anchor": "class ArgumentContractTests",
-            "path": "evals/harbor_adapter/test_agent.py"
+            "check_id": "eval-harbor-contracts",
+            "ci_job": "evaluation-contracts",
+            "features": [
+              "python",
+              "harbor-adapter"
+            ],
+            "mode": "ci",
+            "path": "evals/harbor_adapter/test_agent.py",
+            "platform": "ubuntu-22.04"
+          },
+          {
+            "anchor": "class SidecarContractTests",
+            "check_id": "eval-harbor-contracts",
+            "ci_job": "evaluation-contracts",
+            "features": [
+              "python",
+              "harbor-adapter"
+            ],
+            "mode": "ci",
+            "path": "evals/harbor_adapter/test_agent.py",
+            "platform": "ubuntu-22.04"
+          },
+          {
+            "anchor": "class MeasurementContractTest",
+            "check_id": "eval-snapcompact-contracts",
+            "ci_job": "evaluation-contracts",
+            "features": [
+              "python",
+              "snapcompact"
+            ],
+            "mode": "ci",
+            "path": "evals/snapcompact/test_run_paired.py",
+            "platform": "ubuntu-22.04"
+          },
+          {
+            "anchor": "class RunnerCliTest",
+            "check_id": "eval-snapcompact-contracts",
+            "ci_job": "evaluation-contracts",
+            "features": [
+              "python",
+              "snapcompact"
+            ],
+            "mode": "ci",
+            "path": "evals/snapcompact/test_run_paired.py",
+            "platform": "ubuntu-22.04"
+          },
+          {
+            "anchor": "class PairedReportTest",
+            "check_id": "eval-snapcompact-contracts",
+            "ci_job": "evaluation-contracts",
+            "features": [
+              "python",
+              "snapcompact"
+            ],
+            "mode": "ci",
+            "path": "evals/snapcompact/test_paired_report.py",
+            "platform": "ubuntu-22.04"
+          },
+          {
+            "anchor": "class AccountingTests",
+            "check_id": "eval-snapcompact-contracts",
+            "ci_job": "evaluation-contracts",
+            "features": [
+              "python",
+              "snapcompact"
+            ],
+            "mode": "ci",
+            "path": "evals/snapcompact/test_score.py",
+            "platform": "ubuntu-22.04"
+          },
+          {
+            "anchor": "class ContextCostAnalysisTests",
+            "check_id": "graph-generator-tests",
+            "ci_job": "source-hygiene",
+            "features": [
+              "python"
+            ],
+            "mode": "ci",
+            "path": "scripts/tests/test_analyze_context_cost.py",
+            "platform": "ubuntu-22.04"
+          },
+          {
+            "anchor": "class Accounting",
+            "check_id": "eval-context-transition-contracts",
+            "ci_job": "evaluation-contracts",
+            "features": [
+              "python",
+              "context-transitions"
+            ],
+            "mode": "ci",
+            "path": "evals/context_transitions/test_accounting.py",
+            "platform": "ubuntu-22.04"
+          },
+          {
+            "anchor": "def main(binary):",
+            "check_id": "eval-context-transition-sandbox",
+            "ci_job": "evaluation-live",
+            "features": [
+              "python",
+              "docker",
+              "external-executor"
+            ],
+            "mode": "manual",
+            "path": "evals/context_transitions/verify_sandbox.py",
+            "platform": "ubuntu-22.04"
+          },
+          {
+            "anchor": "TEST_SH = dedent(",
+            "check_id": "eval-incident-replay-contracts",
+            "ci_job": "evaluation-contracts",
+            "features": [
+              "python",
+              "incident-replay"
+            ],
+            "mode": "ci",
+            "path": "evals/incident_replay/generate.py",
+            "platform": "ubuntu-22.04"
           }
         ]
       },
       "runtime_modes": [
+        "client",
         "offline",
+        "online",
+        "host",
         "sandbox"
       ],
-      "status": "implemented",
-      "summary": "Runs reproducible Harbor, SnapCompact, context-cost, transition, and incident-replay analyses while preserving raw evidence and unknown measurements."
+      "status": "experimental",
+      "summary": "Provides the Harbor adapter, SnapCompact paired runs and accounting, read-only context-cost analysis, deterministic context-transition fixtures, and incident-replay task generation, scoring, and result analysis. These tools preserve explicit unknowns but do not establish live-model quality or benchmark qualification."
     },
     {
       "execution_paths": [
+        [
+          {
+            "anchor": "    pub(crate) async fn run(self, config: &Config) -> Result<()>",
+            "call": "client.query(command).await?",
+            "path": "bin/orvek/src/app/event_intake.rs"
+          },
+          {
+            "anchor": "    pub(crate) async fn query(&self, command: Command) -> Result<Response>",
+            "path": "bin/orvek/src/app/host.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.register_event_source(config).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "    pub async fn register_event_source(",
+            "path": "crates/harness/src/controller/event_intake.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.event_source(source).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "    pub async fn event_source(&self, source: Uuid) -> Result<SourceRecord, HostError>",
+            "path": "crates/harness/src/controller/event_intake.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.event(source, &key).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "    pub async fn event(&self, source: Uuid, key: &str) -> Result<EventRecord, HostError>",
+            "path": "crates/harness/src/controller/event_intake.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.deliver_event(source, &key, &payload).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "    pub async fn deliver_event(",
+            "path": "crates/harness/src/controller/event_intake.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.cancel_event(source, &key).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "    pub async fn cancel_event(",
+            "path": "crates/harness/src/controller/event_intake.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.disable_event_source(source).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "    pub async fn disable_event_source(",
+            "path": "crates/harness/src/controller/event_intake.rs"
+          }
+        ],
         [
           {
             "anchor": "pub async fn serve(",
@@ -9794,21 +11061,53 @@
             "path": "crates/harness/src/ipc.rs"
           },
           {
-            "anchor": "pub(crate) async fn run_event_intake(",
+            "anchor": "    pub(crate) async fn run_event_intake(",
             "path": "crates/harness/src/controller/event_intake.rs"
           }
         ]
       ],
       "id": "capability:event-intake",
       "kind": "capability",
-      "label": "Durable event intake and schedules",
+      "label": "Durable event intake and management",
       "limitations": [
-        "Event payloads are untrusted data and cannot create sessions, change profiles, or grant capabilities."
+        "This is a same-user Unix-socket webhook adapter, not an HTTP server and not per-source authentication.",
+        "Payloads are untrusted UTF-8 task data; they cannot create sessions, select workspaces, change profiles, grant capabilities, or switch execution modes, but native execution still retains the user's broad host authority.",
+        "Payloads are limited to 64 KiB, source configuration to 256 KiB, objectives to 16 KiB, and keys to 1\u2013256 UTF-8 bytes.",
+        "The host allows 64 enabled sources and 128 outstanding event records; deduplication records currently have no expiry.",
+        "A successful delivery response proves durable receipt, not successful task completion."
       ],
       "references": {
         "dispatchers": [
           {
-            "anchor": "pub(crate) async fn run_event_intake(",
+            "anchor": "    pub(crate) async fn query(&self, command: Command) -> Result<Response>",
+            "path": "bin/orvek/src/app/host.rs"
+          },
+          {
+            "anchor": "    pub async fn register_event_source(",
+            "path": "crates/harness/src/controller/event_intake.rs"
+          },
+          {
+            "anchor": "    pub async fn event_source(&self, source: Uuid) -> Result<SourceRecord, HostError>",
+            "path": "crates/harness/src/controller/event_intake.rs"
+          },
+          {
+            "anchor": "    pub async fn event(&self, source: Uuid, key: &str) -> Result<EventRecord, HostError>",
+            "path": "crates/harness/src/controller/event_intake.rs"
+          },
+          {
+            "anchor": "    pub async fn deliver_event(",
+            "path": "crates/harness/src/controller/event_intake.rs"
+          },
+          {
+            "anchor": "    pub async fn cancel_event(",
+            "path": "crates/harness/src/controller/event_intake.rs"
+          },
+          {
+            "anchor": "    pub async fn disable_event_source(",
+            "path": "crates/harness/src/controller/event_intake.rs"
+          },
+          {
+            "anchor": "    pub(crate) async fn run_event_intake(",
             "path": "crates/harness/src/controller/event_intake.rs"
           }
         ],
@@ -9820,7 +11119,11 @@
         ],
         "entrypoints": [
           {
-            "anchor": "RegisterEventSource {",
+            "anchor": "    pub(crate) async fn run(self, config: &Config) -> Result<()>",
+            "path": "bin/orvek/src/app/event_intake.rs"
+          },
+          {
+            "anchor": "async fn execute(",
             "path": "crates/harness/src/ipc.rs"
           },
           {
@@ -9830,31 +11133,298 @@
         ],
         "persistence": [
           {
-            "anchor": "pub(crate) fn register_event_source(",
+            "anchor": "    pub(crate) fn register_event_source(",
+            "path": "crates/harness/src/store/event_intake.rs"
+          },
+          {
+            "anchor": "    pub(crate) fn receive_event(",
+            "path": "crates/harness/src/store/event_intake.rs"
+          },
+          {
+            "anchor": "    pub(crate) fn save_event(",
+            "path": "crates/harness/src/store/event_intake.rs"
+          },
+          {
+            "anchor": "    pub(crate) fn disable_event_source(",
+            "path": "crates/harness/src/store/event_intake.rs"
+          },
+          {
+            "anchor": "    pub(crate) fn tick_event_source(",
             "path": "crates/harness/src/store/event_intake.rs"
           }
         ],
         "proof": [
           {
-            "anchor": "crash_before_admission_recovers_stable_request_and_cancellation_tombstone",
-            "path": "crates/harness/src/controller/event_intake.rs"
+            "anchor": "async fn cli_duplicate_ack_loss_restart_and_hostile_payload_keep_one_bound_task()",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/tests/event_intake.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "async fn schedule_downtime_is_coalesced_cursor_survives_and_disable_cancels()",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/tests/event_intake.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "async fn cancelling_running_event_uses_normal_queue_and_does_not_retry()",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/tests/event_intake.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "async fn real_host_crash_after_native_effect_never_replays_the_event()",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/tests/event_intake.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
       "runtime_modes": [
+        "client",
         "host",
         "sandbox"
       ],
       "status": "implemented",
-      "summary": "Binds authenticated event sources to existing session authority, deduplicates deliveries, and queues bounded work with latest-only schedule catch-up."
+      "summary": "Lets a same-user CLI register, inspect, deliver to, cancel, and disable event sources; the host durably deduplicates receipts and runs latest-only interval scheduling against existing session authority."
     },
     {
       "execution_paths": [
         [
           {
-            "anchor": "async fn run_contract(",
+            "anchor": "async fn run_with_config(self, config: &Config) -> Result<()>",
+            "call": "Self::Trace { command } => command.reexecute(config).await",
+            "path": "bin/orvek/src/app/cli.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn reexecute(self, config: &Config) -> Result<()>",
+            "path": "bin/orvek/src/app/trace.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "pub(crate) async fn reexecute(self, config: &Config) -> Result<()>",
+            "call": "super::headless::run(",
+            "path": "bin/orvek/src/app/trace.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn run(",
+            "call": "super::submission::acknowledge(&client, &request)",
+            "path": "bin/orvek/src/app/headless.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn acknowledge(",
+            "call": "client.call(request, Duration::from_secs(5)).await",
+            "path": "bin/orvek/src/app/submission.rs"
+          },
+          {
+            "anchor": "async fn execute(",
+            "call": "host.submit(session, request.id, content, intent).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub async fn submit(",
+            "path": "crates/harness/src/controller/submissions.rs"
+          }
+        ]
+      ],
+      "id": "capability:experimental-trace-reexecution",
+      "kind": "capability",
+      "label": "Experimental online trace re-execution",
+      "limitations": [
+        "The command requires --experimental and a new empty workspace; it is online execution, not offline replay.",
+        "Only original intent is reused. New provider and tool calls may incur cost and side effects, and no historical certificate, evidence, identity, or receipt is inherited."
+      ],
+      "references": {
+        "dispatchers": [
+          {
+            "anchor": "pub(crate) async fn reexecute(self, config: &Config) -> Result<()>",
+            "path": "bin/orvek/src/app/trace.rs"
+          },
+          {
+            "anchor": "pub async fn submit(",
+            "path": "crates/harness/src/controller/submissions.rs"
+          }
+        ],
+        "documentation": [
+          {
+            "anchor": "## Experimental fresh re-execution",
+            "path": "docs/trace-bundles.md"
+          }
+        ],
+        "entrypoints": [
+          {
+            "anchor": "async fn run_with_config(self, config: &Config) -> Result<()>",
+            "path": "bin/orvek/src/app/cli.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn reexecute(self, config: &Config) -> Result<()>",
+            "path": "bin/orvek/src/app/trace.rs"
+          }
+        ],
+        "persistence": [
+          {
+            "anchor": "pub fn start_request(",
+            "path": "crates/harness/src/store.rs"
+          }
+        ],
+        "proof": [
+          {
+            "anchor": "reexecution_refuses_a_nonempty_workspace_before_starting_a_host",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/tests/trace_cli.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "reexecution_cli_submits_fresh_intent_through_the_real_host",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/tests/trace_cli.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          }
+        ]
+      },
+      "runtime_modes": [
+        "client",
+        "online",
+        "host",
+        "sandbox"
+      ],
+      "status": "experimental",
+      "summary": "Extracts only original task intent from a trace bundle and submits it through a fresh headless host run with new identities, provider calls, tool effects, and evidence."
+    },
+    {
+      "execution_paths": [
+        [
+          {
+            "anchor": "async fn run_without_config(self) -> Result<()>",
+            "call": "update::install_latest().await.map_err(Error::update)?",
+            "path": "bin/orvek/src/app/cli.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn install_latest()",
+            "path": "bin/orvek/src/app/update.rs"
+          }
+        ]
+      ],
+      "id": "capability:installation-updates",
+      "kind": "capability",
+      "label": "Installation updates",
+      "limitations": [
+        "No Orvek crate or signed macOS binary release is published yet; current source installations receive a Cargo install command instead of a release-archive update."
+      ],
+      "references": {
+        "dispatchers": [
+          {
+            "anchor": "pub(crate) async fn install_latest()",
+            "path": "bin/orvek/src/app/update.rs"
+          }
+        ],
+        "documentation": [
+          {
+            "anchor": "## Configure and update",
+            "path": "README.md"
+          }
+        ],
+        "entrypoints": [
+          {
+            "anchor": "async fn run_without_config(self) -> Result<()>",
+            "path": "bin/orvek/src/app/cli.rs"
+          }
+        ],
+        "persistence": [
+          {
+            "anchor": "self_replace::self_replace(&extracted.path)",
+            "path": "bin/orvek/src/app/update.rs"
+          }
+        ],
+        "proof": [
+          {
+            "anchor": "update_is_config_independent",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/app/cli.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "cargo_recommendation_preserves_non_default_install_root",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/app/update.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "requires_one_archive_checksum_and_signature_for_target",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/app/update.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          }
+        ]
+      },
+      "runtime_modes": [
+        "client"
+      ],
+      "status": "implemented",
+      "summary": "Routes source and Cargo installations to the matching Cargo command, defers externally managed binaries to their package manager, and replaces release-archive binaries only after release, checksum, and signature verification."
+    },
+    {
+      "execution_paths": [
+        [
+          {
+            "anchor": "async fn execute_proposals(",
             "call": "self.evaluate_cell(",
-            "path": "crates/harness/src/controller.rs"
+            "path": "crates/harness/src/controller/task_phases.rs"
           },
           {
             "anchor": "pub(super) async fn evaluate_cell(",
@@ -9884,7 +11454,11 @@
         "entrypoints": [
           {
             "anchor": "async fn run_contract(",
-            "path": "crates/harness/src/controller.rs"
+            "path": "crates/harness/src/controller/task_phases.rs"
+          },
+          {
+            "anchor": "async fn execute_proposals(",
+            "path": "crates/harness/src/controller/task_phases.rs"
           }
         ],
         "persistence": [
@@ -9896,7 +11470,15 @@
         "proof": [
           {
             "anchor": "interpreter_host_filters_large_values_without_inserting_intermediates_in_parent_prompt",
-            "path": "crates/harness/tests/interpreter_host.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/interpreter_host.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
@@ -9911,6 +11493,169 @@
       "execution_paths": [
         [
           {
+            "anchor": "pub(crate) async fn resume_label(",
+            "call": "Self::import_legacy(config, client, metadata).await",
+            "path": "bin/orvek/src/core/mod.rs"
+          },
+          {
+            "anchor": "async fn import_legacy(",
+            "call": ".call(&request, std::time::Duration::from_secs(70))",
+            "path": "bin/orvek/src/core/mod.rs"
+          },
+          {
+            "anchor": "async fn execute(",
+            "call": "import_legacy_request(request.id, database, source_session, admission)",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub async fn import_legacy_request(",
+            "path": "crates/harness/src/controller/imports.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.legacy_sessions(database, offset, limit).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub async fn legacy_sessions(",
+            "path": "crates/harness/src/controller.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": ".import_legacy_request(request.id, database, source_session, admission)",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub async fn import_legacy_request(",
+            "path": "crates/harness/src/controller/imports.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.legacy_page(session, cursor, max_records, max_bytes)",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub async fn legacy_page(",
+            "path": "crates/harness/src/controller.rs"
+          }
+        ]
+      ],
+      "id": "capability:legacy-session-import",
+      "kind": "capability",
+      "label": "Legacy-session import",
+      "limitations": [
+        "Import is bounded to a 64 MiB source snapshot, 10,000 sessions, 100,000 records, 32 MiB selected bytes, and 30 seconds; unsupported or corrupt historical schemas and lineage are rejected.",
+        "The original database is never migrated or deleted and may retain unredacted history. Imported tool calls, instructions, and completion events are historical provenance only and cannot grant authority or certificates."
+      ],
+      "references": {
+        "dispatchers": [
+          {
+            "anchor": "pub async fn legacy_sessions(",
+            "path": "crates/harness/src/controller.rs"
+          },
+          {
+            "anchor": "pub async fn import_legacy_request(",
+            "path": "crates/harness/src/controller/imports.rs"
+          },
+          {
+            "anchor": "pub async fn legacy_page(",
+            "path": "crates/harness/src/controller.rs"
+          }
+        ],
+        "documentation": [
+          {
+            "anchor": "## Resume imported historical sessions",
+            "path": "docs/sessions.md"
+          }
+        ],
+        "entrypoints": [
+          {
+            "anchor": "pub(crate) async fn resume_label(",
+            "path": "bin/orvek/src/core/mod.rs"
+          },
+          {
+            "anchor": "async fn execute(",
+            "path": "crates/harness/src/ipc.rs"
+          }
+        ],
+        "persistence": [
+          {
+            "anchor": "pub(crate) fn commit_bound_legacy_import(",
+            "path": "crates/harness/src/store/imports.rs"
+          },
+          {
+            "anchor": "pub struct ImportedSource {",
+            "path": "crates/harness/src/session.rs"
+          }
+        ],
+        "proof": [
+          {
+            "anchor": "retry_binding_survives_restart_and_missing_original_source",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/native_import_requests.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "fresh_operations_reuse_identical_selected_bytes_and_preserve_native_progress",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/native_import_requests.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "selected_source_changes_produce_a_new_target_only_for_fresh_operations",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/native_import_requests.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "missing_or_corrupt_source_is_not_created_or_rewritten",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/legacy_import.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          }
+        ]
+      },
+      "runtime_modes": [
+        "client",
+        "host"
+      ],
+      "status": "implemented",
+      "summary": "Discovers bounded historical SQLite sessions, snapshots selected lineage and resume bytes without mutating the source, and commits provenance-backed native host contexts idempotently."
+    },
+    {
+      "execution_paths": [
+        [
+          {
             "anchor": "fn execute<'a>(",
             "call": ".execute(arguments, permission(access))",
             "path": "bin/orvek/src/core/context.rs"
@@ -9919,35 +11664,55 @@
             "anchor": "pub async fn execute(",
             "path": "crates/memory/src/tool.rs"
           }
+        ],
+        [
+          {
+            "anchor": "async fn run_with_config(self, config: &Config) -> Result<()>",
+            "call": "Self::Memory { command } => command.run(config).await",
+            "path": "bin/orvek/src/app/cli.rs"
+          },
+          {
+            "anchor": "async fn run(self, config: &Config) -> Result<()>",
+            "path": "bin/orvek/src/app/cli.rs"
+          }
         ]
       ],
       "id": "capability:memory",
       "kind": "capability",
       "label": "Local and remote memory",
       "limitations": [
-        "Memory is disabled by default, unencrypted locally, and unavailable to delegated children."
+        "Memory is disabled by default, unencrypted locally, and unavailable to delegated children.",
+        "Explicit export, import, push, and pull use the local store from any directory and ignore memory.enabled and workspace scope; remote transfer still requires configured credentials."
       ],
       "references": {
         "dispatchers": [
           {
             "anchor": "pub async fn execute(",
             "path": "crates/memory/src/tool.rs"
+          },
+          {
+            "anchor": "async fn run(self, config: &Config) -> Result<()>",
+            "path": "bin/orvek/src/app/cli.rs"
           }
         ],
         "documentation": [
           {
             "anchor": "# Memory",
             "path": "docs/memory.md"
+          },
+          {
+            "anchor": "## Explicit transfer commands",
+            "path": "docs/memory.md"
           }
         ],
         "entrypoints": [
           {
-            "anchor": "ConfiguredMemory",
+            "anchor": "fn execute<'a>(",
             "path": "bin/orvek/src/core/context.rs"
           },
           {
-            "anchor": "fn execute<'a>(",
-            "path": "bin/orvek/src/core/context.rs"
+            "anchor": "async fn run_with_config(self, config: &Config) -> Result<()>",
+            "path": "bin/orvek/src/app/cli.rs"
           }
         ],
         "persistence": [
@@ -9958,16 +11723,69 @@
           {
             "anchor": "pub struct RemoteMemoryClient",
             "path": "crates/memory/src/store/remote/client.rs"
+          },
+          {
+            "anchor": "pub async fn export<S: MemoryStore>(store: &S, directory: &Path) -> Result<Self, MemoryError>",
+            "path": "crates/memory/src/archive.rs"
+          },
+          {
+            "anchor": "pub async fn import(",
+            "path": "crates/memory/src/archive.rs"
           }
         ],
         "proof": [
           {
             "anchor": "memory_operations_preserve_cas_and_only_changed_context_invalidates_cache",
-            "path": "bin/orvek/src/app/host_context_tests.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/app/host_context_tests.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "archive_roundtrip_retains_namespace_versions_and_evidence_and_rejects_tampering",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/memory/tests/evidence.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "push_reconciles_a_local_write_that_races_the_first_snapshot",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/app/cli.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "pulling_remote_memories_preserves_each_namespace_in_schema_v2",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/memory/src/tests.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
       "runtime_modes": [
+        "client",
         "host",
         "sandbox",
         "auxiliary"
@@ -9979,26 +11797,106 @@
       "execution_paths": [
         [
           {
+            "anchor": "    pub(crate) async fn run(self, config: &Config) -> Result<()>",
+            "call": "HostClient::connect(config).await?.query(command).await?",
+            "path": "bin/orvek/src/app/monitor.rs"
+          },
+          {
+            "anchor": "    pub(crate) async fn query(&self, command: Command) -> Result<Response>",
+            "path": "bin/orvek/src/app/host.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.monitor_report(offset, limit).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "    pub async fn monitor_report(",
+            "path": "crates/harness/src/controller/monitor.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.set_monitor_sampling(every).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "    pub async fn set_monitor_sampling(&self, every: u32) -> Result<(), HostError>",
+            "path": "crates/harness/src/controller/monitor.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.install_read_behavior(expected, bytes, note).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "    pub async fn install_read_behavior(",
+            "path": "crates/harness/src/controller/monitor.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.rollback_read_behavior(expected).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "    pub async fn rollback_read_behavior(&self, expected: Digest) -> Result<Digest, HostError>",
+            "path": "crates/harness/src/controller/monitor.rs"
+          }
+        ],
+        [
+          {
             "anchor": "pub async fn serve(",
             "call": "monitor_host.run_monitor()",
             "path": "crates/harness/src/ipc.rs"
           },
           {
-            "anchor": "pub(crate) async fn run_monitor(",
+            "anchor": "    pub(crate) async fn run_monitor(",
             "path": "crates/harness/src/controller/monitor.rs"
           }
         ]
       ],
       "id": "capability:monitoring",
       "kind": "capability",
-      "label": "Trace monitoring and native read recovery",
+      "label": "Trace monitoring and native-read management",
       "limitations": [
-        "Monitoring cannot change prompts, tool schemas, repository policy, contracts, task budgets, or arbitrary code."
+        "Monitoring is local deterministic recovery, not general autonomous repair or proof of model quality; it cannot change prompts, tool schemas, repository policy, contracts, binaries, task budgets, or arbitrary code.",
+        "Management uses the same-user Unix operator socket; it is not a model tool, event-payload field, or public HTTP API.",
+        "Install and rollback affect only new sessions. Existing sessions, forks, and handoffs retain their pinned configuration.",
+        "Sampling must be 1\u201310000; install-read bytes must be 4096\u201332768; report pages are limited to 1\u2013100 rows.",
+        "The worker reads at most 64 journal records per tick and evaluates one candidate at a time. Comparisons remain descriptive and uncertain; no live-model comparison has run.",
+        "Warnings are process-local rather than a durable incident log, reports and artifacts can contain private provenance, and no telemetry export or automatic retention deletion is configured."
       ],
       "references": {
         "dispatchers": [
           {
-            "anchor": "pub(crate) async fn run_monitor(",
+            "anchor": "    pub(crate) async fn query(&self, command: Command) -> Result<Response>",
+            "path": "bin/orvek/src/app/host.rs"
+          },
+          {
+            "anchor": "    pub async fn monitor_report(",
+            "path": "crates/harness/src/controller/monitor.rs"
+          },
+          {
+            "anchor": "    pub async fn set_monitor_sampling(&self, every: u32) -> Result<(), HostError>",
+            "path": "crates/harness/src/controller/monitor.rs"
+          },
+          {
+            "anchor": "    pub async fn install_read_behavior(",
+            "path": "crates/harness/src/controller/monitor.rs"
+          },
+          {
+            "anchor": "    pub async fn rollback_read_behavior(&self, expected: Digest) -> Result<Digest, HostError>",
+            "path": "crates/harness/src/controller/monitor.rs"
+          },
+          {
+            "anchor": "    pub(crate) async fn run_monitor(",
             "path": "crates/harness/src/controller/monitor.rs"
           }
         ],
@@ -10010,8 +11908,12 @@
         ],
         "entrypoints": [
           {
-            "anchor": "pub(crate) enum MonitorCommand",
+            "anchor": "    pub(crate) async fn run(self, config: &Config) -> Result<()>",
             "path": "bin/orvek/src/app/monitor.rs"
+          },
+          {
+            "anchor": "async fn execute(",
+            "path": "crates/harness/src/ipc.rs"
           },
           {
             "anchor": "pub async fn serve(",
@@ -10020,22 +11922,497 @@
         ],
         "persistence": [
           {
-            "anchor": "pub(crate) fn monitor_save_status(",
+            "anchor": "    pub(crate) fn monitor_save_status(",
+            "path": "crates/harness/src/store/monitor.rs"
+          },
+          {
+            "anchor": "    pub(crate) fn monitor_commit_page(",
+            "path": "crates/harness/src/store/monitor.rs"
+          },
+          {
+            "anchor": "    pub(crate) fn monitor_save_episode(",
+            "path": "crates/harness/src/store/monitor.rs"
+          },
+          {
+            "anchor": "    pub(crate) fn monitor_activate(",
             "path": "crates/harness/src/store/monitor.rs"
           }
         ],
         "proof": [
           {
-            "anchor": "evaluator_rejects_heldout_tampering_and_user_admission_still_works",
-            "path": "crates/harness/src/controller/monitor/tests.rs"
+            "anchor": "async fn cli_release_real_task_background_repair_and_restart_rollback()",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/tests/monitor.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "async fn evaluator_rejects_heldout_tampering_and_user_admission_still_works()",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/src/controller/monitor/tests.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "async fn monitor_large_result_intake_keeps_native_host_status_responsive()",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/src/controller/monitor/tests.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
       "runtime_modes": [
+        "client",
         "host"
       ],
       "status": "implemented",
-      "summary": "Consumes verified journal data, records bounded operational measurements, and can promote or roll back one versioned native read envelope."
+      "summary": "Runs a bounded host-side journal monitor and lets a same-user CLI report status, change sampling, install one versioned native-read reply envelope, and roll back to the retained previous envelope."
+    },
+    {
+      "execution_paths": [
+        [
+          {
+            "anchor": "pub(super) async fn run(",
+            "call": "super::clipboard::image_data_url()",
+            "path": "bin/orvek/src/tui/event_loop.rs"
+          },
+          {
+            "anchor": "pub(crate) fn image_data_url() -> Option<String>",
+            "path": "bin/orvek/src/tui/clipboard.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "fn dispatch_submission(",
+            "call": "content: prompt.host_content()",
+            "path": "bin/orvek/src/tui/client.rs"
+          },
+          {
+            "anchor": "pub(crate) fn host_content(&self) -> Vec<Value>",
+            "path": "bin/orvek/src/tui/prompt.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn handle_submission_effect(",
+            "call": "submissions::input_parts(",
+            "path": "bin/orvek/src/tui/event_loop.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn input_parts(",
+            "path": "bin/orvek/src/app/submission.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "fn dispatch_submission(",
+            "call": "submissions::acknowledge(&client, &request).await",
+            "path": "bin/orvek/src/tui/client.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn acknowledge(",
+            "call": "client.call(request, Duration::from_secs(5)).await",
+            "path": "bin/orvek/src/app/submission.rs"
+          },
+          {
+            "anchor": "async fn execute(",
+            "call": "host.submit(session, request.id, content, intent).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub async fn submit(",
+            "path": "crates/harness/src/controller/submissions.rs"
+          }
+        ]
+      ],
+      "id": "capability:multimodal-image-submission",
+      "kind": "capability",
+      "label": "Multimodal image submission",
+      "limitations": [
+        "A submission accepts at most eight images and 4 MiB of decoded image bytes in total.",
+        "Only embedded base64 PNG, JPEG, GIF, and WebP data with matching signatures are admitted; file and network URLs are rejected.",
+        "New-task and ordinary submissions still require a textual objective; image-only task requests are rejected by durable admission.",
+        "Provider or model image support is not preflighted, and images are provider context rather than files mounted into the native workspace or sandbox."
+      ],
+      "references": {
+        "dispatchers": [
+          {
+            "anchor": "pub(crate) fn image_data_url() -> Option<String>",
+            "path": "bin/orvek/src/tui/clipboard.rs"
+          },
+          {
+            "anchor": "pub(crate) fn host_content(&self) -> Vec<Value>",
+            "path": "bin/orvek/src/tui/prompt.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn input_parts(",
+            "path": "bin/orvek/src/app/submission.rs"
+          },
+          {
+            "anchor": "pub async fn submit(",
+            "path": "crates/harness/src/controller/submissions.rs"
+          }
+        ],
+        "documentation": [
+          {
+            "anchor": "## Submit images",
+            "path": "docs/sessions.md"
+          }
+        ],
+        "entrypoints": [
+          {
+            "anchor": "pub(super) async fn run(",
+            "path": "bin/orvek/src/tui/event_loop.rs"
+          },
+          {
+            "anchor": "fn dispatch_submission(",
+            "path": "bin/orvek/src/tui/client.rs"
+          },
+          {
+            "anchor": "async fn dispatch_effects(",
+            "path": "bin/orvek/src/tui/event_loop.rs"
+          },
+          {
+            "anchor": "async fn handle_submission_effect(",
+            "path": "bin/orvek/src/tui/event_loop.rs"
+          }
+        ],
+        "persistence": [
+          {
+            "anchor": "pub fn prepare(",
+            "path": "crates/harness/src/input.rs"
+          },
+          {
+            "anchor": "pub fn submit(",
+            "path": "crates/harness/src/store/submissions.rs"
+          }
+        ],
+        "proof": [
+          {
+            "anchor": "ordered_images_round_trip_without_embedding_media_bytes_in_journal_messages",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/user_input.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "media_cannot_be_a_file_read_or_an_injected_authority_object",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/user_input.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "internal_context_pages_bypass_user_media_limits_and_preserve_provider_order",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/user_input.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "restored_draft_keeps_pasted_images",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/tui/components/root.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "pasted_images_render_as_numbered_blue_tokens_and_submit_as_images",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/tui/components/composer.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          }
+        ]
+      },
+      "runtime_modes": [
+        "client",
+        "host",
+        "sandbox"
+      ],
+      "status": "implemented",
+      "summary": "Pastes clipboard images into terminal drafts, stores media as bounded content-addressed artifacts, restores persisted drafts, and reconstructs ordered provider image parts at the submission boundary."
+    },
+    {
+      "execution_paths": [
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.submit(session, request.id, content, intent).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub async fn submit(",
+            "call": "self.wake_queue(session).await",
+            "path": "crates/harness/src/controller/submissions.rs"
+          },
+          {
+            "anchor": "async fn wake_queue(self: &Arc<Self>, session: SessionId)",
+            "call": "host.run_queue(session).await",
+            "path": "crates/harness/src/controller/submissions.rs"
+          },
+          {
+            "anchor": "async fn run_queue(",
+            "call": ".execute_shell(session, submission.id, spec.clone())",
+            "path": "crates/harness/src/controller/submissions.rs"
+          },
+          {
+            "anchor": "pub(super) async fn execute_shell(",
+            "path": "crates/harness/src/controller/manual.rs"
+          }
+        ]
+      ],
+      "id": "capability:operator-shell-submissions",
+      "kind": "capability",
+      "label": "Sandbox-only operator shell submissions",
+      "limitations": [
+        "Native-host shell admission is rejected; this path requires the isolated Docker executor.",
+        "The command creates no coding task or model history, its output is not automatically sent to the provider, and completion hooks do not run for it.",
+        "The TUI supplies a 120-second timeout and 256 KiB output bound; validated protocol maxima are 300 seconds and 1 MiB."
+      ],
+      "references": {
+        "dispatchers": [
+          {
+            "anchor": "pub(super) async fn execute_shell(",
+            "path": "crates/harness/src/controller/manual.rs"
+          }
+        ],
+        "documentation": [
+          {
+            "anchor": "## Run an operator shell command",
+            "path": "docs/workspace-execution.md"
+          }
+        ],
+        "entrypoints": [
+          {
+            "anchor": "pub(super) async fn run(",
+            "path": "bin/orvek/src/tui/event_loop.rs"
+          },
+          {
+            "anchor": "async fn execute(",
+            "path": "crates/harness/src/ipc.rs"
+          }
+        ],
+        "persistence": [
+          {
+            "anchor": "pub fn begin_shell(",
+            "path": "crates/harness/src/store/manual.rs"
+          },
+          {
+            "anchor": "pub fn finish_shell(",
+            "path": "crates/harness/src/store/manual.rs"
+          },
+          {
+            "anchor": "ShellStarted {",
+            "path": "crates/harness/src/session.rs"
+          },
+          {
+            "anchor": "ShellPublished {",
+            "path": "crates/harness/src/session.rs"
+          }
+        ],
+        "proof": [
+          {
+            "anchor": "human_shell_keeps_private_changes_across_requests_without_model_calls_or_source_overwrite",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/controller_execution.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "shell_commands_bypass_the_agent_message_queue",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/tui/components/root.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          }
+        ]
+      },
+      "runtime_modes": [
+        "client",
+        "sandbox"
+      ],
+      "status": "implemented",
+      "summary": "Accepts a leading-! operator command as a durable manual job, executes it only in the isolated Docker workspace without model inference, and publishes bounded output and adopted workspace state."
+    },
+    {
+      "execution_paths": [
+        [
+          {
+            "anchor": "pub(crate) async fn prepare(",
+            "call": "auxiliary::run(",
+            "path": "bin/orvek/src/tui/handoff_controller.rs"
+          },
+          {
+            "anchor": "pub(crate) async fn run(",
+            "path": "bin/orvek/src/app/auxiliary.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "pub(crate) async fn prepare(",
+            "call": "let view=create(client,source.fork_cursor).await?;",
+            "path": "bin/orvek/src/tui/handoff_controller.rs"
+          },
+          {
+            "anchor": "async fn create(client: &HostClient, parent: SessionCursor) -> Result<SessionView>",
+            "path": "bin/orvek/src/tui/handoff_controller.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.handoff_session(id, parent).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub async fn handoff_session(",
+            "path": "crates/harness/src/controller.rs"
+          }
+        ]
+      ],
+      "id": "capability:session-handoff",
+      "kind": "capability",
+      "label": "Session handoff",
+      "limitations": [
+        "Handoff requires a settled workspace checkpoint and aborts if the task or workspace changes while the auxiliary report runs.",
+        "The new context keeps the workspace checkpoint but starts with empty provider history; a failed or uncertain creation retains the generated draft and may require resuming the reported context ID."
+      ],
+      "references": {
+        "dispatchers": [
+          {
+            "anchor": "pub(crate) async fn run(",
+            "path": "bin/orvek/src/app/auxiliary.rs"
+          },
+          {
+            "anchor": "async fn create(client: &HostClient, parent: SessionCursor) -> Result<SessionView>",
+            "path": "bin/orvek/src/tui/handoff_controller.rs"
+          },
+          {
+            "anchor": "pub async fn handoff_session(",
+            "path": "crates/harness/src/controller.rs"
+          }
+        ],
+        "documentation": [
+          {
+            "anchor": "## Hand off to a fresh context",
+            "path": "docs/sessions.md"
+          }
+        ],
+        "entrypoints": [
+          {
+            "anchor": "pub(crate) async fn prepare(",
+            "path": "bin/orvek/src/tui/handoff_controller.rs"
+          },
+          {
+            "anchor": "async fn execute(",
+            "path": "crates/harness/src/ipc.rs"
+          }
+        ],
+        "persistence": [
+          {
+            "anchor": "pub fn create_handoff_session(",
+            "path": "crates/harness/src/store.rs"
+          }
+        ],
+        "proof": [
+          {
+            "anchor": "lost_creation_ack_recovers_the_same_context_without_another_handoff",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/tui/handoff_controller.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "handoff_starts_a_fresh_session_with_an_editable_draft_and_selected_model",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/tui/components/app.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "handoff_blocks_input_until_the_continuation_prompt_is_ready",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/tui/components/root.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          }
+        ]
+      },
+      "runtime_modes": [
+        "client",
+        "host",
+        "sandbox",
+        "auxiliary"
+      ],
+      "status": "implemented",
+      "summary": "Runs a dedicated auxiliary handoff report after work settles, then creates a fresh-history host context at the same stable workspace checkpoint and retains the continuation draft when creation is uncertain."
     },
     {
       "execution_paths": [
@@ -10060,13 +12437,25 @@
             "anchor": "pub async fn record_review(",
             "path": "crates/harness/src/controller/review.rs"
           }
+        ],
+        [
+          {
+            "anchor": "async fn execute(",
+            "call": "host.submit(session, request.id, content, intent).await?",
+            "path": "crates/harness/src/ipc.rs"
+          },
+          {
+            "anchor": "pub async fn submit(",
+            "path": "crates/harness/src/controller/submissions.rs"
+          }
         ]
       ],
       "id": "capability:sessions-review-reflection",
       "kind": "capability",
       "label": "Sessions, review, and reflection",
       "limitations": [
-        "Browser review requires separately installed web assets for source builds."
+        "Browser review requires separately installed web assets for source builds.",
+        "The terminal opens at most one fork pane at a time; reflection records an auxiliary report and cannot mutate task or workspace authority."
       ],
       "references": {
         "dispatchers": [
@@ -10077,11 +12466,23 @@
           {
             "anchor": "pub async fn record_review(",
             "path": "crates/harness/src/controller/review.rs"
+          },
+          {
+            "anchor": "pub async fn submit(",
+            "path": "crates/harness/src/controller/submissions.rs"
           }
         ],
         "documentation": [
           {
             "anchor": "# Sessions and review",
+            "path": "docs/sessions.md"
+          },
+          {
+            "anchor": "## Resume and fork",
+            "path": "docs/sessions.md"
+          },
+          {
+            "anchor": "## Reflect on a session",
             "path": "docs/sessions.md"
           }
         ],
@@ -10107,22 +12508,63 @@
         ],
         "proof": [
           {
+            "anchor": "session_commands_replay_once_and_fork_only_persisted_prefix",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/session_journal.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
             "anchor": "durable_replay_is_idempotent_and_other_sessions_are_not_rendered",
-            "path": "bin/orvek/src/tui/host_projection.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/tui/host_projection.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           },
           {
             "anchor": "review_decision_renders_as_composer_markdown",
-            "path": "bin/orvek/src/review/mod.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/review/mod.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "reflection_action_collects_hidden_optional_instructions",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/tui/components/root.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
       "runtime_modes": [
         "client",
         "host",
-        "sandbox"
+        "sandbox",
+        "auxiliary"
       ],
       "status": "implemented",
-      "summary": "Resumes and forks host-owned sessions, projects them into the terminal, and serves frozen browser review data with recorded feedback."
+      "summary": "Resumes and forks host-owned sessions, projects them into the terminal, serves frozen browser review data with recorded feedback, and runs reflection as non-mutating auxiliary work."
     },
     {
       "execution_paths": [
@@ -10167,7 +12609,15 @@
         "proof": [
           {
             "anchor": "measures_verbosity_union_and_erosion_formula",
-            "path": "crates/harness/src/sloppiness.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/src/sloppiness.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
@@ -10230,7 +12680,15 @@
         "proof": [
           {
             "anchor": "child_reads_the_workspace_records_a_job_and_submits_a_valid_result",
-            "path": "crates/harness/tests/subagents.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/subagents.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
@@ -10288,7 +12746,15 @@
         "proof": [
           {
             "anchor": "ordinary_action_is_classified_then_admitted_as_one_task",
-            "path": "crates/harness/tests/controller_execution.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/controller_execution.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
@@ -10304,12 +12770,12 @@
         [
           {
             "anchor": "pub(crate) async fn run(",
-            "call": "client::run(config, startup, shutdown).await",
+            "call": "event_loop::run(config, startup, shutdown).await",
             "path": "bin/orvek/src/tui/mod.rs"
           },
           {
             "anchor": "pub(super) async fn run(",
-            "path": "bin/orvek/src/tui/client.rs"
+            "path": "bin/orvek/src/tui/event_loop.rs"
           }
         ]
       ],
@@ -10323,7 +12789,7 @@
         "dispatchers": [
           {
             "anchor": "pub(super) async fn run(",
-            "path": "bin/orvek/src/tui/client.rs"
+            "path": "bin/orvek/src/tui/event_loop.rs"
           }
         ],
         "documentation": [
@@ -10342,7 +12808,51 @@
         "proof": [
           {
             "anchor": "fn benchmarks(c: &mut Criterion)",
-            "path": "bin/orvek/src/tui/bench.rs"
+            "check_id": "rust-bench-build",
+            "ci_job": "cargo-build-benches",
+            "features": [
+              "all-features",
+              "benchmarks"
+            ],
+            "mode": "scheduled",
+            "path": "bin/orvek/src/tui/bench.rs",
+            "platform": "ubuntu-22.04"
+          },
+          {
+            "anchor": "connected_messages_reuse_cached_layouts_without_an_animation_timer",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/tui/components/transcript/mod.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "streaming_updates_coalesce_at_120_hz",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/tui/scheduler.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "input_preempts_a_streaming_deadline",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "bin/orvek/src/tui/scheduler.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
@@ -10356,7 +12866,18 @@
       "execution_paths": [
         [
           {
-            "anchor": "pub(crate) fn run_offline(",
+            "anchor": "pub(crate) fn run_offline(self) -> Result<()>",
+            "call": "TraceBundle::export(",
+            "path": "bin/orvek/src/app/trace.rs"
+          },
+          {
+            "anchor": "pub fn export(",
+            "path": "crates/harness/src/trace.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "pub(crate) fn run_offline(self) -> Result<()>",
             "call": "TraceBundle::read(&bundle)?.replay()",
             "path": "bin/orvek/src/app/trace.rs"
           },
@@ -10375,6 +12896,10 @@
       "references": {
         "dispatchers": [
           {
+            "anchor": "pub fn export(",
+            "path": "crates/harness/src/trace.rs"
+          },
+          {
             "anchor": "pub fn replay(&self)",
             "path": "crates/harness/src/trace.rs"
           }
@@ -10387,7 +12912,7 @@
         ],
         "entrypoints": [
           {
-            "anchor": "pub(crate) fn run_offline(",
+            "anchor": "pub(crate) fn run_offline(self) -> Result<()>",
             "path": "bin/orvek/src/app/trace.rs"
           }
         ],
@@ -10400,7 +12925,27 @@
         "proof": [
           {
             "anchor": "exact_prefix_replays_state_context_and_is_read_only",
-            "path": "crates/harness/tests/trace_bundle.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/trace_bundle.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "nested_closure_enforces_hop_bounds_on_export_and_replay",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/trace_bundle.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
@@ -10496,15 +13041,39 @@
         "proof": [
           {
             "anchor": "real_bug_requires_baseline_failure_and_candidate_success_before_delivery",
-            "path": "crates/harness/tests/protected_verification.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/protected_verification.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           },
           {
             "anchor": "patch_digest_is_reproducible_across_scratch_runs",
-            "path": "crates/harness/tests/patch_delivery.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/patch_delivery.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           },
           {
             "anchor": "complete_requires_current_evidence_control_and_delivery_then_replays_exactly",
-            "path": "crates/harness/tests/completion_contract.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/completion_contract.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
@@ -10524,6 +13093,17 @@
           },
           {
             "anchor": "pub async fn execute_recorded(",
+            "path": "crates/harness/src/capabilities/host.rs"
+          }
+        ],
+        [
+          {
+            "anchor": "async fn dispatch(",
+            "call": ".execute_recorded(name, arguments, context, cancellation.clone())",
+            "path": "crates/harness/src/controller.rs"
+          },
+          {
+            "anchor": "pub async fn execute_recorded(",
             "path": "crates/harness/src/capabilities.rs"
           }
         ]
@@ -10532,10 +13112,14 @@
       "kind": "capability",
       "label": "Workspace tool execution",
       "limitations": [
-        "Native execution uses the operator's authority; protected verification is sandbox-only."
+        "Host execution uses the operator's authority and finishes without a verification certificate; protected verification and patch delivery are sandbox-only."
       ],
       "references": {
         "dispatchers": [
+          {
+            "anchor": "pub async fn execute_recorded(",
+            "path": "crates/harness/src/capabilities/host.rs"
+          },
           {
             "anchor": "pub async fn execute_recorded(",
             "path": "crates/harness/src/capabilities.rs"
@@ -10561,8 +13145,100 @@
         ],
         "proof": [
           {
+            "anchor": "native_primary_tools_edit_the_live_workspace_and_prose_finishes_unverified",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/native_host.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "native_receipts_record_host_backend_cwd_and_command_metadata",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/native_host.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "read_write_search_cover_absolute_relative_and_home_paths",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/src/capabilities/host.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "exec_runs_native_shells_with_optional_cwd_and_reports_metadata",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/src/capabilities/host.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "reads_exact_bytes_with_whole_file_identity_and_truncation",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/workspace_tools.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "search_is_literal_bounded_and_reports_unsearched_entries",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/workspace_tools.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
+            "anchor": "atomic_create_replace_and_delete_return_exact_before_after_identities_and_modes",
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/workspace_tools.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
+          },
+          {
             "anchor": "exec_command_runs_only_through_the_isolated_docker_executor",
-            "path": "crates/harness/tests/workspace_tools.rs"
+            "check_id": "rust-locked-suite",
+            "ci_job": "cargo-tests",
+            "features": [
+              "all-features",
+              "all-targets"
+            ],
+            "mode": "ci",
+            "path": "crates/harness/tests/workspace_tools.rs",
+            "platform": "ubuntu-22.04-and-macos-15"
           }
         ]
       },
@@ -10908,16 +13584,6 @@
       "label": "tracing"
     },
     {
-      "id": "dependency:tracing-subscriber",
-      "kind": "dependency",
-      "label": "tracing-subscriber"
-    },
-    {
-      "id": "dependency:tracing-web",
-      "kind": "dependency",
-      "label": "tracing-web"
-    },
-    {
       "id": "dependency:unicode-segmentation",
       "kind": "dependency",
       "label": "unicode-segmentation"
@@ -10941,11 +13607,6 @@
       "id": "dependency:web-time",
       "kind": "dependency",
       "label": "web-time"
-    },
-    {
-      "id": "dependency:worker",
-      "kind": "dependency",
-      "label": "worker"
     },
     {
       "id": "dependency:zeroize",
@@ -11384,36 +14045,6 @@
       "path": "examples/host-docs/traces"
     },
     {
-      "id": "directory:examples/orvek-memory-cloudflare",
-      "kind": "directory",
-      "label": "orvek-memory-cloudflare",
-      "path": "examples/orvek-memory-cloudflare"
-    },
-    {
-      "id": "directory:examples/orvek-memory-cloudflare/migrations",
-      "kind": "directory",
-      "label": "migrations",
-      "path": "examples/orvek-memory-cloudflare/migrations"
-    },
-    {
-      "id": "directory:examples/orvek-memory-cloudflare/scripts",
-      "kind": "directory",
-      "label": "scripts",
-      "path": "examples/orvek-memory-cloudflare/scripts"
-    },
-    {
-      "id": "directory:examples/orvek-memory-cloudflare/src",
-      "kind": "directory",
-      "label": "src",
-      "path": "examples/orvek-memory-cloudflare/src"
-    },
-    {
-      "id": "directory:examples/orvek-memory-cloudflare/src/store",
-      "kind": "directory",
-      "label": "store",
-      "path": "examples/orvek-memory-cloudflare/src/store"
-    },
-    {
       "id": "directory:scripts",
       "kind": "directory",
       "label": "scripts",
@@ -11466,7 +14097,7 @@
       "id": "file:.github/workflows/cache.yaml",
       "kind": "file",
       "label": "cache.yaml",
-      "lines": 51,
+      "lines": 46,
       "path": ".github/workflows/cache.yaml"
     },
     {
@@ -11474,23 +14105,15 @@
       "id": "file:.github/workflows/ci.yaml",
       "kind": "file",
       "label": "ci.yaml",
-      "lines": 276,
+      "lines": 320,
       "path": ".github/workflows/ci.yaml"
-    },
-    {
-      "file_kind": "ci-workflow",
-      "id": "file:.github/workflows/codspeed.yml",
-      "kind": "file",
-      "label": "codspeed.yml",
-      "lines": 33,
-      "path": ".github/workflows/codspeed.yml"
     },
     {
       "file_kind": "ci-workflow",
       "id": "file:.github/workflows/release.yaml",
       "kind": "file",
       "label": "release.yaml",
-      "lines": 508,
+      "lines": 372,
       "path": ".github/workflows/release.yaml"
     },
     {
@@ -11522,7 +14145,7 @@
       "id": "file:Cargo.lock",
       "kind": "file",
       "label": "Cargo.lock",
-      "lines": 5727,
+      "lines": 5493,
       "path": "Cargo.lock"
     },
     {
@@ -11530,7 +14153,7 @@
       "id": "file:Cargo.toml",
       "kind": "file",
       "label": "Cargo.toml",
-      "lines": 79,
+      "lines": 77,
       "path": "Cargo.toml"
     },
     {
@@ -11554,7 +14177,7 @@
       "id": "file:README.md",
       "kind": "file",
       "label": "README.md",
-      "lines": 108,
+      "lines": 120,
       "path": "README.md"
     },
     {
@@ -11562,7 +14185,7 @@
       "id": "file:RELEASES.md",
       "kind": "file",
       "label": "RELEASES.md",
-      "lines": 49,
+      "lines": 48,
       "path": "RELEASES.md"
     },
     {
@@ -11578,7 +14201,7 @@
       "id": "file:assets/capabilities.json",
       "kind": "file",
       "label": "capabilities.json",
-      "lines": 419,
+      "lines": 3378,
       "path": "assets/capabilities.json"
     },
     {
@@ -11693,7 +14316,7 @@
       "id": "file:bin/orvek/src/app/error.rs",
       "kind": "file",
       "label": "error.rs",
-      "lines": 252,
+      "lines": 254,
       "path": "bin/orvek/src/app/error.rs"
     },
     {
@@ -11725,7 +14348,7 @@
       "id": "file:bin/orvek/src/app/host.rs",
       "kind": "file",
       "label": "host.rs",
-      "lines": 832,
+      "lines": 861,
       "path": "bin/orvek/src/app/host.rs"
     },
     {
@@ -11781,7 +14404,7 @@
       "id": "file:bin/orvek/src/app/submission.rs",
       "kind": "file",
       "label": "submission.rs",
-      "lines": 302,
+      "lines": 304,
       "path": "bin/orvek/src/app/submission.rs"
     },
     {
@@ -11797,7 +14420,7 @@
       "id": "file:bin/orvek/src/app/update.rs",
       "kind": "file",
       "label": "update.rs",
-      "lines": 1089,
+      "lines": 1078,
       "path": "bin/orvek/src/app/update.rs"
     },
     {
@@ -11829,7 +14452,7 @@
       "id": "file:bin/orvek/src/core/mod.rs",
       "kind": "file",
       "label": "mod.rs",
-      "lines": 282,
+      "lines": 344,
       "path": "bin/orvek/src/core/mod.rs"
     },
     {
@@ -11877,7 +14500,7 @@
       "id": "file:bin/orvek/src/review/fixture.rs",
       "kind": "file",
       "label": "fixture.rs",
-      "lines": 87,
+      "lines": 89,
       "path": "bin/orvek/src/review/fixture.rs"
     },
     {
@@ -11917,7 +14540,7 @@
       "id": "file:bin/orvek/src/tui/client.rs",
       "kind": "file",
       "label": "client.rs",
-      "lines": 2194,
+      "lines": 946,
       "path": "bin/orvek/src/tui/client.rs"
     },
     {
@@ -11941,7 +14564,7 @@
       "id": "file:bin/orvek/src/tui/components/actions.rs",
       "kind": "file",
       "label": "actions.rs",
-      "lines": 957,
+      "lines": 1008,
       "path": "bin/orvek/src/tui/components/actions.rs"
     },
     {
@@ -11973,7 +14596,7 @@
       "id": "file:bin/orvek/src/tui/components/app.rs",
       "kind": "file",
       "label": "app.rs",
-      "lines": 1608,
+      "lines": 1614,
       "path": "bin/orvek/src/tui/components/app.rs"
     },
     {
@@ -12045,7 +14668,7 @@
       "id": "file:bin/orvek/src/tui/components/file_finder.rs",
       "kind": "file",
       "label": "file_finder.rs",
-      "lines": 560,
+      "lines": 646,
       "path": "bin/orvek/src/tui/components/file_finder.rs"
     },
     {
@@ -12125,7 +14748,7 @@
       "id": "file:bin/orvek/src/tui/components/root.rs",
       "kind": "file",
       "label": "root.rs",
-      "lines": 6630,
+      "lines": 6700,
       "path": "bin/orvek/src/tui/components/root.rs"
     },
     {
@@ -12354,6 +14977,22 @@
     },
     {
       "file_kind": "rust-source",
+      "id": "file:bin/orvek/src/tui/event_loop.rs",
+      "kind": "file",
+      "label": "event_loop.rs",
+      "lines": 1927,
+      "path": "bin/orvek/src/tui/event_loop.rs"
+    },
+    {
+      "file_kind": "rust-source",
+      "id": "file:bin/orvek/src/tui/file_index.rs",
+      "kind": "file",
+      "label": "file_index.rs",
+      "lines": 221,
+      "path": "bin/orvek/src/tui/file_index.rs"
+    },
+    {
+      "file_kind": "rust-source",
       "id": "file:bin/orvek/src/tui/fixtures.rs",
       "kind": "file",
       "label": "fixtures.rs",
@@ -12389,7 +15028,7 @@
       "id": "file:bin/orvek/src/tui/mod.rs",
       "kind": "file",
       "label": "mod.rs",
-      "lines": 53,
+      "lines": 55,
       "path": "bin/orvek/src/tui/mod.rs"
     },
     {
@@ -12525,7 +15164,7 @@
       "id": "file:bin/orvek/tests/release_pipeline.rs",
       "kind": "file",
       "label": "release_pipeline.rs",
-      "lines": 730,
+      "lines": 702,
       "path": "bin/orvek/tests/release_pipeline.rs"
     },
     {
@@ -12653,7 +15292,7 @@
       "id": "file:crates/harness/src/capabilities.rs",
       "kind": "file",
       "label": "capabilities.rs",
-      "lines": 479,
+      "lines": 488,
       "path": "crates/harness/src/capabilities.rs"
     },
     {
@@ -12669,7 +15308,7 @@
       "id": "file:crates/harness/src/capabilities/host.rs",
       "kind": "file",
       "label": "host.rs",
-      "lines": 689,
+      "lines": 770,
       "path": "crates/harness/src/capabilities/host.rs"
     },
     {
@@ -12748,7 +15387,7 @@
       "id": "file:crates/harness/src/contract.rs",
       "kind": "file",
       "label": "contract.rs",
-      "lines": 279,
+      "lines": 280,
       "path": "crates/harness/src/contract.rs"
     },
     {
@@ -12756,7 +15395,7 @@
       "id": "file:crates/harness/src/controller.rs",
       "kind": "file",
       "label": "controller.rs",
-      "lines": 3960,
+      "lines": 3603,
       "path": "crates/harness/src/controller.rs"
     },
     {
@@ -12844,7 +15483,7 @@
       "id": "file:crates/harness/src/controller/subagents.rs",
       "kind": "file",
       "label": "subagents.rs",
-      "lines": 3072,
+      "lines": 3077,
       "path": "crates/harness/src/controller/subagents.rs"
     },
     {
@@ -12865,10 +15504,18 @@
     },
     {
       "file_kind": "rust-source",
+      "id": "file:crates/harness/src/controller/task_phases.rs",
+      "kind": "file",
+      "label": "task_phases.rs",
+      "lines": 958,
+      "path": "crates/harness/src/controller/task_phases.rs"
+    },
+    {
+      "file_kind": "rust-source",
       "id": "file:crates/harness/src/controller/workspace.rs",
       "kind": "file",
       "label": "workspace.rs",
-      "lines": 23,
+      "lines": 97,
       "path": "crates/harness/src/controller/workspace.rs"
     },
     {
@@ -12988,7 +15635,7 @@
       "id": "file:crates/harness/src/ipc.rs",
       "kind": "file",
       "label": "ipc.rs",
-      "lines": 1249,
+      "lines": 1356,
       "path": "crates/harness/src/ipc.rs"
     },
     {
@@ -13076,7 +15723,7 @@
       "id": "file:crates/harness/src/runtime.rs",
       "kind": "file",
       "label": "runtime.rs",
-      "lines": 1157,
+      "lines": 1247,
       "path": "crates/harness/src/runtime.rs"
     },
     {
@@ -13132,7 +15779,7 @@
       "id": "file:crates/harness/src/sloppiness.rs",
       "kind": "file",
       "label": "sloppiness.rs",
-      "lines": 1123,
+      "lines": 1166,
       "path": "crates/harness/src/sloppiness.rs"
     },
     {
@@ -13156,7 +15803,7 @@
       "id": "file:crates/harness/src/store.rs",
       "kind": "file",
       "label": "store.rs",
-      "lines": 3915,
+      "lines": 3868,
       "path": "crates/harness/src/store.rs"
     },
     {
@@ -13164,7 +15811,7 @@
       "id": "file:crates/harness/src/store/auxiliary.rs",
       "kind": "file",
       "label": "auxiliary.rs",
-      "lines": 460,
+      "lines": 439,
       "path": "crates/harness/src/store/auxiliary.rs"
     },
     {
@@ -13204,7 +15851,7 @@
       "id": "file:crates/harness/src/store/submissions.rs",
       "kind": "file",
       "label": "submissions.rs",
-      "lines": 569,
+      "lines": 558,
       "path": "crates/harness/src/store/submissions.rs"
     },
     {
@@ -13244,7 +15891,7 @@
       "id": "file:crates/harness/src/verification.rs",
       "kind": "file",
       "label": "verification.rs",
-      "lines": 498,
+      "lines": 519,
       "path": "crates/harness/src/verification.rs"
     },
     {
@@ -13364,7 +16011,7 @@
       "id": "file:crates/harness/tests/native_host.rs",
       "kind": "file",
       "label": "native_host.rs",
-      "lines": 1641,
+      "lines": 2133,
       "path": "crates/harness/tests/native_host.rs"
     },
     {
@@ -13388,7 +16035,7 @@
       "id": "file:crates/harness/tests/operator_protocol.rs",
       "kind": "file",
       "label": "operator_protocol.rs",
-      "lines": 198,
+      "lines": 201,
       "path": "crates/harness/tests/operator_protocol.rs"
     },
     {
@@ -13404,7 +16051,7 @@
       "id": "file:crates/harness/tests/protected_verification.rs",
       "kind": "file",
       "label": "protected_verification.rs",
-      "lines": 230,
+      "lines": 303,
       "path": "crates/harness/tests/protected_verification.rs"
     },
     {
@@ -13516,7 +16163,7 @@
       "id": "file:crates/memory/src/archive.rs",
       "kind": "file",
       "label": "archive.rs",
-      "lines": 117,
+      "lines": 121,
       "path": "crates/memory/src/archive.rs"
     },
     {
@@ -13524,7 +16171,7 @@
       "id": "file:crates/memory/src/evidence.rs",
       "kind": "file",
       "label": "evidence.rs",
-      "lines": 313,
+      "lines": 317,
       "path": "crates/memory/src/evidence.rs"
     },
     {
@@ -13548,7 +16195,7 @@
       "id": "file:crates/memory/src/model.rs",
       "kind": "file",
       "label": "model.rs",
-      "lines": 219,
+      "lines": 279,
       "path": "crates/memory/src/model.rs"
     },
     {
@@ -13580,7 +16227,7 @@
       "id": "file:crates/memory/src/server/mod.rs",
       "kind": "file",
       "label": "mod.rs",
-      "lines": 26,
+      "lines": 24,
       "path": "crates/memory/src/server/mod.rs"
     },
     {
@@ -13596,7 +16243,7 @@
       "id": "file:crates/memory/src/server/router.rs",
       "kind": "file",
       "label": "router.rs",
-      "lines": 780,
+      "lines": 946,
       "path": "crates/memory/src/server/router.rs"
     },
     {
@@ -13604,7 +16251,7 @@
       "id": "file:crates/memory/src/server/tests.rs",
       "kind": "file",
       "label": "tests.rs",
-      "lines": 2338,
+      "lines": 2722,
       "path": "crates/memory/src/server/tests.rs"
     },
     {
@@ -13620,7 +16267,7 @@
       "id": "file:crates/memory/src/store/local.rs",
       "kind": "file",
       "label": "local.rs",
-      "lines": 1197,
+      "lines": 1278,
       "path": "crates/memory/src/store/local.rs"
     },
     {
@@ -13628,7 +16275,7 @@
       "id": "file:crates/memory/src/store/mod.rs",
       "kind": "file",
       "label": "mod.rs",
-      "lines": 528,
+      "lines": 598,
       "path": "crates/memory/src/store/mod.rs"
     },
     {
@@ -13636,7 +16283,7 @@
       "id": "file:crates/memory/src/store/remote/client.rs",
       "kind": "file",
       "label": "client.rs",
-      "lines": 1048,
+      "lines": 1120,
       "path": "crates/memory/src/store/remote/client.rs"
     },
     {
@@ -13652,7 +16299,7 @@
       "id": "file:crates/memory/src/tests.rs",
       "kind": "file",
       "label": "tests.rs",
-      "lines": 595,
+      "lines": 866,
       "path": "crates/memory/src/tests.rs"
     },
     {
@@ -13668,7 +16315,7 @@
       "id": "file:crates/memory/tests/evidence.rs",
       "kind": "file",
       "label": "evidence.rs",
-      "lines": 394,
+      "lines": 401,
       "path": "crates/memory/tests/evidence.rs"
     },
     {
@@ -13756,7 +16403,7 @@
       "id": "file:docker/development.dockerfile",
       "kind": "file",
       "label": "development.dockerfile",
-      "lines": 231,
+      "lines": 232,
       "path": "docker/development.dockerfile"
     },
     {
@@ -13764,23 +16411,15 @@
       "id": "file:docker/docker-bake.hcl",
       "kind": "file",
       "label": "docker-bake.hcl",
-      "lines": 33,
+      "lines": 9,
       "path": "docker/docker-bake.hcl"
-    },
-    {
-      "file_kind": "supporting-file",
-      "id": "file:docker/release.dockerfile",
-      "kind": "file",
-      "label": "release.dockerfile",
-      "lines": 3,
-      "path": "docker/release.dockerfile"
     },
     {
       "file_kind": "documentation",
       "id": "file:docs/audits/codebase-review-2026-09-19.md",
       "kind": "file",
       "label": "codebase-review-2026-09-19.md",
-      "lines": 227,
+      "lines": 231,
       "path": "docs/audits/codebase-review-2026-09-19.md"
     },
     {
@@ -13804,7 +16443,7 @@
       "id": "file:docs/audits/self-harness-wiring.md",
       "kind": "file",
       "label": "self-harness-wiring.md",
-      "lines": 143,
+      "lines": 145,
       "path": "docs/audits/self-harness-wiring.md"
     },
     {
@@ -13828,7 +16467,7 @@
       "id": "file:docs/codebase-graph/overview.md",
       "kind": "file",
       "label": "overview.md",
-      "lines": 182,
+      "lines": 180,
       "path": "docs/codebase-graph/overview.md"
     },
     {
@@ -14060,7 +16699,7 @@
       "id": "file:docs/executable-examples.md",
       "kind": "file",
       "label": "executable-examples.md",
-      "lines": 434,
+      "lines": 437,
       "path": "docs/executable-examples.md"
     },
     {
@@ -14092,7 +16731,7 @@
       "id": "file:docs/memory.md",
       "kind": "file",
       "label": "memory.md",
-      "lines": 317,
+      "lines": 316,
       "path": "docs/memory.md"
     },
     {
@@ -14108,7 +16747,7 @@
       "id": "file:docs/performance.md",
       "kind": "file",
       "label": "performance.md",
-      "lines": 37,
+      "lines": 34,
       "path": "docs/performance.md"
     },
     {
@@ -14116,7 +16755,7 @@
       "id": "file:docs/sessions.md",
       "kind": "file",
       "label": "sessions.md",
-      "lines": 54,
+      "lines": 130,
       "path": "docs/sessions.md"
     },
     {
@@ -14140,7 +16779,7 @@
       "id": "file:docs/trace-bundles.md",
       "kind": "file",
       "label": "trace-bundles.md",
-      "lines": 183,
+      "lines": 185,
       "path": "docs/trace-bundles.md"
     },
     {
@@ -14156,7 +16795,7 @@
       "id": "file:docs/workspace-execution.md",
       "kind": "file",
       "label": "workspace-execution.md",
-      "lines": 65,
+      "lines": 113,
       "path": "docs/workspace-execution.md"
     },
     {
@@ -14320,6 +16959,14 @@
       "path": "evals/incident_replay/scoring.py"
     },
     {
+      "file_kind": "python-script",
+      "id": "file:evals/incident_replay/test_contracts.py",
+      "kind": "file",
+      "label": "test_contracts.py",
+      "lines": 49,
+      "path": "evals/incident_replay/test_contracts.py"
+    },
+    {
       "file_kind": "configuration",
       "id": "file:evals/pyproject.toml",
       "kind": "file",
@@ -14460,7 +17107,7 @@
       "id": "file:examples/host-docs/inventory.json",
       "kind": "file",
       "label": "inventory.json",
-      "lines": 289,
+      "lines": 310,
       "path": "examples/host-docs/inventory.json"
     },
     {
@@ -14544,139 +17191,11 @@
       "path": "examples/host-docs/traces/sandbox.trace.json"
     },
     {
-      "file_kind": "cargo-manifest",
-      "id": "file:examples/orvek-memory-cloudflare/Cargo.toml",
-      "kind": "file",
-      "label": "Cargo.toml",
-      "lines": 31,
-      "path": "examples/orvek-memory-cloudflare/Cargo.toml"
-    },
-    {
-      "file_kind": "documentation",
-      "id": "file:examples/orvek-memory-cloudflare/README.md",
-      "kind": "file",
-      "label": "README.md",
-      "lines": 108,
-      "path": "examples/orvek-memory-cloudflare/README.md"
-    },
-    {
-      "file_kind": "configuration",
-      "id": "file:examples/orvek-memory-cloudflare/credentials.example.toml",
-      "kind": "file",
-      "label": "credentials.example.toml",
-      "lines": 14,
-      "path": "examples/orvek-memory-cloudflare/credentials.example.toml"
-    },
-    {
-      "file_kind": "supporting-file",
-      "id": "file:examples/orvek-memory-cloudflare/migrations/0001_initial.sql",
-      "kind": "file",
-      "label": "0001_initial.sql",
-      "lines": 25,
-      "path": "examples/orvek-memory-cloudflare/migrations/0001_initial.sql"
-    },
-    {
-      "file_kind": "supporting-file",
-      "id": "file:examples/orvek-memory-cloudflare/migrations/0002_evidence.sql",
-      "kind": "file",
-      "label": "0002_evidence.sql",
-      "lines": 2,
-      "path": "examples/orvek-memory-cloudflare/migrations/0002_evidence.sql"
-    },
-    {
-      "file_kind": "supporting-file",
-      "id": "file:examples/orvek-memory-cloudflare/migrations/0003_ownership.sql",
-      "kind": "file",
-      "label": "0003_ownership.sql",
-      "lines": 3,
-      "path": "examples/orvek-memory-cloudflare/migrations/0003_ownership.sql"
-    },
-    {
-      "file_kind": "configuration",
-      "id": "file:examples/orvek-memory-cloudflare/package-lock.json",
-      "kind": "file",
-      "label": "package-lock.json",
-      "lines": 1537,
-      "path": "examples/orvek-memory-cloudflare/package-lock.json"
-    },
-    {
-      "file_kind": "configuration",
-      "id": "file:examples/orvek-memory-cloudflare/package.json",
-      "kind": "file",
-      "label": "package.json",
-      "lines": 18,
-      "path": "examples/orvek-memory-cloudflare/package.json"
-    },
-    {
-      "file_kind": "typescript-source",
-      "id": "file:examples/orvek-memory-cloudflare/scripts/credentials.test.ts",
-      "kind": "file",
-      "label": "credentials.test.ts",
-      "lines": 36,
-      "path": "examples/orvek-memory-cloudflare/scripts/credentials.test.ts"
-    },
-    {
-      "file_kind": "typescript-source",
-      "id": "file:examples/orvek-memory-cloudflare/scripts/credentials.ts",
-      "kind": "file",
-      "label": "credentials.ts",
-      "lines": 121,
-      "path": "examples/orvek-memory-cloudflare/scripts/credentials.ts"
-    },
-    {
-      "file_kind": "rust-source",
-      "id": "file:examples/orvek-memory-cloudflare/src/auth.rs",
-      "kind": "file",
-      "label": "auth.rs",
-      "lines": 73,
-      "path": "examples/orvek-memory-cloudflare/src/auth.rs"
-    },
-    {
-      "file_kind": "rust-source",
-      "id": "file:examples/orvek-memory-cloudflare/src/config.rs",
-      "kind": "file",
-      "label": "config.rs",
-      "lines": 37,
-      "path": "examples/orvek-memory-cloudflare/src/config.rs"
-    },
-    {
-      "file_kind": "rust-source",
-      "id": "file:examples/orvek-memory-cloudflare/src/lib.rs",
-      "kind": "file",
-      "label": "lib.rs",
-      "lines": 122,
-      "path": "examples/orvek-memory-cloudflare/src/lib.rs"
-    },
-    {
-      "file_kind": "rust-source",
-      "id": "file:examples/orvek-memory-cloudflare/src/store.rs",
-      "kind": "file",
-      "label": "store.rs",
-      "lines": 1045,
-      "path": "examples/orvek-memory-cloudflare/src/store.rs"
-    },
-    {
-      "file_kind": "rust-source",
-      "id": "file:examples/orvek-memory-cloudflare/src/store/row.rs",
-      "kind": "file",
-      "label": "row.rs",
-      "lines": 160,
-      "path": "examples/orvek-memory-cloudflare/src/store/row.rs"
-    },
-    {
-      "file_kind": "configuration",
-      "id": "file:examples/orvek-memory-cloudflare/wrangler.jsonc",
-      "kind": "file",
-      "label": "wrangler.jsonc",
-      "lines": 29,
-      "path": "examples/orvek-memory-cloudflare/wrangler.jsonc"
-    },
-    {
       "file_kind": "automation",
       "id": "file:install.sh",
       "kind": "file",
       "label": "install.sh",
-      "lines": 144,
+      "lines": 132,
       "path": "install.sh"
     },
     {
@@ -14684,7 +17203,7 @@
       "id": "file:justfile",
       "kind": "file",
       "label": "justfile",
-      "lines": 205,
+      "lines": 198,
       "path": "justfile"
     },
     {
@@ -14764,7 +17283,7 @@
       "id": "file:scripts/generate-codebase-graph.py",
       "kind": "file",
       "label": "generate-codebase-graph.py",
-      "lines": 1114,
+      "lines": 1216,
       "path": "scripts/generate-codebase-graph.py"
     },
     {
@@ -14844,7 +17363,7 @@
       "id": "file:scripts/tests/test_generate_codebase_graph.py",
       "kind": "file",
       "label": "test_generate_codebase_graph.py",
-      "lines": 247,
+      "lines": 349,
       "path": "scripts/tests/test_generate_codebase_graph.py"
     },
     {
@@ -15415,6 +17934,13 @@
       "target": "target:orvek-harness:lib"
     },
     {
+      "id": "module:orvek-harness:lib::controller::task_phases",
+      "kind": "module",
+      "label": "orvek-harness:lib::controller::task_phases",
+      "path": "crates/harness/src/controller/task_phases.rs",
+      "target": "target:orvek-harness:lib"
+    },
+    {
       "id": "module:orvek-harness:lib::controller::workspace",
       "kind": "module",
       "label": "orvek-harness:lib::controller::workspace",
@@ -15938,41 +18464,6 @@
       "label": "orvek-harness:test:workspace_tools::tests::workspace_tools",
       "path": "crates/harness/tests/workspace_tools.rs",
       "target": "target:orvek-harness:test:workspace_tools"
-    },
-    {
-      "id": "module:orvek-memory-cloudflare:lib",
-      "kind": "module",
-      "label": "orvek-memory-cloudflare:lib",
-      "path": "examples/orvek-memory-cloudflare/src/lib.rs",
-      "target": "target:orvek-memory-cloudflare:lib"
-    },
-    {
-      "id": "module:orvek-memory-cloudflare:lib::auth",
-      "kind": "module",
-      "label": "orvek-memory-cloudflare:lib::auth",
-      "path": "examples/orvek-memory-cloudflare/src/auth.rs",
-      "target": "target:orvek-memory-cloudflare:lib"
-    },
-    {
-      "id": "module:orvek-memory-cloudflare:lib::config",
-      "kind": "module",
-      "label": "orvek-memory-cloudflare:lib::config",
-      "path": "examples/orvek-memory-cloudflare/src/config.rs",
-      "target": "target:orvek-memory-cloudflare:lib"
-    },
-    {
-      "id": "module:orvek-memory-cloudflare:lib::store",
-      "kind": "module",
-      "label": "orvek-memory-cloudflare:lib::store",
-      "path": "examples/orvek-memory-cloudflare/src/store.rs",
-      "target": "target:orvek-memory-cloudflare:lib"
-    },
-    {
-      "id": "module:orvek-memory-cloudflare:lib::store::row",
-      "kind": "module",
-      "label": "orvek-memory-cloudflare:lib::store::row",
-      "path": "examples/orvek-memory-cloudflare/src/store/row.rs",
-      "target": "target:orvek-memory-cloudflare:lib"
     },
     {
       "id": "module:orvek-memory:lib",
@@ -16780,6 +19271,20 @@
       "target": "target:orvek:bin:orvek"
     },
     {
+      "id": "module:orvek:bin:orvek::tui::event_loop",
+      "kind": "module",
+      "label": "orvek:bin:orvek::tui::event_loop",
+      "path": "bin/orvek/src/tui/event_loop.rs",
+      "target": "target:orvek:bin:orvek"
+    },
+    {
+      "id": "module:orvek:bin:orvek::tui::file_index",
+      "kind": "module",
+      "label": "orvek:bin:orvek::tui::file_index",
+      "path": "bin/orvek/src/tui/file_index.rs",
+      "target": "target:orvek:bin:orvek"
+    },
+    {
       "id": "module:orvek:bin:orvek::tui::fixtures",
       "kind": "module",
       "label": "orvek:bin:orvek::tui::fixtures",
@@ -16966,13 +19471,6 @@
       "kind": "package",
       "label": "orvek-memory",
       "path": "crates/memory",
-      "workspace_member": true
-    },
-    {
-      "id": "package:orvek-memory-cloudflare",
-      "kind": "package",
-      "label": "orvek-memory-cloudflare",
-      "path": "examples/orvek-memory-cloudflare",
       "workspace_member": true
     },
     {
@@ -17185,12 +19683,6 @@
       "package": "orvek-harness"
     },
     {
-      "id": "target:orvek-memory-cloudflare:lib",
-      "kind": "target",
-      "label": "orvek-memory-cloudflare lib",
-      "package": "orvek-memory-cloudflare"
-    },
-    {
       "id": "target:orvek-memory:lib",
       "kind": "target",
       "label": "orvek-memory lib",
@@ -17324,46 +19816,46 @@
   },
   "statistics": {
     "capabilities_by_status": {
-      "experimental": 1,
-      "implemented": 15
+      "experimental": 3,
+      "implemented": 21
     },
     "capability_exempt_components": 6,
-    "edges": 1902,
+    "edges": 1984,
     "files_by_kind": {
       "automation": 4,
       "binary-asset": 6,
-      "cargo-manifest": 6,
-      "ci-workflow": 4,
-      "configuration": 25,
-      "documentation": 52,
-      "python-script": 52,
-      "rust-source": 247,
-      "supporting-file": 17,
-      "typescript-source": 36,
+      "cargo-manifest": 5,
+      "ci-workflow": 3,
+      "configuration": 21,
+      "documentation": 51,
+      "python-script": 53,
+      "rust-source": 245,
+      "supporting-file": 13,
+      "typescript-source": 34,
       "web-asset": 20
     },
-    "nodes": 945,
+    "nodes": 927,
     "nodes_by_kind": {
-      "capability": 16,
+      "capability": 24,
       "component": 14,
-      "dependency": 60,
-      "directory": 80,
-      "file": 469,
-      "module": 251,
-      "package": 5,
+      "dependency": 57,
+      "directory": 75,
+      "file": 455,
+      "module": 249,
+      "package": 4,
       "repository": 1,
-      "target": 48,
+      "target": 47,
       "workspace": 1
     },
-    "source_fingerprint": "b82eeb349d832eb8294f7c5652806aa4176093b31ba72fd9866c5f88e991f977",
+    "source_fingerprint": "38c0628a2b30f6d81e250e114b03f0f3b051674f6f43c3a390d4f4331ad56885",
     "static_reference_coverage": {
       "rust_compile_time_includes": {
-        "detected": 23,
-        "resolved": 23
+        "detected": 16,
+        "resolved": 16
       },
       "typescript_relative_imports": {
-        "detected": 47,
-        "resolved": 47
+        "detected": 46,
+        "resolved": 46
       }
     }
   }

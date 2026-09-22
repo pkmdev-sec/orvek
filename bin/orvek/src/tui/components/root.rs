@@ -34,6 +34,7 @@ use crate::{
     tui::{
         children::{ChildUpdate, MessageOrigin},
         context::{ContextDiagnostics, SessionCost},
+        file_index::FileIndex,
         prompt::Submission,
         session::{MAX_RECENT_PROMPTS, RecentPrompt, SessionSummary},
         theme::{FeedbackTone, Theme, ThemeMode},
@@ -119,7 +120,6 @@ pub(crate) enum RootEvent {
     ContextTokens(u64),
     Transcript(Arc<TranscriptRecord>),
     SessionCost(SessionCost),
-    ViewDisconnected,
     Subagent(ChildUpdate),
     ReplaceDraft(String),
     HandoffFinished(String),
@@ -138,6 +138,7 @@ pub(crate) enum RootEvent {
     ForkReady,
     NewSessionFailed(String),
     SessionsLoaded(Vec<SessionSummary>),
+    FileIndexFinished(Result<FileIndex, String>),
     RecentPromptsLoaded {
         session_id: String,
         prompts: Vec<RecentPrompt>,
@@ -199,6 +200,7 @@ pub(crate) enum RootEffect {
     ReloadConfig,
     NewSession(Model),
     LoadSessions(SessionListKind),
+    LoadFileIndex,
     LoadRecentPrompts(Vec<RecentPromptDraft>),
     LoadMemories,
     DeleteMemory(MemoryKey),
@@ -271,6 +273,12 @@ struct FileMention {
     start: usize,
 }
 
+enum FileIndexState {
+    Unloaded,
+    Loading,
+    Loaded(Arc<FileIndex>),
+}
+
 struct SkillMention {
     picker: Node<SkillPicker>,
     start: usize,
@@ -302,6 +310,7 @@ pub(crate) struct RootNode {
     queue: Node<MessageQueue>,
     workspace: PathBuf,
     overlay: Option<Overlay>,
+    file_index: FileIndexState,
     thread: ThreadState,
     key_confirmation: Option<TimedKeyConfirmation<ConfirmationAction>>,
     toasts: ToastStack,
@@ -348,6 +357,7 @@ impl RootNode {
             queue: Node::new(MessageQueue::default()),
             workspace: workspace.to_path_buf(),
             overlay: None,
+            file_index: FileIndexState::Unloaded,
             thread: ThreadState::New,
             key_confirmation: None,
             toasts: ToastStack::default(),
@@ -1005,10 +1015,19 @@ impl RootNode {
         if is_file_finder_trigger(&event) && self.composer.component().cursor_is_at_token_boundary()
         {
             let start = self.composer.component().cursor();
-            let update =
+            let mut update =
                 self.update_composer(ComposerEvent::Terminal(event), RenderRequest::Immediate);
+            let finder = match &self.file_index {
+                FileIndexState::Unloaded => {
+                    self.file_index = FileIndexState::Loading;
+                    update.effects.push(RootEffect::LoadFileIndex);
+                    FileFinder::loading()
+                }
+                FileIndexState::Loading => FileFinder::loading(),
+                FileIndexState::Loaded(index) => FileFinder::with_index(Arc::clone(index)),
+            };
             self.overlay = Some(Overlay::FileFinder(FileMention {
-                finder: Node::new(FileFinder::new(&self.workspace)),
+                finder: Node::new(finder),
                 start,
             }));
             return update;
@@ -1302,14 +1321,53 @@ impl RootNode {
         ComponentUpdate::render(RenderRequest::Immediate)
     }
 
+    fn file_index_finished(
+        &mut self,
+        result: Result<FileIndex, String>,
+    ) -> ComponentUpdate<RootEffect> {
+        match result {
+            Ok(index) => {
+                let index = Arc::new(index);
+                self.file_index = FileIndexState::Loaded(Arc::clone(&index));
+                let Some(Overlay::FileFinder(mention)) = &mut self.overlay else {
+                    return ComponentUpdate::none();
+                };
+                mention.finder.component_mut().set_index(index);
+                ComponentUpdate::render(RenderRequest::Immediate)
+            }
+            Err(error) => {
+                self.file_index = FileIndexState::Unloaded;
+                if let Some(Overlay::FileFinder(mention)) = &mut self.overlay {
+                    mention.finder.component_mut().set_error(error.clone());
+                }
+                self.notify(
+                    format!("Could not index workspace paths: {error}"),
+                    FeedbackTone::Error,
+                );
+                ComponentUpdate::render(RenderRequest::Immediate)
+            }
+        }
+    }
+
     fn update_file_finder(&mut self, event: Event) -> ComponentUpdate<RootEffect> {
         let Some(Overlay::FileFinder(mention)) = &self.overlay else {
             return ComponentUpdate::none();
         };
         let start = mention.start;
+        let can_retry = mention.finder.component().can_retry();
 
         if is_key_release(&event) {
             return ComponentUpdate::none();
+        }
+        if can_retry && is_plain_key(&event, 'r') {
+            self.file_index = FileIndexState::Loading;
+            if let Some(Overlay::FileFinder(mention)) = &mut self.overlay {
+                mention.finder.component_mut().set_loading();
+            }
+            return ComponentUpdate {
+                effects: vec![RootEffect::LoadFileIndex],
+                render: RenderRequest::Immediate,
+            };
         }
 
         let starts_session_mention = is_file_finder_trigger(&event)
@@ -1365,16 +1423,21 @@ impl RootNode {
             };
         };
 
-        self.overlay = None;
         match effect {
-            FileFinderEffect::Dismiss => ComponentUpdate::render(RenderRequest::Immediate),
-            FileFinderEffect::Insert(path) => self.update_composer(
-                ComposerEvent::ReplaceRange {
-                    range: start..self.composer.component().cursor(),
-                    text: format!("@{path} "),
-                },
-                RenderRequest::Immediate,
-            ),
+            FileFinderEffect::Dismiss => {
+                self.overlay = None;
+                ComponentUpdate::render(RenderRequest::Immediate)
+            }
+            FileFinderEffect::Insert(path) => {
+                self.overlay = None;
+                self.update_composer(
+                    ComposerEvent::ReplaceRange {
+                        range: start..self.composer.component().cursor(),
+                        text: format!("@{path} "),
+                    },
+                    RenderRequest::Immediate,
+                )
+            }
         }
     }
 
@@ -2621,18 +2684,6 @@ impl Component for RootNode {
                 }
                 update
             }
-            RootEvent::ViewDisconnected => {
-                self.in_flight_turns = 0;
-                self.activity_outcome = ActivityState::Error;
-                let mut update = self.update_transcript(TranscriptEvent::AgentStreamClosed);
-                self.transcript_activity = None;
-                let timer =
-                    self.update_composer(ComposerEvent::TurnsCleared, RenderRequest::Immediate);
-                update.effects.extend(timer.effects);
-                update.render = update.render.max(timer.render);
-                self.refresh_activity(Instant::now());
-                update
-            }
             RootEvent::Subagent(update) => self.apply_subagent_update(update),
             RootEvent::ReplaceDraft(draft) => {
                 self.update_composer(ComposerEvent::ReplaceDraft(draft), RenderRequest::Immediate)
@@ -2775,6 +2826,7 @@ impl Component for RootNode {
             RootEvent::ForkReady => self.fork_ready(),
             RootEvent::NewSessionFailed(message) => self.new_session_failed(message),
             RootEvent::SessionsLoaded(sessions) => self.sessions_loaded(sessions),
+            RootEvent::FileIndexFinished(result) => self.file_index_finished(result),
             RootEvent::RecentPromptsLoaded {
                 session_id,
                 prompts,
@@ -3074,15 +3126,16 @@ fn is_plain_key(event: &Event, character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        ActivityState, Component, ComposerChromeTarget, ConfirmationAction, DraftReset, Overlay,
-        RenderRequest, RootEffect, RootEvent, RootNode, SessionListKind, SubagentOverlay,
-        ThreadState, TranscriptEvent,
+        ActivityState, Component, ComposerChromeTarget, ConfirmationAction, DraftReset,
+        FileIndexState, Overlay, RenderRequest, RootEffect, RootEvent, RootNode, SessionListKind,
+        SubagentOverlay, ThreadState, TranscriptEvent,
     };
     use crate::{
         app::config::{ReasoningEffort, ReasoningMode},
         core::extensions::Skill,
         tui::{
             children::{ChildId, ChildStatus, ChildUpdate, ChildView, MessageUpdate},
+            file_index::discover_file_index,
             fixtures::{self, DisplaySample},
             session::{RecentPrompt, SessionSummary},
             theme::{FeedbackTone, Theme, ThemeMode},
@@ -3433,22 +3486,6 @@ mod tests {
         assert_eq!(root.composer.component().active_turn_timer_count(), 0);
         assert_eq!(root.in_flight_turns, 0);
         assert_eq!(root.activity.visual().state(), ActivityState::Cancelled);
-    }
-
-    #[test]
-    fn terminal_view_disconnect_clears_timer_and_marks_error() {
-        let mut root = RootNode::new(Path::new("/work"), ReasoningEffort::Medium);
-        root.update(RootEvent::Transcript(agent_record(
-            1,
-            DisplaySample::Start,
-            json!({}),
-        )));
-
-        root.update(RootEvent::ViewDisconnected);
-
-        assert_eq!(root.composer.component().active_turn_timer_count(), 0);
-        assert_eq!(root.in_flight_turns, 0);
-        assert_eq!(root.activity.visual().state(), ActivityState::Error);
     }
 
     #[test]
@@ -4314,6 +4351,31 @@ mod tests {
         assert!(matches!(&root.overlay, Some(Overlay::FileFinder(_))));
         assert_eq!(root.composer().draft(), "inspect @");
         assert_eq!(update.render, super::RenderRequest::Immediate);
+        assert_eq!(update.effects, [RootEffect::LoadFileIndex]);
+    }
+
+    #[test]
+    fn failed_file_index_can_be_retried_without_reopening_the_finder() {
+        let workspace = tempfile::tempdir().unwrap();
+        let mut root = RootNode::new(workspace.path(), ReasoningEffort::Medium);
+        root.update(key(KeyCode::Char('@'), KeyModifiers::NONE));
+
+        let failure = root.update(RootEvent::FileIndexFinished(Err(
+            "background worker panicked".to_owned(),
+        )));
+
+        assert_eq!(failure.render, RenderRequest::Immediate);
+        assert!(matches!(root.file_index, FileIndexState::Unloaded));
+        assert!(matches!(&root.overlay, Some(Overlay::FileFinder(_))));
+        assert!(render_root_text(&mut root, 80, 24).contains("Could not index workspace paths"));
+
+        let retry = root.update(key(KeyCode::Char('r'), KeyModifiers::NONE));
+
+        assert_eq!(retry.effects, [RootEffect::LoadFileIndex]);
+        assert!(matches!(root.file_index, FileIndexState::Loading));
+        assert!(matches!(&root.overlay, Some(Overlay::FileFinder(_))));
+        assert_eq!(root.composer().draft(), "@");
+        assert!(render_root_text(&mut root, 80, 24).contains("Indexing workspace"));
     }
 
     #[test]
@@ -4408,7 +4470,9 @@ mod tests {
     fn later_at_closes_file_suggestions_without_opening_sessions() {
         let workspace = tempfile::tempdir().unwrap();
         let mut root = RootNode::new(workspace.path(), ReasoningEffort::Medium);
-        for character in "@someone@".chars() {
+        let opening = root.update(key(KeyCode::Char('@'), KeyModifiers::NONE));
+        assert_eq!(opening.effects, [RootEffect::LoadFileIndex]);
+        for character in "someone@".chars() {
             let update = root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
             assert!(update.effects.is_empty());
         }
@@ -4437,6 +4501,9 @@ mod tests {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
         }
         root.update(key(KeyCode::Char('@'), KeyModifiers::NONE));
+        root.update(RootEvent::FileIndexFinished(Ok(discover_file_index(
+            workspace.path(),
+        ))));
         for character in "notes".chars() {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
         }
@@ -4471,6 +4538,9 @@ mod tests {
         for character in "@notes".chars() {
             root.update(key(KeyCode::Char(character), KeyModifiers::NONE));
         }
+        root.update(RootEvent::FileIndexFinished(Ok(discover_file_index(
+            workspace.path(),
+        ))));
 
         root.update(key(KeyCode::Enter, KeyModifiers::NONE));
 

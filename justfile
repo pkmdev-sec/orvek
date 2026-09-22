@@ -51,9 +51,6 @@ check-docs:
 check-features *args='':
     cargo hack check --package orvek-memory --feature-powerset --no-dev-deps {{args}}
 
-check-wasm *args='':
-    cargo check --package orvek-memory-cloudflare --target wasm32-unknown-unknown {{args}}
-
 bench *args='':
     cargo bench {{args}}
 
@@ -104,8 +101,7 @@ build-harbor-agent platform='':
         crates/executor/src \
         crates/harness/src \
         crates/harness/benches \
-        crates/memory/src \
-        examples/orvek-memory-cloudflare/src; do
+        crates/memory/src; do
         test -z "$(find "$source_tree" -type l -print -quit)" || {
             echo "refusing to build Harbor agent with symlinks below $source_tree/" >&2
             exit 1
@@ -138,9 +134,6 @@ build-harbor-agent platform='':
     mkdir -p "$build_context/crates/memory"
     cp crates/memory/Cargo.toml crates/memory/README.md "$build_context/crates/memory/"
     cp -R crates/memory/src "$build_context/crates/memory/src"
-    mkdir -p "$build_context/examples/orvek-memory-cloudflare"
-    cp examples/orvek-memory-cloudflare/Cargo.toml "$build_context/examples/orvek-memory-cloudflare/"
-    cp -R examples/orvek-memory-cloudflare/src "$build_context/examples/orvek-memory-cloudflare/src"
     if [[ -n "{{platform}}" ]]; then
         docker --context "$docker_context" buildx build \
             --platform "{{platform}}" \

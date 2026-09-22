@@ -70,7 +70,7 @@ fn trace(request: &str) -> TraceReference {
 async fn real_commit_sequence_dirty_checkout_and_atomic_refresh() {
     let repo = repository();
     let state = tempfile::tempdir().unwrap();
-    let store = LocalMemoryStore::new(state.path().join("memory.db"));
+    let store = LocalMemoryStore::new(state.path().join("memory/v1.sqlite3"));
     let sources = WorkspaceSources::open(repo.path()).unwrap();
     let original = store
         .put_with_metadata("Feature is disabled", &metadata(&sources), None)
@@ -104,7 +104,7 @@ async fn real_commit_sequence_dirty_checkout_and_atomic_refresh() {
     assert_eq!(sources.assess(&original.metadata), EvidenceState::Stale);
     commit(repo.path(), "feature change");
     // A failed second SQL statement must roll back the preceding content/version replacement.
-    let db = rusqlite::Connection::open(state.path().join("memory.db")).unwrap();
+    let db = rusqlite::Connection::open(state.path().join("memory/v1.sqlite3")).unwrap();
     db.execute_batch("CREATE TRIGGER interrupt_refresh BEFORE UPDATE OF metadata ON memories BEGIN SELECT RAISE(ABORT, 'interrupted refresh'); END;").unwrap();
     assert!(
         store
@@ -161,7 +161,14 @@ async fn real_commit_sequence_dirty_checkout_and_atomic_refresh() {
 #[tokio::test]
 async fn legacy_schema_migrates_to_unscoped_unverified_even_after_read() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("legacy.db");
+    let parent = dir.path().join("legacy");
+    fs::create_dir(&parent).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let path = parent.join("v1.sqlite3");
     let db = rusqlite::Connection::open(&path).unwrap();
     db.execute_batch("CREATE TABLE memories (id INTEGER PRIMARY KEY, content TEXT NOT NULL, normalized_identity TEXT NOT NULL UNIQUE, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, last_scanned_at_ms INTEGER, scan_count INTEGER NOT NULL DEFAULT 0, last_used_at_ms INTEGER, use_count INTEGER NOT NULL DEFAULT 0, probation_until_ms INTEGER, version INTEGER NOT NULL DEFAULT 1); INSERT INTO memories(id,content,normalized_identity,created_at_ms,updated_at_ms) VALUES (1,'legacy code fact','legacy code fact',1,1); PRAGMA user_version=1;").unwrap();
     let store = LocalMemoryStore::new(path);
@@ -181,7 +188,7 @@ async fn legacy_schema_migrates_to_unscoped_unverified_even_after_read() {
 async fn scan_read_scope_and_false_instructions_remain_reference_data_across_models() {
     let repo = repository();
     let dir = tempfile::tempdir().unwrap();
-    let store = SelectedMemoryStore::local(dir.path().join("memory.db"));
+    let store = SelectedMemoryStore::local(dir.path().join("memory/v1.sqlite3"));
     let mut first_model = MemorySession::new(store.clone()).with_workspace(repo.path());
     first_model.bind_trace(trace("model-a"));
     let permission = MemoryPermission::ReadWrite;
@@ -236,7 +243,7 @@ async fn scan_read_scope_and_false_instructions_remain_reference_data_across_mod
 async fn archive_roundtrip_retains_namespace_versions_and_evidence_and_rejects_tampering() {
     let repo = repository();
     let dir = tempfile::tempdir().unwrap();
-    let source = LocalMemoryStore::new(dir.path().join("source.db"));
+    let source = LocalMemoryStore::new(dir.path().join("source/v1.sqlite3"));
     let mut record = source
         .put_with_metadata(
             "Portable claim",
@@ -256,7 +263,7 @@ async fn archive_roundtrip_retains_namespace_versions_and_evidence_and_rejects_t
     assert_eq!(report.inserted, 2);
     let archive = dir.path().join("archive");
     MemoryArchive::export(&source, &archive).await.unwrap();
-    let destination = LocalMemoryStore::new(dir.path().join("destination.db"));
+    let destination = LocalMemoryStore::new(dir.path().join("destination/v1.sqlite3"));
     assert_eq!(
         MemoryArchive::import(&archive, &destination)
             .await
@@ -300,7 +307,7 @@ async fn archive_roundtrip_retains_namespace_versions_and_evidence_and_rejects_t
 async fn repeated_lessons_merge_and_only_post_run_finalization_marks_proposed() {
     let repo = repository();
     let dir = tempfile::tempdir().unwrap();
-    let store = SelectedMemoryStore::local(dir.path().join("memory.db"));
+    let store = SelectedMemoryStore::local(dir.path().join("memory/v1.sqlite3"));
     let permission = MemoryPermission::ReadWrite;
     let mut session = MemorySession::new(store.clone()).with_workspace(repo.path());
     let proposal = json!({"operation":"propose_lesson","content":"Test the feature before claiming it works.","metadata":{"scope":"repository","kind":"procedure","sources":[{"path":"feature.rs"}]},"behavior_test":{"path":"behavior_test.rs"}});
@@ -358,7 +365,7 @@ async fn repository_scope_filters_before_ranking_and_telemetry() {
     let repo = repository();
     let dir = tempfile::tempdir().unwrap();
     let sources = WorkspaceSources::open(repo.path()).unwrap();
-    let store = SelectedMemoryStore::local(dir.path().join("memory.db"));
+    let store = SelectedMemoryStore::local(dir.path().join("memory/v1.sqlite3"));
     for index in 0..8 {
         let foreign = MemoryMetadata {
             scope: MemoryScope::Repository {

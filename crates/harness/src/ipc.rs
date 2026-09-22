@@ -29,8 +29,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: u32 = 6;
-pub const UNSUPPORTED_PROTOCOL_VERSION: &str = "unsupported operator protocol version";
+pub const PROTOCOL_VERSION: u32 = 7;
+pub const IPC_ERROR_VERSION: u32 = 1;
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub const HISTORY_PAGE_BYTES: usize = 768 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
@@ -51,6 +51,100 @@ impl Request {
             command,
         }
     }
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcErrorCode {
+    UnsupportedProtocol,
+    Capacity,
+    ShuttingDown,
+    Busy,
+    InvalidRequest,
+    NotFound,
+    RevisionConflict,
+    Integrity,
+    Internal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcErrorDisposition {
+    Reject,
+    RetrySameRequest,
+    Reconnect,
+    Reconcile,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IpcErrorEnvelope {
+    pub version: u32,
+    pub code: IpcErrorCode,
+    pub disposition: IpcErrorDisposition,
+    pub message: String,
+}
+
+impl IpcErrorEnvelope {
+    pub fn new(
+        code: IpcErrorCode,
+        disposition: IpcErrorDisposition,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            version: IPC_ERROR_VERSION,
+            code,
+            disposition,
+            message: message.into(),
+        }
+    }
+
+    fn from_host(error: crate::controller::HostError, disposition: IpcErrorDisposition) -> Self {
+        use crate::{controller::HostError, store::StoreError};
+        let code = match &error {
+            HostError::ShuttingDown => IpcErrorCode::ShuttingDown,
+            HostError::Busy => IpcErrorCode::Busy,
+            HostError::Invalid(_) | HostError::ContractPending(_) => IpcErrorCode::InvalidRequest,
+            HostError::Store(StoreError::Missing(_) | StoreError::MissingSession(_)) => {
+                IpcErrorCode::NotFound
+            }
+            HostError::Store(StoreError::Revision { .. }) => IpcErrorCode::RevisionConflict,
+            HostError::Store(StoreError::Integrity(_)) => IpcErrorCode::Integrity,
+            _ => IpcErrorCode::Internal,
+        };
+        Self::new(code, disposition, error.to_string())
+    }
+}
+
+fn command_may_commit(command: &Command) -> bool {
+    !matches!(
+        command,
+        Command::MonitorReport { .. }
+            | Command::EventSource { .. }
+            | Command::InspectEvent { .. }
+            | Command::InspectSessionReview { .. }
+            | Command::InspectTaskReview { .. }
+            | Command::InspectWorkspace { .. }
+            | Command::ReviewFile { .. }
+            | Command::ReviewFiles { .. }
+            | Command::ReviewCatalog { .. }
+            | Command::InspectTask { .. }
+            | Command::ReadArtifact { .. }
+            | Command::ArtifactFile { .. }
+            | Command::ArtifactTree { .. }
+            | Command::RecentInputs { .. }
+            | Command::Info
+            | Command::Sessions { .. }
+            | Command::History { .. }
+            | Command::HistoryText { .. }
+            | Command::Watch { .. }
+            | Command::Session { .. }
+            | Command::Task { .. }
+            | Command::Journal { .. }
+            | Command::Submission { .. }
+            | Command::Submissions { .. }
+            | Command::LegacySessions { .. }
+            | Command::LegacyPage { .. }
+    )
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -299,6 +393,7 @@ pub enum WatchFrame {
     },
     Ready {
         after: u64,
+        through: u64,
     },
 }
 
@@ -457,9 +552,7 @@ pub enum Response {
         requested: bool,
     },
     Journal(Vec<JournalRecord>),
-    Error {
-        message: String,
-    },
+    Error(IpcErrorEnvelope),
 }
 
 pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<()> {
@@ -577,14 +670,21 @@ async fn handle(
         return watch(&mut stream, host, after, session, shutdown).await;
     }
     let response = if request.version != PROTOCOL_VERSION {
-        Response::Error {
-            message: UNSUPPORTED_PROTOCOL_VERSION.into(),
-        }
+        Response::Error(IpcErrorEnvelope::new(
+            IpcErrorCode::UnsupportedProtocol,
+            IpcErrorDisposition::Reject,
+            "unsupported operator protocol version",
+        ))
     } else {
+        let disposition = if command_may_commit(&request.command) {
+            IpcErrorDisposition::Reconcile
+        } else {
+            IpcErrorDisposition::Reject
+        };
         execute(host, runs, request, shutdown)
             .await
-            .unwrap_or_else(|error| Response::Error {
-                message: error.to_string(),
+            .unwrap_or_else(|error| {
+                Response::Error(IpcErrorEnvelope::from_host(error, disposition))
             })
     };
     timeout(IO_TIMEOUT, write_frame(&mut stream, &response))
@@ -750,10 +850,11 @@ async fn execute(
             policy,
         } => {
             let Ok(_permit) = runs.try_acquire_owned() else {
-                return Ok(Response::Error {
-                    message: "host execution capacity is occupied; retry this request ID later"
-                        .into(),
-                });
+                return Ok(Response::Error(IpcErrorEnvelope::new(
+                    IpcErrorCode::Capacity,
+                    IpcErrorDisposition::RetrySameRequest,
+                    "host execution capacity is occupied; retry this request ID later",
+                )));
             };
             Response::TaskFinished(Box::new(
                 host.execute_input(
@@ -867,10 +968,11 @@ async fn execute(
             contract,
         } => {
             let Ok(_permit) = runs.try_acquire_owned() else {
-                return Ok(Response::Error {
-                    message: "host execution capacity is occupied; retry this request ID later"
-                        .into(),
-                });
+                return Ok(Response::Error(IpcErrorEnvelope::new(
+                    IpcErrorCode::Capacity,
+                    IpcErrorDisposition::RetrySameRequest,
+                    "host execution capacity is occupied; retry this request ID later",
+                )));
             };
             // The execution future belongs to the server handler, not to the client's socket lifetime.
             Response::TaskFinished(Box::new(
@@ -892,10 +994,11 @@ async fn execute(
             policy,
         } => {
             let Ok(_permit) = runs.try_acquire_owned() else {
-                return Ok(Response::Error {
-                    message: "host execution capacity is occupied; retry this request ID later"
-                        .into(),
-                });
+                return Ok(Response::Error(IpcErrorEnvelope::new(
+                    IpcErrorCode::Capacity,
+                    IpcErrorDisposition::RetrySameRequest,
+                    "host execution capacity is occupied; retry this request ID later",
+                )));
             };
             Response::TaskFinished(Box::new(
                 host.execute_request(
@@ -917,10 +1020,11 @@ async fn execute(
             reason,
         } => {
             let Ok(_permit) = runs.try_acquire_owned() else {
-                return Ok(Response::Error {
-                    message: "host execution capacity is occupied; retry this request ID later"
-                        .into(),
-                });
+                return Ok(Response::Error(IpcErrorEnvelope::new(
+                    IpcErrorCode::Capacity,
+                    IpcErrorDisposition::RetrySameRequest,
+                    "host execution capacity is occupied; retry this request ID later",
+                )));
             };
             Response::TaskFinished(Box::new(
                 host.resume_task_request(
@@ -950,7 +1054,12 @@ async fn watch(
     let mut warnings = host.subscribe_warnings();
     let mut sent_warnings = None;
     let mut unexpected = [0u8; 1];
-    send_watch(stream, &WatchFrame::Ready { after }).await?;
+    let through = host
+        .info()
+        .await
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .journal_sequence;
+    send_watch(stream, &WatchFrame::Ready { after, through }).await?;
     if let Some(session) = session {
         send_subagent_snapshot(stream, &host, session).await?;
     }
@@ -1158,11 +1267,9 @@ mod tests {
         let response: serde_json::Value = read_frame(&mut client).await.unwrap();
         stop.cancel();
         serving.await.unwrap().unwrap();
-        assert_eq!(
-            response["type"], "error",
-            "older clients cannot decode warning frames; reject before watch readiness"
-        );
-        assert_eq!(response["data"]["message"], UNSUPPORTED_PROTOCOL_VERSION);
+        assert_eq!(response["type"], "error");
+        assert_eq!(response["data"]["code"], "unsupported_protocol");
+        assert_eq!(response["data"]["disposition"], "reject");
     }
 
     fn diagnostic_host(root: &Path) -> Arc<Host> {

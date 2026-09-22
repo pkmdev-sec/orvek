@@ -1,4 +1,4 @@
-Install on macOS or Linux:
+Install on macOS:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf \

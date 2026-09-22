@@ -110,6 +110,8 @@ normal configured host admission. It submits only the original user intent and
 allocates fresh session, request, task and call IDs. It does not import old tool
 outputs, checks, certificates, or workspace contents as evidence. You must
 supply any required starting material through the new task's normal workflow.
+The bundle remains read-only. Re-execution records results in the new normal host session; it does
+not write outcomes back into the bundle or the original session.
 Unresolved jobs or effects block this path; reconcile them with the original
 host. This check sees only the pinned prefix, not later activity in the original
 host. New commands can have side effects and model calls can incur cost.

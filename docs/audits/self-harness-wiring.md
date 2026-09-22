@@ -90,13 +90,15 @@ The public artifact store remains active and is simpler: one immutable content-a
 
 ## Retained components
 
+This section records the audited revision. The later macOS distribution change removed the
+standalone Cloudflare/WASM example while retaining generic remote memory support.
+
 Every retained production subsystem has an active entry path:
 
 - `bin/orvek`: CLI, configuration, authentication, host bootstrap, headless mode, review service, TUI, and update flow.
 - `crates/harness`: IPC, durable sessions/tasks, inference, tools, workspaces, review, verification, submissions, delivery, imports, subagent orchestration, artifacts, and recovery.
 - `crates/executor`: sandbox process supervision and its binary entry point.
 - `crates/memory`: local and remote memory implementations used by CLI/TUI configuration.
-- `examples/orvek-memory-cloudflare`: the deployable remote-memory worker example.
 - `web/review`: browser review application, build/dev entry points, and test modules.
 - `evals/harbor_adapter` and `evals/snapcompact`: tracked benchmark adapters and analysis entry points.
 

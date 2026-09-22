@@ -8,13 +8,11 @@ on:
 env:
   BINARY_NAME: orvek
   CARGO_TERM_COLOR: always
-  REGISTRY: ghcr.io
-  REGISTRY_IMAGE: ghcr.io/pkmdev-sec/orvek
 
 jobs:
   validate:
     name: Validate Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
       actions: read
@@ -68,13 +66,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            archive_ext: tar.gz
-          - os: ubuntu-22.04-arm
-            target: aarch64-unknown-linux-gnu
-            archive_ext: tar.gz
-          - os: macos-latest
+          - os: macos-15
             target: aarch64-apple-darwin
             archive_ext: tar.gz
           - os: macos-15-intel
@@ -88,16 +80,25 @@ jobs:
       - name: Set reproducible build epoch
         shell: bash
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
-      - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - name: Install Rust 1.97.1 toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.97.1
         with:
+          toolchain: 1.97.1
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: build
           save-if: false
-      - name: Build with Cargo
-        run: cargo build --locked --release --package orvek --bin orvek --target ${{ matrix.target }}
+      - name: Build with Cargo twice and compare artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --package orvek --bin orvek --target "${{ matrix.target }}"
+          first="${RUNNER_TEMP}/orvek-first"
+          cp "target/${{ matrix.target }}/release/${BINARY_NAME}" "$first"
+          cargo clean --package orvek
+          cargo build --locked --release --package orvek --bin orvek --target "${{ matrix.target }}"
+          cmp "$first" "target/${{ matrix.target }}/release/${BINARY_NAME}"
         env:
           ORVEK_RELEASE_BUILD: "1"
       - name: Package binary
@@ -126,7 +127,7 @@ jobs:
   review_assets:
     name: Build Review Assets
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
     defaults:
@@ -176,7 +177,7 @@ jobs:
   sign:
     name: Sign Release Assets
     needs: [build, review_assets]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
     steps:
@@ -192,7 +193,7 @@ jobs:
       - name: Install rsign2
         uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
         with:
-          tool: rsign2
+          tool: rsign2@0.6.0
       - name: Sign binary artifacts
         shell: bash
         run: |
@@ -226,7 +227,7 @@ jobs:
             rsign verify "$archive" -P "$(tail -n 1 minisign.pub)" -x "${archive}.sig"
           done
 
-          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d ' ')" = "5"
+          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d ' ')" = "3"
       - name: Upload signed release bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -240,7 +241,7 @@ jobs:
   publish_crates:
     name: Publish Crates
     needs: sign
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
     steps:
@@ -253,8 +254,10 @@ jobs:
         with:
           name: signed-release
           path: ${{ runner.temp }}/signed-release
-      - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - name: Install Rust 1.97.1 toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.97.1
+        with:
+          toolchain: 1.97.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: build
@@ -324,7 +327,7 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: publish_crates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
       pull-requests: read
@@ -367,142 +370,3 @@ jobs:
             dist/minisign.pub
           fail_on_unmatched_files: true
 
-  container_build:
-    name: Package Image (${{ matrix.platform }})
-    needs: release
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            platform: linux/amd64
-            platform_pair: linux-amd64
-            target: x86_64-unknown-linux-gnu
-          - os: ubuntu-22.04-arm
-            platform: linux/arm64
-            platform_pair: linux-arm64
-            target: aarch64-unknown-linux-gnu
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Download signed release bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: signed-release
-          path: release-bundle
-      - name: Install rsign2
-        uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
-        with:
-          tool: rsign2
-      - name: Extract verified release binary
-        shell: bash
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          set -euo pipefail
-
-          package_name="${BINARY_NAME}-${TARGET}-${GITHUB_REF_NAME}"
-          archive="${package_name}.tar.gz"
-          mkdir -p "${GITHUB_WORKSPACE}/target/image-context" "${RUNNER_TEMP}/release-package"
-
-          cd release-bundle/dist
-          shasum -a 256 --check "${archive}.sha256"
-          rsign verify "$archive" -P "$(tail -n 1 minisign.pub)" -x "${archive}.sig"
-          tar -xzf "$archive" -C "${RUNNER_TEMP}/release-package" "${package_name}/${BINARY_NAME}"
-          install -m 0755 \
-            "${RUNNER_TEMP}/release-package/${package_name}/${BINARY_NAME}" \
-            "${GITHUB_WORKSPACE}/target/image-context/${BINARY_NAME}"
-      - name: Authenticate with container registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Package and push image by digest
-        id: build
-        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b # v7.3.0
-        env:
-          RELEASE_BINARY_CONTEXT: target/image-context
-          RELEASE_REVISION: ${{ github.sha }}
-          RELEASE_VERSION: ${{ github.ref_name }}
-        with:
-          source: .
-          files: docker/docker-bake.hcl
-          targets: release
-          set: |
-            release.platform=${{ matrix.platform }}
-            release.output=type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
-      - name: Verify image binary matches release binary
-        shell: bash
-        env:
-          DIGEST: ${{ fromJSON(steps.build.outputs.metadata)['release']['containerimage.digest'] }}
-          PLATFORM: ${{ matrix.platform }}
-        run: |
-          set -euo pipefail
-
-          container_id=$(docker create --platform "$PLATFORM" "${REGISTRY_IMAGE}@${DIGEST}" /orvek)
-          trap 'docker rm -f "$container_id" >/dev/null' EXIT
-          docker cp "${container_id}:/orvek" "${RUNNER_TEMP}/image-orvek"
-          cmp "${GITHUB_WORKSPACE}/target/image-context/orvek" "${RUNNER_TEMP}/image-orvek"
-      - name: Export image digest
-        shell: bash
-        env:
-          DIGEST: ${{ fromJSON(steps.build.outputs.metadata)['release']['containerimage.digest'] }}
-        run: |
-          mkdir -p "${RUNNER_TEMP}/digests"
-          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
-      - name: Upload image digest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: release-image-digest-${{ matrix.platform_pair }}
-          path: ${{ runner.temp }}/digests/*
-          if-no-files-found: error
-          retention-days: 1
-
-  container_publish:
-    name: Publish Release Image
-    needs: container_build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Download image digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          path: ${{ runner.temp }}/digests
-          pattern: release-image-digest-*
-          merge-multiple: true
-      - name: Authenticate with container registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Create and inspect release manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          version="${GITHUB_REF_NAME#v}"
-          images=()
-          for digest in "${RUNNER_TEMP}"/digests/*; do
-            images+=("${REGISTRY_IMAGE}@sha256:${digest##*/}")
-          done
-
-          test "${#images[@]}" = 2
-          docker buildx imagetools create \
-            --tag "${REGISTRY_IMAGE}:${version}" \
-            --tag "${REGISTRY_IMAGE}:latest" \
-            "${images[@]}"
-          docker buildx imagetools inspect "${REGISTRY_IMAGE}:${version}"

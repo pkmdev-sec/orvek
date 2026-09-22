@@ -41,7 +41,7 @@ when necessary. Routine context projection notices do not add transcript rows.
 | Composer | [composer.rs](../../bin/orvek/src/tui/components/composer.rs), `render_focused_with_selection` / `render_chrome`: thin rounded border; context and animated activity at top left; model/effort at top right; hints and workspace on the bottom edge. |
 | Text editing | [composer/layout.rs](../../bin/orvek/src/tui/components/composer/layout.rs): cached wrapping and grapheme-aware caret mapping. Keep multiline input, paste, attachments, selection, and current keys. |
 | Actions | [actions.rs](../../bin/orvek/src/tui/components/actions.rs), `ActionsMenu`: centered rounded 58 × 19 popup, clamped to the screen; search, compact rows, aliases, selection marker, and keyboard footer. |
-| Action behavior | `/` opens from an empty draft. Search is case-insensitive substring matching. Enter/Tab activate; Escape dismisses. Disabled actions remain visible with reasons and cannot execute. |
+| Action behavior | `/` opens from an empty draft. Search is case-insensitive substring matching against the current state-dependent label and aliases. An empty result shows `No matching actions`. Enter/Tab activate; Escape dismisses. Disabled actions remain visible with reasons and cannot execute. |
 | Execution | [transcript/tool.rs](../../bin/orvek/src/tui/components/transcript/tool.rs): compact semantic summaries; shell command, status, outcome, and duration on one line when possible. |
 | Expanded tools | [tool/shell.rs](../../bin/orvek/src/tui/components/transcript/tool/shell.rs): indented details, full command, process substeps, output, and counts. Keep selectable text and the existing expansion markers. |
 | Continuity | [transcript/mod.rs](../../bin/orvek/src/tui/components/transcript/mod.rs): entry-ID expansion state, anchored rows, focused-tool navigation, and Ctrl+O expansion. [transcript/model.rs](../../bin/orvek/src/tui/transcript/model.rs) links ordinary process polling to the original shell entry. |
@@ -94,11 +94,11 @@ and better metadata spacing. These are not approval for a new chat-bar design.
 ## Actions: improve the current menu
 
 Keep the current popup, search row, ordering, aliases, disabled explanations, and key behavior.
-Two source-backed improvements are worth testing before cosmetic work:
+Two source-backed improvements are implemented:
 
-- Show a small `No matching actions` message when filtering produces an empty list.
-- Match the displayed state-dependent label. `display_label` can show `Disable fast mode`, while
-  `Action::matches` currently searches the static `Enable fast mode` label.
+- An empty filtered list shows `No matching actions`.
+- Search matches the displayed state-dependent label. For example, active fast mode is searchable as
+  `Disable fast mode` instead of only as the static `Enable fast mode` label.
 
 After those fixes, compare modest changes to row alignment and selected-item contrast. Do not
 replace substring search with fuzzy search or add categories, previews, or new panels without a

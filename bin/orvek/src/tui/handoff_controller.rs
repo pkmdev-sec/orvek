@@ -11,7 +11,7 @@ use crate::{
 };
 use orvek_harness::{
     auxiliary::{AuxiliaryContext, AuxiliaryKind},
-    ipc::{Command, Request, Response, SessionView},
+    ipc::{Command, IpcErrorDisposition, Request, Response, SessionView},
     session::{SessionCursor, SessionId},
 };
 use tokio_util::sync::CancellationToken;
@@ -93,13 +93,12 @@ async fn create(client: &HostClient, parent: SessionCursor) -> Result<SessionVie
         id,
         parent: parent.clone(),
     });
-    let mut uncertain = false;
     let mut last = None;
     for _ in 0..3 {
-        match client
+        let result = client
             .call(&request, std::time::Duration::from_secs(5))
-            .await
-        {
+            .await;
+        match &result {
             Ok(Response::Session(view))
                 if view.id == id
                     && view.branch.fresh_context
@@ -107,13 +106,14 @@ async fn create(client: &HostClient, parent: SessionCursor) -> Result<SessionVie
                         cursor.session == parent.session && cursor.revision <= parent.revision
                     }) =>
             {
-                return Ok(*view);
+                return Ok((**view).clone());
             }
-            Err(error @ Error::HostRequest(_)) if !uncertain => return Err(error),
-            Err(error) => {
-                uncertain = true;
-                last = Some(error);
+            Err(Error::HostApplication(envelope))
+                if envelope.disposition == IpcErrorDisposition::Reject =>
+            {
+                return Err(result.unwrap_err());
             }
+            Err(_) => last = Some(result.unwrap_err()),
             Ok(_) => {
                 return Err(Error::HostRequest(
                     "handoff response identity mismatch".into(),

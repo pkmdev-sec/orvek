@@ -16,7 +16,7 @@ use crate::{
     Digest,
     runtime::{
         DockerExecutor, ExecutionEnvironment, ExecutionPolicy, ExecutionRequest, ExecutionResult,
-        ExecutionStatus, RuntimeError,
+        ExecutionStatus, LaunchState,
     },
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -269,16 +269,22 @@ impl WorkspaceTools {
             )
             .await;
         match result {
-            Ok(execution) => ToolRun {
-                result: execution_output(&context, execution.clone()),
-                execution: Some(execution),
-                diagnostic: None,
-            },
+            Ok(execution) => {
+                let diagnostic = match &execution.status {
+                    ExecutionStatus::Unknown(reason) => Some(reason.clone()),
+                    _ => None,
+                };
+                ToolRun {
+                    result: execution_output(&context, execution.clone()),
+                    execution: Some(execution),
+                    diagnostic,
+                }
+            }
             Err(error) => {
                 let diagnostic = Some(error.to_string());
-                let result = Err(match error {
-                    RuntimeError::Request(_) => ToolError::Execution,
-                    _ => ToolError::OutcomeUnknown,
+                let result = Err(match error.launch_state() {
+                    LaunchState::NotStarted | LaunchState::StartedKnown => ToolError::Execution,
+                    LaunchState::StartedUnknown => ToolError::OutcomeUnknown,
                 });
                 ToolRun {
                     result,
@@ -327,6 +333,9 @@ impl WorkspaceTools {
 }
 
 fn execution_output(context: &ToolContext, result: ExecutionResult) -> Result<Value, ToolError> {
+    if result.launch_state() == LaunchState::StartedUnknown {
+        return Err(ToolError::OutcomeUnknown);
+    }
     let (status, detail, detail_truncated) = match result.status {
         ExecutionStatus::Exited(code) => (json!({"kind":"exited","code":code}), None, false),
         ExecutionStatus::Cancelled => (json!({"kind":"cancelled"}), None, false),
@@ -337,7 +346,7 @@ fn execution_output(context: &ToolContext, result: ExecutionResult) -> Result<Va
             Some("executor reported a failure; inspect the protected host job record"),
             !message.is_empty(),
         ),
-        ExecutionStatus::Unknown(_) => return Err(ToolError::OutcomeUnknown),
+        ExecutionStatus::Unknown(_) => unreachable!("launch state classified unknown result"),
     };
     let limited = status["kind"] == "output_limit";
     envelope(

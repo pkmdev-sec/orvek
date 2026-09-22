@@ -6,6 +6,8 @@
 //! a baseline check; conflicts retain the guest result without replacing source.
 use orvek_executor::MAX_COMMAND_BYTES;
 
+pub const MAX_EXECUTION_TIMEOUT_MS: u64 = 3_600_000;
+
 mod transport;
 mod workspace;
 use crate::Digest;
@@ -28,6 +30,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 pub use workspace::RetainedGuest;
+pub(crate) use workspace::exchange;
 
 const WRITABLE_MOUNT_OPTIONS: &str = "rw,exec,nosuid,nodev";
 
@@ -76,6 +79,22 @@ pub struct ExecutionResult {
     pub image_id: String,
     pub container_name: String,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LaunchState {
+    NotStarted,
+    StartedKnown,
+    StartedUnknown,
+}
+
+impl ExecutionResult {
+    pub(crate) fn launch_state(&self) -> LaunchState {
+        match self.status {
+            ExecutionStatus::Unknown(_) => LaunchState::StartedUnknown,
+            _ => LaunchState::StartedKnown,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum RuntimeError {
     #[error("executor I/O: {0}")]
@@ -86,6 +105,11 @@ pub enum RuntimeError {
     Deadline,
     #[error("invalid execution request: {0}")]
     Request(&'static str),
+}
+impl RuntimeError {
+    pub(crate) fn launch_state(&self) -> LaunchState {
+        LaunchState::NotStarted
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -182,6 +206,8 @@ pub struct DockerExecutor {
     helper_digest: Digest,
     limits: ExecutionLimits,
     docker: Arc<Docker>,
+    #[cfg(test)]
+    fixture_status: Option<ExecutionStatus>,
 }
 impl DockerExecutor {
     pub async fn connect(image: &str) -> Result<Self, RuntimeError> {
@@ -264,6 +290,8 @@ impl DockerExecutor {
             helper_digest: Digest::of(&bytes),
             limits,
             docker,
+            #[cfg(test)]
+            fixture_status: None,
         })
     }
     pub fn image_id(&self) -> &str {
@@ -318,7 +346,7 @@ impl DockerExecutor {
         cancellation: CancellationToken,
     ) -> Result<ExecutionResult, RuntimeError> {
         if request.timeout_ms == 0
-            || request.timeout_ms > 3600000
+            || request.timeout_ms > MAX_EXECUTION_TIMEOUT_MS
             || request.output_bytes == 0
             || request.output_bytes > 16 * 1024 * 1024
             || request.command.is_empty()
@@ -340,6 +368,11 @@ impl DockerExecutor {
             container_name: name.clone(),
         };
         if cancellation.is_cancelled() {
+            return Ok(result);
+        }
+        #[cfg(test)]
+        if let Some(status) = &self.fixture_status {
+            result.status = status.clone();
             return Ok(result);
         }
         self.docker.verify_identity().await?;
@@ -1152,6 +1185,63 @@ impl DockerExecutor {
                 daemon_id: "fixture-daemon".into(),
                 config: tempfile::tempdir().unwrap(),
             }),
+            fixture_status: Some(ExecutionStatus::Unknown(
+                "fixture lost backend acknowledgement".into(),
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod launch_state_tests {
+    use super::*;
+
+    fn result(status: ExecutionStatus) -> ExecutionResult {
+        ExecutionResult {
+            job_id: Uuid::nil(),
+            status,
+            stdout: vec![],
+            stderr: vec![],
+            elapsed_ms: 0,
+            image_id: "fixture".into(),
+            container_name: "fixture".into(),
+        }
+    }
+
+    #[test]
+    fn runtime_errors_are_classified_as_not_started() {
+        assert_eq!(
+            RuntimeError::Request("invalid").launch_state(),
+            LaunchState::NotStarted
+        );
+        assert_eq!(
+            RuntimeError::Deadline.launch_state(),
+            LaunchState::NotStarted
+        );
+        assert_eq!(
+            RuntimeError::Setup("setup".into()).launch_state(),
+            LaunchState::NotStarted
+        );
+        assert_eq!(
+            RuntimeError::Io(io::Error::other("io")).launch_state(),
+            LaunchState::NotStarted
+        );
+    }
+
+    #[test]
+    fn only_unknown_execution_results_have_unknown_launch_state() {
+        assert_eq!(
+            result(ExecutionStatus::Unknown("unfenced".into())).launch_state(),
+            LaunchState::StartedUnknown
+        );
+        for status in [
+            ExecutionStatus::Exited(0),
+            ExecutionStatus::Cancelled,
+            ExecutionStatus::TimedOut,
+            ExecutionStatus::OutputLimit,
+            ExecutionStatus::Failed("failure".into()),
+        ] {
+            assert_eq!(result(status).launch_state(), LaunchState::StartedKnown);
         }
     }
 }

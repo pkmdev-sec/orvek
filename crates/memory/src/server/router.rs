@@ -8,7 +8,9 @@ use super::{
         ScanRequest, ScanResponse, SessionResponse, SyncRequest,
     },
 };
-use crate::{MemoryError, MemoryKey, MemoryLimits, MemoryRecord, MemoryStore};
+use crate::{
+    MemoryError, MemoryKey, MemoryLimits, MemoryRecord, MemoryStore, model::MemoryRecordScope,
+};
 use axum::{
     Json, Router,
     body::Body,
@@ -183,10 +185,10 @@ async fn scan<S: MemoryStore>(
     )
     .await
     {
-        Ok(scan) => Json(ScanResponse {
-            candidates: scan.candidates,
-        })
-        .into_response(),
+        Ok(scan) => match validate_candidates(scan.candidates) {
+            Ok(candidates) => Json(ScanResponse { candidates }).into_response(),
+            Err(error) => error.into_response(),
+        },
         Err(error) => error.into_response(),
     }
 }
@@ -230,7 +232,10 @@ async fn read<S: MemoryStore>(
     )
     .await
     {
-        Ok(memories) => Json(ReadResponse { memories }).into_response(),
+        Ok(memories) => match validate_outputs_any_remote(memories) {
+            Ok(memories) => Json(ReadResponse { memories }).into_response(),
+            Err(error) => error.into_response(),
+        },
         Err(error) => error.into_response(),
     }
 }
@@ -253,7 +258,10 @@ async fn list<S: MemoryStore>(
     )
     .await
     {
-        Ok(memories) => Json(ListResponse { memories }).into_response(),
+        Ok(memories) => match validate_outputs_any_remote(memories) {
+            Ok(memories) => Json(ListResponse { memories }).into_response(),
+            Err(error) => error.into_response(),
+        },
         Err(error) => error.into_response(),
     }
 }
@@ -283,6 +291,7 @@ async fn lessons<S: MemoryStore>(
     {
         return operation.error_response(ApiError::bad_request(), OperationCounts::default());
     }
+    let namespace = principal.namespace.clone();
     let store = (state.store_factory)(principal.namespace);
     match run_store(
         operation,
@@ -292,7 +301,10 @@ async fn lessons<S: MemoryStore>(
     )
     .await
     {
-        Ok(memories) => Json(ListResponse { memories }).into_response(),
+        Ok(memories) => match validate_outputs(memories, &namespace) {
+            Ok(memories) => Json(ListResponse { memories }).into_response(),
+            Err(error) => error.into_response(),
+        },
         Err(error) => error.into_response(),
     }
 }
@@ -330,6 +342,12 @@ async fn put<S: MemoryStore>(
             counts,
         );
     }
+    if request.metadata.validate().is_err()
+        || crate::secrets::contains_likely_secret(&request.content)
+        || request.metadata.reject_likely_secret().is_err()
+    {
+        return operation.error_response(ApiError::bad_request(), counts);
+    }
     if request.replacement.as_ref().is_some_and(|key| {
         !valid_key(key) || key.namespace.as_deref() != Some(principal.namespace.as_str())
     }) {
@@ -338,6 +356,7 @@ async fn put<S: MemoryStore>(
             counts,
         );
     }
+    let namespace = principal.namespace.clone();
     let store = (state.store_factory)(principal.namespace);
     match run_store(
         operation,
@@ -347,7 +366,10 @@ async fn put<S: MemoryStore>(
     )
     .await
     {
-        Ok(memory) => Json(PutResponse { memory }).into_response(),
+        Ok(memory) => match validate_output(memory, &namespace) {
+            Ok(Some(memory)) => Json(PutResponse { memory }).into_response(),
+            Ok(None) | Err(_) => ApiError::internal().into_response(),
+        },
         Err(error) => error.into_response(),
     }
 }
@@ -413,7 +435,7 @@ async fn sync<S: MemoryStore>(
         Err(error) => return operation.error_response(error, OperationCounts::default()),
     };
     let counts = OperationCounts::input(request.memories.len());
-    if !valid_snapshot(&request.memories) {
+    if validate_snapshot(&request.memories).is_err() {
         return operation.error_response(ApiError::bad_request(), counts);
     }
     let store = (state.store_factory)(principal.namespace);
@@ -462,15 +484,14 @@ async fn export<S: MemoryStore>(
     {
         return operation.error_response(ApiError::bad_request(), counts);
     }
+    let namespaces = request.namespaces;
+    let cursor = request.cursor;
+    let limit = request.limit;
     let store = (state.store_factory)(principal.namespace);
     match run_store(
         operation,
         counts,
-        store.export_page(
-            request.namespaces.as_deref(),
-            request.cursor.as_ref(),
-            request.limit,
-        ),
+        export_visible_page(store, namespaces, cursor, limit),
         |(memories, _)| OperationCounts::records(memories.len()),
     )
     .await
@@ -481,6 +502,82 @@ async fn export<S: MemoryStore>(
         })
         .into_response(),
         Err(error) => error.into_response(),
+    }
+}
+
+async fn export_visible_page<S: MemoryStore>(
+    store: S,
+    namespaces: Option<Vec<String>>,
+    cursor: Option<protocol::ExportCursor>,
+    limit: usize,
+) -> Result<(Vec<MemoryRecord>, Option<protocol::ExportCursor>), MemoryError> {
+    let mut request_cursor = cursor;
+    let mut visible = Vec::new();
+    let mut raw_records = 0usize;
+    let mut raw_content_bytes = 0usize;
+    loop {
+        let remaining = limit - visible.len();
+        let (page, next_cursor) = store
+            .export_page(namespaces.as_deref(), request_cursor.as_ref(), remaining)
+            .await?;
+        if page.len() > remaining || (page.is_empty() && next_cursor.is_some()) {
+            return Err(MemoryError::InvalidPagination);
+        }
+        raw_records = raw_records
+            .checked_add(page.len())
+            .ok_or(MemoryError::InvalidPagination)?;
+        if raw_records > MemoryLimits::PRODUCTION.records {
+            return Err(MemoryError::InvalidPagination);
+        }
+        let mut previous = request_cursor.clone();
+        for memory in page {
+            memory
+                .validate(MemoryRecordScope::AnyRemote, &MemoryLimits::PRODUCTION)
+                .map_err(|_| MemoryError::InvalidPagination)?;
+            let namespace = memory
+                .key
+                .namespace
+                .as_deref()
+                .ok_or(MemoryError::InvalidPagination)?;
+            let selected = namespaces
+                .as_ref()
+                .is_none_or(|selected| selected.iter().any(|candidate| candidate == namespace));
+            let ordered = previous.as_ref().is_none_or(|previous| {
+                (namespace, memory.key.id) > (previous.namespace.as_str(), previous.id)
+            });
+            if !selected || !ordered {
+                return Err(MemoryError::InvalidPagination);
+            }
+            raw_content_bytes = raw_content_bytes
+                .checked_add(memory.content.len())
+                .ok_or(MemoryError::InvalidPagination)?;
+            if raw_content_bytes > MemoryLimits::PRODUCTION.total_content_bytes {
+                return Err(MemoryError::InvalidPagination);
+            }
+            previous = Some(protocol::ExportCursor {
+                namespace: namespace.to_owned(),
+                id: memory.key.id,
+            });
+            if memory.metadata.reject_likely_secret().is_ok()
+                && !crate::secrets::contains_likely_secret(&memory.content)
+            {
+                visible.push(memory);
+            }
+        }
+        let Some(next_cursor) = next_cursor else {
+            return Ok((visible, None));
+        };
+        if previous.as_ref() != Some(&next_cursor) {
+            return Err(MemoryError::InvalidPagination);
+        }
+        let last_visible_is_cursor = visible.last().is_some_and(|memory| {
+            memory.key.namespace.as_deref() == Some(next_cursor.namespace.as_str())
+                && memory.key.id == next_cursor.id
+        });
+        if last_visible_is_cursor {
+            return Ok((visible, Some(next_cursor)));
+        }
+        request_cursor = Some(next_cursor);
     }
 }
 
@@ -531,29 +628,98 @@ fn authenticate<S>(state: &ServerState<S>, headers: &HeaderMap) -> Result<Princi
 fn valid_key(key: &MemoryKey) -> bool {
     key.id > 0
         && key.version > 0
+        && i64::try_from(key.version).is_ok()
         && key
             .namespace
             .as_deref()
             .is_none_or(protocol::is_valid_namespace)
 }
 
-fn valid_snapshot(memories: &[MemoryRecord]) -> bool {
+fn validate_snapshot(memories: &[MemoryRecord]) -> Result<(), MemoryError> {
     let mut ids = HashSet::with_capacity(memories.len());
-    memories.len() <= MemoryLimits::PRODUCTION.records
-        && memories.iter().all(|memory| {
-            memory.key.is_local()
-                && valid_key(&memory.key)
-                && ids.insert(memory.key.id)
-                && !memory.content.trim().is_empty()
-                && memory.content.len() <= MemoryLimits::PRODUCTION.content_bytes
-                && memory.created_at_ms >= 0
-                && memory.updated_at_ms >= memory.created_at_ms
-        })
-        && memories
-            .iter()
-            .map(|memory| memory.content.len())
-            .try_fold(0usize, usize::checked_add)
-            .is_some_and(|bytes| bytes <= MemoryLimits::PRODUCTION.total_content_bytes)
+    if memories.len() > MemoryLimits::PRODUCTION.records {
+        return Err(MemoryError::InvalidMetadata);
+    }
+    let bytes = memories.iter().try_fold(0usize, |bytes, memory| {
+        memory.validate(MemoryRecordScope::Local, &MemoryLimits::PRODUCTION)?;
+        if !ids.insert(memory.key.id)
+            || crate::secrets::contains_likely_secret(&memory.content)
+            || memory.metadata.reject_likely_secret().is_err()
+        {
+            return Err(MemoryError::InvalidMetadata);
+        }
+        bytes
+            .checked_add(memory.content.len())
+            .ok_or(MemoryError::InvalidMetadata)
+    })?;
+    if bytes > MemoryLimits::PRODUCTION.total_content_bytes {
+        return Err(MemoryError::InvalidMetadata);
+    }
+    Ok(())
+}
+
+fn validate_output(
+    memory: MemoryRecord,
+    namespace: &str,
+) -> Result<Option<MemoryRecord>, ApiError> {
+    memory
+        .validate(
+            MemoryRecordScope::Remote(namespace),
+            &MemoryLimits::PRODUCTION,
+        )
+        .map_err(|_| ApiError::internal())?;
+    Ok((memory.metadata.reject_likely_secret().is_ok()
+        && !crate::secrets::contains_likely_secret(&memory.content))
+    .then_some(memory))
+}
+
+fn validate_outputs(
+    memories: Vec<MemoryRecord>,
+    namespace: &str,
+) -> Result<Vec<MemoryRecord>, ApiError> {
+    memories
+        .into_iter()
+        .map(|memory| validate_output(memory, namespace))
+        .collect::<Result<Vec<_>, _>>()
+        .map(|records| records.into_iter().flatten().collect())
+}
+
+fn validate_outputs_any_remote(memories: Vec<MemoryRecord>) -> Result<Vec<MemoryRecord>, ApiError> {
+    let mut output = Vec::new();
+    for memory in memories {
+        memory
+            .validate(MemoryRecordScope::AnyRemote, &MemoryLimits::PRODUCTION)
+            .map_err(|_| ApiError::internal())?;
+        if memory.metadata.reject_likely_secret().is_ok()
+            && !crate::secrets::contains_likely_secret(&memory.content)
+        {
+            output.push(memory);
+        }
+    }
+    Ok(output)
+}
+
+fn validate_candidates(
+    candidates: Vec<crate::MemoryCandidate>,
+) -> Result<Vec<crate::MemoryCandidate>, ApiError> {
+    let mut output = Vec::new();
+    for candidate in candidates {
+        if candidate.metadata.validate().is_err()
+            || candidate.key.namespace.is_none()
+            || !valid_key(&candidate.key)
+            || candidate.preview.len() > 64
+            || !candidate.score.is_finite()
+            || candidate.score < 0.0
+        {
+            return Err(ApiError::internal());
+        }
+        if candidate.metadata.reject_likely_secret().is_ok()
+            && !crate::secrets::contains_likely_secret(&candidate.preview)
+        {
+            output.push(candidate);
+        }
+    }
+    Ok(output)
 }
 
 #[derive(Clone, Copy, Default)]

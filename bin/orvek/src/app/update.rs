@@ -141,8 +141,6 @@ pub(crate) enum UpdateStatus {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SupportedTarget {
-    LinuxX86_64,
-    LinuxAarch64,
     MacosX86_64,
     MacosAarch64,
 }
@@ -154,8 +152,6 @@ impl SupportedTarget {
 
     fn from_triple(target: &str) -> Result<Self, UpdateError> {
         match target {
-            "x86_64-unknown-linux-gnu" => Ok(Self::LinuxX86_64),
-            "aarch64-unknown-linux-gnu" => Ok(Self::LinuxAarch64),
             "x86_64-apple-darwin" => Ok(Self::MacosX86_64),
             "aarch64-apple-darwin" => Ok(Self::MacosAarch64),
             _ => Err(UpdateError::UnsupportedTarget {
@@ -166,8 +162,6 @@ impl SupportedTarget {
 
     const fn triple(self) -> &'static str {
         match self {
-            Self::LinuxX86_64 => "x86_64-unknown-linux-gnu",
-            Self::LinuxAarch64 => "aarch64-unknown-linux-gnu",
             Self::MacosX86_64 => "x86_64-apple-darwin",
             Self::MacosAarch64 => "aarch64-apple-darwin",
         }
@@ -924,16 +918,11 @@ mod tests {
 
     #[test]
     fn supports_only_published_target_triples() {
-        for target in [
-            "x86_64-unknown-linux-gnu",
-            "aarch64-unknown-linux-gnu",
-            "x86_64-apple-darwin",
-            "aarch64-apple-darwin",
-        ] {
+        for target in ["x86_64-apple-darwin", "aarch64-apple-darwin"] {
             assert!(SupportedTarget::from_triple(target).is_ok());
         }
         assert!(matches!(
-            SupportedTarget::from_triple("x86_64-pc-windows-msvc"),
+            SupportedTarget::from_triple("x86_64-unknown-linux-gnu"),
             Err(UpdateError::UnsupportedTarget { .. })
         ));
     }
@@ -1043,24 +1032,24 @@ mod tests {
     #[test]
     fn release_archive_extracts_only_expected_binary() {
         let valid_archive = archive(&[
-            ("orvek-x86_64-unknown-linux-gnu-v1.0.0/README.md", b"readme"),
-            ("orvek-x86_64-unknown-linux-gnu-v1.0.0/orvek", b"binary"),
+            ("orvek-x86_64-apple-darwin-v1.0.0/README.md", b"readme"),
+            ("orvek-x86_64-apple-darwin-v1.0.0/orvek", b"binary"),
         ]);
         let binary = extract_binary(
             &valid_archive,
             "orvek.tar.gz",
-            SupportedTarget::LinuxX86_64,
+            SupportedTarget::MacosX86_64,
             &Version::new(1, 0, 0),
         )
         .unwrap();
         assert_eq!(std::fs::read(binary.path).unwrap(), b"binary");
 
-        let wrong_root = archive(&[("orvek-aarch64-unknown-linux-gnu-v1.0.0/orvek", b"bad")]);
+        let wrong_root = archive(&[("orvek-aarch64-apple-darwin-v1.0.0/orvek", b"bad")]);
         assert!(matches!(
             extract_binary(
                 &wrong_root,
                 "orvek.tar.gz",
-                SupportedTarget::LinuxX86_64,
+                SupportedTarget::MacosX86_64,
                 &Version::new(1, 0, 0)
             ),
             Err(UpdateError::UnexpectedArchivePath { .. })

@@ -169,23 +169,7 @@ impl Store {
         receipt: ModelCallReceipt,
         started_ms: u64,
     ) -> Result<TaskState, StoreError> {
-        self.account_ordinary_classification_record(
-            task, request, kind, call, receipt, started_ms, true,
-        )
-    }
-
-    pub(crate) fn account_ordinary_classification_without_budget_limit(
-        &mut self,
-        task: TaskId,
-        request: Uuid,
-        kind: OrdinaryKind,
-        call: Uuid,
-        receipt: ModelCallReceipt,
-        started_ms: u64,
-    ) -> Result<TaskState, StoreError> {
-        self.account_ordinary_classification_record(
-            task, request, kind, call, receipt, started_ms, false,
-        )
+        self.account_ordinary_classification_record(task, request, kind, call, receipt, started_ms)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -197,7 +181,6 @@ impl Store {
         call: Uuid,
         receipt: ModelCallReceipt,
         started_ms: u64,
-        enforce_budget: bool,
     ) -> Result<TaskState, StoreError> {
         if kind != OrdinaryKind::Action || call == request || started_ms == 0 {
             return Err(StoreError::Invalid(
@@ -205,11 +188,7 @@ impl Store {
             ));
         }
         let operation = Uuid::new_v5(&request, b"ordinary-classifier");
-        if enforce_budget {
-            self.reserve_model_call(task, operation)?;
-        } else {
-            self.reserve_model_call_without_budget_limit(task, operation)?;
-        }
+        self.reserve_model_call(task, operation)?;
         self.record_model_call(task, operation, receipt)
     }
 

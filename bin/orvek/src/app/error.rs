@@ -35,6 +35,8 @@ pub(crate) enum Error {
     ExternalEditor(#[from] ExternalEditorError),
     #[error("host request: {0}")]
     HostRequest(String),
+    #[error("host application: {0:?}")]
+    HostApplication(orvek_harness::ipc::IpcErrorEnvelope),
     #[error(transparent)]
     Inference(#[from] FailureKind),
     #[error(transparent)]

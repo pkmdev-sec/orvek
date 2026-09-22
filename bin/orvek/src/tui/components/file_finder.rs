@@ -6,17 +6,22 @@ use super::{
     node::{Component, ComponentUpdate, RenderRequest},
     typography::{ChoiceStyle, SearchField},
 };
-use crate::tui::theme::Theme;
+use crate::tui::{file_index::FileIndex, theme::Theme};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEventKind};
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    widgets::ListItem,
+    style::Style,
+    widgets::{ListItem, Paragraph},
 };
-use std::{cmp::Reverse, fs, path::Path};
+use std::{
+    cmp::{Ordering, Reverse},
+    collections::BinaryHeap,
+    sync::Arc,
+};
 
 const KEY_BINDINGS: [(&str, &str); 3] = [("↑↓", "move"), ("enter/tab", "insert"), ("esc", "close")];
-const SKIPPED_DIRECTORIES: [&str; 4] = [".git", ".jj", "node_modules", "target"];
+const MAX_MATCHES: usize = 256;
 
 pub(super) enum FileFinderEvent {
     Terminal(Event),
@@ -30,22 +35,59 @@ pub(super) enum FileFinderEffect {
 }
 
 pub(super) struct FileFinder {
-    paths: Vec<String>,
+    index: Option<Arc<FileIndex>>,
+    error: Option<String>,
     query: String,
     choice: ChoicePicker,
     matches: Vec<usize>,
+    matches_truncated: bool,
 }
 
 impl FileFinder {
-    pub(super) fn new(workspace: &Path) -> Self {
-        let paths = discover_paths(workspace);
-        let matches = (0..paths.len()).collect::<Vec<_>>();
+    pub(super) fn loading() -> Self {
         Self {
-            paths,
+            index: None,
+            error: None,
             query: String::new(),
-            choice: ChoicePicker::new(matches.len(), 1),
-            matches,
+            choice: ChoicePicker::new(0, 1),
+            matches: Vec::new(),
+            matches_truncated: false,
         }
+    }
+
+    pub(super) fn with_index(index: Arc<FileIndex>) -> Self {
+        let mut finder = Self::loading();
+        finder.set_index(index);
+        finder
+    }
+
+    #[cfg(test)]
+    fn new(workspace: &std::path::Path) -> Self {
+        Self::with_index(Arc::new(crate::tui::file_index::discover_file_index(
+            workspace,
+        )))
+    }
+
+    pub(super) fn set_index(&mut self, index: Arc<FileIndex>) {
+        self.index = Some(index);
+        self.error = None;
+        self.refresh_matches();
+    }
+
+    pub(super) fn set_error(&mut self, error: String) {
+        self.index = None;
+        self.error = Some(error);
+        self.refresh_matches();
+    }
+
+    pub(super) fn set_loading(&mut self) {
+        self.index = None;
+        self.error = None;
+        self.refresh_matches();
+    }
+
+    pub(super) const fn can_retry(&self) -> bool {
+        self.error.is_some()
     }
 
     fn select_bounded(&mut self, delta: isize) -> ComponentUpdate<FileFinderEffect> {
@@ -97,22 +139,61 @@ impl FileFinder {
         let Some(index) = self.matches.get(self.choice.selected_or_zero()) else {
             return ComponentUpdate::none();
         };
+        let Some(path) = self
+            .index
+            .as_ref()
+            .and_then(|file_index| file_index.entries().get(*index))
+            .map(|entry| entry.path().to_owned())
+        else {
+            return ComponentUpdate::none();
+        };
         ComponentUpdate {
-            effects: vec![FileFinderEffect::Insert(self.paths[*index].clone())],
+            effects: vec![FileFinderEffect::Insert(path)],
             render: RenderRequest::Immediate,
         }
     }
 
     fn refresh_matches(&mut self) {
+        let Some(index) = &self.index else {
+            self.matches.clear();
+            self.matches_truncated = false;
+            self.choice.reset(0);
+            return;
+        };
+        if self.query.is_empty() {
+            self.matches = (0..index.entries().len().min(MAX_MATCHES)).collect();
+            self.matches_truncated = index.entries().len() > MAX_MATCHES;
+            self.choice.reset(self.matches.len());
+            return;
+        }
+
         let query = self.query.to_ascii_lowercase();
-        let mut matches = self
-            .paths
-            .iter()
-            .enumerate()
-            .filter_map(|(index, path)| fuzzy_score(path, &query).map(|score| (index, score)))
+        let mut best = BinaryHeap::with_capacity(MAX_MATCHES + 1);
+        let mut match_count = 0_usize;
+        for (entry_index, entry) in index.entries().iter().enumerate() {
+            let Some(score) = fuzzy_score_normalized(entry.search_text(), &query) else {
+                continue;
+            };
+            match_count += 1;
+            let ranked = (Reverse(score), entry_index);
+            if best.len() < MAX_MATCHES {
+                best.push(ranked);
+            } else if best.peek().is_some_and(|worst| ranked < *worst) {
+                best.pop();
+                best.push(ranked);
+            }
+        }
+
+        let mut matches = best
+            .into_iter()
+            .map(|(Reverse(score), entry_index)| (entry_index, score))
             .collect::<Vec<_>>();
-        matches.sort_by_key(|(index, score)| (Reverse(*score), self.paths[*index].as_str()));
-        self.matches = matches.into_iter().map(|(index, _)| index).collect();
+        matches.sort_unstable_by(|left, right| compare_matches(index, left, right));
+        self.matches = matches
+            .into_iter()
+            .map(|(entry_index, _)| entry_index)
+            .collect();
+        self.matches_truncated = match_count > MAX_MATCHES;
         self.choice.reset(self.matches.len());
     }
 
@@ -124,11 +205,39 @@ impl FileFinder {
         if area.is_empty() {
             return;
         }
+        if let Some(error) = &self.error {
+            frame.render_widget(
+                Paragraph::new(format!(
+                    "  Could not index workspace paths.\n\n  {error}\n\n  Press r to retry or Esc to close."
+                ))
+                .style(Style::default().fg(theme.muted())),
+                area,
+            );
+            return;
+        }
+        let Some(index) = &self.index else {
+            frame.render_widget(
+                Paragraph::new("  Indexing workspace…").style(Style::default().fg(theme.muted())),
+                area,
+            );
+            return;
+        };
+        if self.matches.is_empty() {
+            frame.render_widget(
+                Paragraph::new("  No matching paths").style(Style::default().fg(theme.muted())),
+                area,
+            );
+            return;
+        }
 
-        let items = self.matches.iter().enumerate().map(|(position, index)| {
-            let typography = ChoiceStyle::new(self.choice.is_selected(position), true);
-            ListItem::new(self.paths[*index].as_str()).style(typography.primary(theme))
-        });
+        let items = self
+            .matches
+            .iter()
+            .enumerate()
+            .map(|(position, entry_index)| {
+                let typography = ChoiceStyle::new(self.choice.is_selected(position), true);
+                ListItem::new(index.entries()[*entry_index].path()).style(typography.primary(theme))
+            });
         self.choice
             .render(frame, area, items.collect(), true, theme);
     }
@@ -161,8 +270,18 @@ impl Component for FileFinder {
             return;
         }
 
-        let layout =
-            Dialog::new("Files and directories", 72, 14, &KEY_BINDINGS).render(frame, area, theme);
+        let title = match (
+            self.index
+                .as_ref()
+                .is_some_and(|index| index.is_truncated()),
+            self.matches_truncated,
+        ) {
+            (true, true) => "Files and directories (index/results capped)",
+            (true, false) => "Files and directories (index capped)",
+            (false, true) => "Files and directories (best 256)",
+            (false, false) => "Files and directories",
+        };
+        let layout = Dialog::new(title, 72, 14, &KEY_BINDINGS).render(frame, area, theme);
         if layout.body.is_empty() {
             return;
         }
@@ -181,66 +300,23 @@ impl Component for FileFinder {
     }
 }
 
-fn discover_paths(workspace: &Path) -> Vec<String> {
-    let mut paths = Vec::new();
-    visit_directory(workspace, workspace, &mut paths);
-    paths.sort_unstable();
-    paths
-}
-
-fn visit_directory(workspace: &Path, directory: &Path, paths: &mut Vec<String>) {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return;
-    };
-    let mut entries = entries.flatten().collect::<Vec<_>>();
-    entries.sort_unstable_by_key(|entry| entry.file_name());
-
-    for entry in entries {
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            if is_skipped_directory(&path) {
-                continue;
-            }
-
-            if let Some(relative) = relative_path(workspace, &path) {
-                paths.push(format!("{relative}/"));
-            }
-            visit_directory(workspace, &path, paths);
-        } else if file_type.is_file()
-            && let Some(relative) = relative_path(workspace, &path)
-        {
-            paths.push(relative);
-        }
-    }
-}
-
-fn relative_path(workspace: &Path, path: &Path) -> Option<String> {
-    let relative = path
-        .strip_prefix(workspace)
-        .ok()?
-        .to_string_lossy()
-        .replace(std::path::MAIN_SEPARATOR, "/");
-    if relative.chars().any(char::is_control) {
-        return None;
-    }
-    Some(relative)
-}
-
-fn is_skipped_directory(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| SKIPPED_DIRECTORIES.contains(&name))
+fn compare_matches(index: &FileIndex, left: &(usize, usize), right: &(usize, usize)) -> Ordering {
+    Reverse(left.1).cmp(&Reverse(right.1)).then_with(|| {
+        index.entries()[left.0]
+            .path()
+            .cmp(index.entries()[right.0].path())
+    })
 }
 
 pub(super) fn fuzzy_score(path: &str, query: &str) -> Option<usize> {
+    fuzzy_score_normalized(&path.to_ascii_lowercase(), query)
+}
+
+fn fuzzy_score_normalized(path: &str, query: &str) -> Option<usize> {
     if query.is_empty() {
         return Some(0);
     }
 
-    let path = path.to_ascii_lowercase();
     let mut query = query.chars();
     let mut expected = query.next()?;
     let mut score = 0_usize;
@@ -271,12 +347,12 @@ pub(super) fn fuzzy_score(path: &str, query: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Component, FileFinder, FileFinderEffect, FileFinderEvent, discover_paths, fuzzy_score,
+        Component, FileFinder, FileFinderEffect, FileFinderEvent, MAX_MATCHES, fuzzy_score,
     };
-    use crate::tui::theme::Theme;
+    use crate::tui::{file_index::FileIndex, theme::Theme};
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{Terminal, backend::TestBackend};
-    use std::fs;
+    use std::{fs, sync::Arc};
 
     fn key(code: KeyCode) -> FileFinderEvent {
         FileFinderEvent::Terminal(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)))
@@ -294,22 +370,6 @@ mod tests {
     }
 
     #[test]
-    fn discovers_relative_workspace_paths_and_skips_build_directories() {
-        let workspace = workspace();
-
-        assert_eq!(
-            discover_paths(workspace.path()),
-            [
-                "README.md",
-                "src/",
-                "src/components/",
-                "src/components/file_finder.rs",
-                "src/lib.rs"
-            ]
-        );
-    }
-
-    #[test]
     fn fuzzy_search_matches_non_contiguous_characters_and_ranks_tight_matches_first() {
         let workspace = workspace();
         let mut finder = FileFinder::new(workspace.path());
@@ -317,11 +377,34 @@ mod tests {
 
         assert_eq!(finder.matches.len(), 1);
         assert_eq!(
-            finder.paths[finder.matches[0]],
+            finder.index.as_ref().unwrap().entries()[finder.matches[0]].path(),
             "src/components/file_finder.rs"
         );
         assert!(fuzzy_score("src/file_finder.rs", "ff").is_some());
         assert!(fuzzy_score("README.md", "ff").is_none());
+    }
+
+    #[test]
+    fn broad_search_bounds_ranked_results_and_discloses_the_cap() {
+        let paths = (0..300)
+            .map(|index| format!("matching-file-{index:03}.rs"))
+            .collect();
+        let mut finder = FileFinder::with_index(Arc::new(FileIndex::from_paths(paths, false)));
+        finder.update(FileFinderEvent::Query("match".to_owned()));
+
+        assert_eq!(finder.matches.len(), MAX_MATCHES);
+        assert!(finder.matches_truncated);
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        terminal
+            .draw(|frame| finder.render(frame, frame.area(), &Theme::default()))
+            .unwrap();
+        assert!(terminal.backend().buffer().content().chunks(80).any(|row| {
+            row.iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+                .contains("Files and directories (best 256)")
+        }));
     }
 
     #[test]
@@ -379,7 +462,10 @@ mod tests {
         finder.update(FileFinderEvent::Query("read".to_owned()));
 
         assert_eq!(finder.matches.len(), 1);
-        assert_eq!(finder.paths[finder.matches[0]], "README.md");
+        assert_eq!(
+            finder.index.as_ref().unwrap().entries()[finder.matches[0]].path(),
+            "README.md"
+        );
         assert_eq!(
             finder.update(key(KeyCode::Esc)).effects,
             [FileFinderEffect::Dismiss]

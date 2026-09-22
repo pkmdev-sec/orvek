@@ -42,6 +42,14 @@ impl MemoryKey {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum MemoryRecordScope<'a> {
+    Local,
+    Remote(&'a str),
+    AnyRemote,
+    Portable,
+}
+
 /// Complete durable state of a memory.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MemoryRecord {
@@ -66,6 +74,58 @@ pub struct MemoryRecord {
     pub use_count: u64,
     /// Expiry time for an unused probationary record, if it remains on probation.
     pub probation_until_ms: Option<i64>,
+}
+
+impl MemoryRecord {
+    pub(crate) fn validate(
+        &self,
+        scope: MemoryRecordScope<'_>,
+        limits: &MemoryLimits,
+    ) -> Result<(), crate::MemoryError> {
+        let valid_namespace = self
+            .key
+            .namespace
+            .as_deref()
+            .is_none_or(crate::server::protocol::is_valid_namespace);
+        let scope_matches = match scope {
+            MemoryRecordScope::Local => self.key.namespace.is_none(),
+            MemoryRecordScope::Remote(expected) => self.key.namespace.as_deref() == Some(expected),
+            MemoryRecordScope::AnyRemote => self.key.namespace.is_some(),
+            MemoryRecordScope::Portable => true,
+        };
+        let scanned_coherent = (self.scan_count == 0) == self.last_scanned_at_ms.is_none();
+        let used_coherent = (self.use_count == 0) == self.last_used_at_ms.is_none();
+        let probation_coherent = self.probation_until_ms.is_none() || self.use_count == 0;
+        let times_valid = self.created_at_ms >= 0
+            && self.updated_at_ms >= self.created_at_ms
+            && self
+                .last_scanned_at_ms
+                .is_none_or(|value| value >= self.updated_at_ms)
+            && self
+                .last_used_at_ms
+                .is_none_or(|value| value >= self.updated_at_ms)
+            && self
+                .probation_until_ms
+                .is_none_or(|value| value >= self.updated_at_ms);
+        if self.key.id <= 0
+            || self.key.version == 0
+            || i64::try_from(self.key.version).is_err()
+            || i64::try_from(self.scan_count).is_err()
+            || i64::try_from(self.use_count).is_err()
+            || !valid_namespace
+            || !scope_matches
+            || self.content.trim().is_empty()
+            || self.content.len() > limits.content_bytes
+            || !times_valid
+            || !scanned_coherent
+            || !used_coherent
+            || !probation_coherent
+            || self.metadata.validate().is_err()
+        {
+            return Err(crate::MemoryError::InvalidMetadata);
+        }
+        Ok(())
+    }
 }
 
 /// Ranked, bounded preview returned by a memory scan.

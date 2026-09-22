@@ -128,7 +128,7 @@ async fn delayed_callback_cannot_finalize_an_unsettled_new_run() {
     let d = tempfile::tempdir().unwrap();
     let r = repo();
     let s = WorkspaceSources::open(r.path()).unwrap();
-    let store = LocalMemoryStore::new(d.path().join("db"));
+    let store = LocalMemoryStore::new(d.path().join("memory/v1.sqlite3"));
     propose_lesson(&store, "test before delivery", lesson(&s, "A"))
         .await
         .unwrap();
@@ -156,7 +156,7 @@ async fn repeated_changed_evidence_refreshes_active_citations() {
     let d = tempfile::tempdir().unwrap();
     let r = repo();
     let s = WorkspaceSources::open(r.path()).unwrap();
-    let store = LocalMemoryStore::new(d.path().join("db"));
+    let store = LocalMemoryStore::new(d.path().join("memory/v1.sqlite3"));
     propose_lesson(&store, "test before delivery", lesson(&s, "A"))
         .await
         .unwrap();
@@ -184,7 +184,7 @@ async fn repeated_changed_evidence_refreshes_active_citations() {
 #[tokio::test]
 async fn read_hidden_scope_does_not_mutate_telemetry() {
     let d = tempfile::tempdir().unwrap();
-    let local = LocalMemoryStore::new(d.path().join("db"));
+    let local = LocalMemoryStore::new(d.path().join("memory/v1.sqlite3"));
     let selected = SelectedMemoryStore::Local(local.clone());
     let rec = local
         .put_with_metadata(
@@ -456,7 +456,7 @@ async fn finalization_cas_cannot_overwrite_a_nomination_after_query() {
     let d = tempfile::tempdir().unwrap();
     let r = repo();
     let sources = WorkspaceSources::open(r.path()).unwrap();
-    let store = LocalMemoryStore::new(d.path().join("db"));
+    let store = LocalMemoryStore::new(d.path().join("memory/v1.sqlite3"));
     let first = propose_lesson(&store, "test before delivery", lesson(&sources, "A"))
         .await
         .unwrap();

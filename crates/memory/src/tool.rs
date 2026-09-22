@@ -577,7 +577,7 @@ mod tests {
     #[tokio::test]
     async fn session_enforces_permission_exact_keys_and_scan_before_put() {
         let directory = tempdir().unwrap();
-        let store = SelectedMemoryStore::local(directory.path().join("memory.sqlite3"));
+        let store = SelectedMemoryStore::local(directory.path().join("memory/v1.sqlite3"));
         let session = MemorySession::new(store.clone());
         let put = || json!({"operation": "put", "content": "Use one exact memory key shape."});
 
@@ -634,7 +634,7 @@ mod tests {
     #[tokio::test]
     async fn selected_store_rejects_secret_content_before_storage() {
         let directory = tempdir().unwrap();
-        let store = SelectedMemoryStore::local(directory.path().join("memory.sqlite3"));
+        let store = SelectedMemoryStore::local(directory.path().join("memory/v1.sqlite3"));
         let session = MemorySession::new(store.clone());
         session
             .execute(

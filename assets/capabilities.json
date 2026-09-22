@@ -3,79 +3,1079 @@
   "brand": "Orvek",
   "overview": {
     "title": "From setup to evaluation.",
-    "subtitle": "Thirteen source-backed capability areas",
+    "subtitle": "Source-backed capability areas",
     "footnote": "Configuration guide: setup, behavior, requirements, and limitations."
   },
   "capability_coverage": {
     "mode": "complete",
     "exempt_components": [
-      {"component": "component:session-assembly", "reason": "Application assembly supports host-owned session capabilities rather than owning a separate product capability."},
-      {"component": "component:host-client", "reason": "The local IPC client is transport infrastructure for session and task capabilities."},
-      {"component": "component:host-server", "reason": "The detached process boundary serves harness capabilities and owns no competing product behavior."},
-      {"component": "component:executor", "reason": "The executor is the isolated backend for workspace execution and verification capabilities."},
-      {"component": "component:headless", "reason": "Headless JSONL is a projection of the same session and task capabilities."},
-      {"component": "component:review", "reason": "Browser review is included in the sessions, review, and reflection capability owned by the authoritative harness."}
+      {
+        "component": "component:session-assembly",
+        "reason": "Application assembly supports host-owned session capabilities rather than owning a separate product capability."
+      },
+      {
+        "component": "component:host-client",
+        "reason": "The local IPC client is transport infrastructure for session and task capabilities."
+      },
+      {
+        "component": "component:host-server",
+        "reason": "The detached process boundary serves harness capabilities and owns no competing product behavior."
+      },
+      {
+        "component": "component:executor",
+        "reason": "The executor is the isolated backend for workspace execution and verification capabilities."
+      },
+      {
+        "component": "component:headless",
+        "reason": "Headless JSONL is a projection of the same session and task capabilities."
+      },
+      {
+        "component": "component:review",
+        "reason": "Browser review is included in the sessions, review, and reflection capability owned by the authoritative harness."
+      }
     ]
   },
   "capabilities": [
     {
       "id": "configuration-authentication-skills",
       "title": "Configuration, authentication, and skills",
-      "summary": "Loads bounded local configuration and credentials, admits a durable session, and exposes refreshed skill metadata and bodies through the host context service.",
+      "summary": "Loads bounded local configuration and credentials, dispatches login/status/logout, admits durable sessions, and exposes refreshed skill metadata and bodies through the host context service.",
       "status": "implemented",
       "owner": "component:cli",
-      "runtime_modes": ["host", "sandbox"],
-      "entrypoints": [
-        {"path": "bin/orvek/src/app/cli.rs", "anchor": "pub(crate) async fn run(self) -> Result<()>"},
-        {"path": "bin/orvek/src/app/host.rs", "anchor": "pub(crate) async fn serve(config: &Config)"}
+      "runtime_modes": [
+        "client",
+        "host",
+        "sandbox"
       ],
-      "dispatchers": [{"path": "bin/orvek/src/core/context.rs", "anchor": "impl ContextSession for ConfiguredContextSession"}],
-      "persistence": [{"path": "bin/orvek/src/app/config.rs", "anchor": "pub(crate) struct Config {"}],
-      "proof": [{"path": "bin/orvek/src/app/host_context_tests.rs", "anchor": "configured_context_reaches_native_requests_over_ipc"}],
-      "documentation": [{"path": "docs/configuration.md", "anchor": "### Configuration, authentication, and skills"}],
-      "limitations": ["Skills are disabled by default and are reference data rather than task authority."],
+      "entrypoints": [
+        {
+          "path": "bin/orvek/src/app/cli.rs",
+          "anchor": "pub(crate) async fn run(self) -> Result<()>"
+        },
+        {
+          "path": "bin/orvek/src/app/cli.rs",
+          "anchor": "async fn run_with_config(self, config: &Config) -> Result<()>"
+        },
+        {
+          "path": "bin/orvek/src/app/cli.rs",
+          "anchor": "async fn run(self, config: &Config) -> AuthResult<()>"
+        },
+        {
+          "path": "bin/orvek/src/app/host.rs",
+          "anchor": "pub(crate) async fn serve(config: &Config)"
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "bin/orvek/src/app/cli.rs",
+          "anchor": "async fn run(self, config: &Config) -> AuthResult<()>"
+        },
+        {
+          "path": "bin/orvek/src/app/auth.rs",
+          "anchor": "pub(crate) async fn login(&self) -> AuthResult<()>"
+        },
+        {
+          "path": "bin/orvek/src/app/auth.rs",
+          "anchor": "pub(crate) async fn status(&self) -> AuthResult<()>"
+        },
+        {
+          "path": "bin/orvek/src/app/auth.rs",
+          "anchor": "pub(crate) fn logout(&self) -> AuthResult<()>"
+        },
+        {
+          "path": "bin/orvek/src/core/context.rs",
+          "anchor": "impl ContextSession for ConfiguredContextSession"
+        }
+      ],
+      "persistence": [
+        {
+          "path": "bin/orvek/src/app/config.rs",
+          "anchor": "fn write_document(path: &Path, document: DocumentMut) -> Result<()>"
+        },
+        {
+          "path": "crates/harness/src/inference/auth.rs",
+          "anchor": "fn write_store(path: &Path, document: &SecretJson) -> Result<(), AuthError>"
+        },
+        {
+          "path": "crates/harness/src/inference/auth.rs",
+          "anchor": "pub fn logout_chatgpt(path: impl AsRef<Path>) -> Result<bool, AuthError>"
+        }
+      ],
+      "proof": [
+        {
+          "path": "bin/orvek/src/app/host_context_tests.rs",
+          "anchor": "configured_context_reaches_native_requests_over_ipc",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/app/auth.rs",
+          "anchor": "auto_prefers_an_existing_chatgpt_file_without_reading_the_api_key",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/app/auth.rs",
+          "anchor": "auto_falls_back_to_an_api_key_when_chatgpt_is_absent",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/app/auth.rs",
+          "anchor": "logout_is_idempotent",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/configuration.md",
+          "anchor": "### Configuration, authentication, and skills"
+        },
+        {
+          "path": "docs/configuration.md",
+          "anchor": "## Authentication"
+        }
+      ],
+      "limitations": [
+        "Skills are disabled by default and are reference data rather than task authority.",
+        "Environment API keys are not persisted; ChatGPT credentials use the shared Codex auth file, so logout signs both Orvek and Codex out."
+      ],
       "execution_paths": [
         [
-          {"path": "bin/orvek/src/app/host.rs", "anchor": "pub(crate) async fn serve(config: &Config)", "call": "ConfiguredContext::new("},
-          {"path": "bin/orvek/src/core/context.rs", "anchor": "impl ContextSession for ConfiguredContextSession"}
+          {
+            "path": "bin/orvek/src/app/cli.rs",
+            "anchor": "async fn run_with_config(self, config: &Config) -> Result<()>",
+            "call": "Self::Auth { command } => command.run(config).await.map_err(Into::into)"
+          },
+          {
+            "path": "bin/orvek/src/app/cli.rs",
+            "anchor": "async fn run(self, config: &Config) -> AuthResult<()>"
+          }
+        ],
+        [
+          {
+            "path": "bin/orvek/src/app/cli.rs",
+            "anchor": "async fn run(self, config: &Config) -> AuthResult<()>",
+            "call": "Self::Login => config.auth().login().await"
+          },
+          {
+            "path": "bin/orvek/src/app/auth.rs",
+            "anchor": "pub(crate) async fn login(&self) -> AuthResult<()>"
+          }
+        ],
+        [
+          {
+            "path": "bin/orvek/src/app/cli.rs",
+            "anchor": "async fn run(self, config: &Config) -> AuthResult<()>",
+            "call": "Self::Status => config.auth().status().await"
+          },
+          {
+            "path": "bin/orvek/src/app/auth.rs",
+            "anchor": "pub(crate) async fn status(&self) -> AuthResult<()>"
+          }
+        ],
+        [
+          {
+            "path": "bin/orvek/src/app/cli.rs",
+            "anchor": "async fn run(self, config: &Config) -> AuthResult<()>",
+            "call": "Self::Logout => config.auth().logout()"
+          },
+          {
+            "path": "bin/orvek/src/app/auth.rs",
+            "anchor": "pub(crate) fn logout(&self) -> AuthResult<()>"
+          }
+        ],
+        [
+          {
+            "path": "bin/orvek/src/app/host.rs",
+            "anchor": "pub(crate) async fn serve(config: &Config)",
+            "call": "ConfiguredContext::new("
+          },
+          {
+            "path": "bin/orvek/src/core/context.rs",
+            "anchor": "impl ContextSession for ConfiguredContextSession"
+          }
         ]
       ],
-      "diagram": {"lines": ["Configuration, authentication", "& skills"]}
+      "diagram": {
+        "lines": [
+          "Configuration, authentication",
+          "& skills"
+        ]
+      }
+    },
+    {
+      "id": "installation-updates",
+      "title": "Installation updates",
+      "summary": "Routes source and Cargo installations to the matching Cargo command, defers externally managed binaries to their package manager, and replaces release-archive binaries only after release, checksum, and signature verification.",
+      "status": "implemented",
+      "owner": "component:cli",
+      "runtime_modes": [
+        "client"
+      ],
+      "entrypoints": [
+        {
+          "path": "bin/orvek/src/app/cli.rs",
+          "anchor": "async fn run_without_config(self) -> Result<()>"
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "bin/orvek/src/app/update.rs",
+          "anchor": "pub(crate) async fn install_latest()"
+        }
+      ],
+      "persistence": [
+        {
+          "path": "bin/orvek/src/app/update.rs",
+          "anchor": "self_replace::self_replace(&extracted.path)"
+        }
+      ],
+      "proof": [
+        {
+          "path": "bin/orvek/src/app/cli.rs",
+          "anchor": "update_is_config_independent",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/app/update.rs",
+          "anchor": "cargo_recommendation_preserves_non_default_install_root",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/app/update.rs",
+          "anchor": "requires_one_archive_checksum_and_signature_for_target",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "README.md",
+          "anchor": "## Configure and update"
+        }
+      ],
+      "limitations": [
+        "No Orvek crate or signed macOS binary release is published yet; current source installations receive a Cargo install command instead of a release-archive update."
+      ],
+      "execution_paths": [
+        [
+          {
+            "path": "bin/orvek/src/app/cli.rs",
+            "anchor": "async fn run_without_config(self) -> Result<()>",
+            "call": "update::install_latest().await.map_err(Error::update)?"
+          },
+          {
+            "path": "bin/orvek/src/app/update.rs",
+            "anchor": "pub(crate) async fn install_latest()"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "durable-completion-hooks",
+      "title": "Durable completion hooks",
+      "summary": "Pins a configured host shell notification before each task request, delivers it after terminal task settlement, and journals intent, claim, and result so restart recovery resumes only unclaimed effects.",
+      "status": "implemented",
+      "owner": "component:harness",
+      "runtime_modes": [
+        "host",
+        "sandbox"
+      ],
+      "entrypoints": [
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "pub(super) async fn execute_task_request("
+        },
+        {
+          "path": "crates/harness/src/ipc.rs",
+          "anchor": "pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<()>"
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "crates/harness/src/controller/notification.rs",
+          "anchor": "pub(super) async fn arm_completion_hook("
+        },
+        {
+          "path": "crates/harness/src/controller/notification.rs",
+          "anchor": "pub(super) async fn deliver_completion_hooks("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/session.rs",
+          "anchor": "CompletionHook(DeliveryEvent),"
+        },
+        {
+          "path": "crates/harness/src/controller/notification.rs",
+          "anchor": "pub(super) async fn deliver_completion_hooks("
+        }
+      ],
+      "proof": [
+        {
+          "path": "bin/orvek/tests/completion_hook.rs",
+          "anchor": "configured_hook_runs_for_headless_and_terminal_ipc_without_reconnect_duplicates",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/tests/completion_hook.rs",
+          "anchor": "crash_after_external_effect_keeps_delivery_unknown_without_retry",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/tests/completion_hook.rs",
+          "anchor": "sandbox_headless_and_terminal_ipc_use_the_same_host_hook",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/configuration.md",
+          "anchor": "### Completion notifications"
+        }
+      ],
+      "limitations": [
+        "Hooks cover terminal task outcomes only; conversation-only turns, auxiliary requests, local shell submissions, and requests rejected before a task exists do not notify.",
+        "The command runs on the host through /bin/sh even for sandbox tasks. A claimed effect without a recorded result remains unknown and is not automatically retried; arbitrary shell effects are not exactly once."
+      ],
+      "execution_paths": [
+        [
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "pub(super) async fn execute_task_request(",
+            "call": "self.arm_completion_hook(session, request).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/notification.rs",
+            "anchor": "pub(super) async fn arm_completion_hook("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "pub(super) async fn execute_task_request(",
+            "call": "self.deliver_completion_hooks(session).await.is_err()"
+          },
+          {
+            "path": "crates/harness/src/controller/notification.rs",
+            "anchor": "pub(super) async fn deliver_completion_hooks("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "pub async fn serve(host: Arc<Host>, shutdown: CancellationToken) -> io::Result<()>",
+            "call": "recovery_host.recover_completion_hooks()"
+          },
+          {
+            "path": "crates/harness/src/controller/notification.rs",
+            "anchor": "pub(crate) async fn recover_completion_hooks(&self) -> Result<(), HostError>",
+            "call": "self.deliver_completion_hooks(session.id).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/notification.rs",
+            "anchor": "pub(super) async fn deliver_completion_hooks("
+          }
+        ]
+      ]
     },
     {
       "id": "sessions-review-reflection",
       "title": "Sessions, review, and reflection",
-      "summary": "Resumes and forks host-owned sessions, projects them into the terminal, and serves frozen browser review data with recorded feedback.",
+      "summary": "Resumes and forks host-owned sessions, projects them into the terminal, serves frozen browser review data with recorded feedback, and runs reflection as non-mutating auxiliary work.",
       "status": "implemented",
       "owner": "component:harness",
-      "runtime_modes": ["client", "host", "sandbox"],
+      "runtime_modes": [
+        "client",
+        "host",
+        "sandbox",
+        "auxiliary"
+      ],
       "entrypoints": [
-        {"path": "bin/orvek/src/tui/client.rs", "anchor": "The detached host owns all work."},
-        {"path": "bin/orvek/src/review/mod.rs", "anchor": "pub(crate) async fn start("},
-        {"path": "crates/harness/src/ipc.rs", "anchor": "async fn execute("}
+        {
+          "path": "bin/orvek/src/tui/client.rs",
+          "anchor": "The detached host owns all work."
+        },
+        {
+          "path": "bin/orvek/src/review/mod.rs",
+          "anchor": "pub(crate) async fn start("
+        },
+        {
+          "path": "crates/harness/src/ipc.rs",
+          "anchor": "async fn execute("
+        }
       ],
       "dispatchers": [
-        {"path": "crates/harness/src/controller.rs", "anchor": "pub async fn fork_session("},
-        {"path": "crates/harness/src/controller/review.rs", "anchor": "pub async fn record_review("}
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "pub async fn fork_session("
+        },
+        {
+          "path": "crates/harness/src/controller/review.rs",
+          "anchor": "pub async fn record_review("
+        },
+        {
+          "path": "crates/harness/src/controller/submissions.rs",
+          "anchor": "pub async fn submit("
+        }
       ],
-      "persistence": [{"path": "crates/harness/src/store.rs", "anchor": "pub fn session_command("}],
+      "persistence": [
+        {
+          "path": "crates/harness/src/store.rs",
+          "anchor": "pub fn session_command("
+        }
+      ],
       "proof": [
-        {"path": "bin/orvek/src/tui/host_projection.rs", "anchor": "durable_replay_is_idempotent_and_other_sessions_are_not_rendered"},
-        {"path": "bin/orvek/src/review/mod.rs", "anchor": "review_decision_renders_as_composer_markdown"}
+        {
+          "path": "crates/harness/tests/session_journal.rs",
+          "anchor": "session_commands_replay_once_and_fork_only_persisted_prefix",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/tui/host_projection.rs",
+          "anchor": "durable_replay_is_idempotent_and_other_sessions_are_not_rendered",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/review/mod.rs",
+          "anchor": "review_decision_renders_as_composer_markdown",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/tui/components/root.rs",
+          "anchor": "reflection_action_collects_hidden_optional_instructions",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
       ],
-      "documentation": [{"path": "docs/sessions.md", "anchor": "# Sessions and review"}],
-      "limitations": ["Browser review requires separately installed web assets for source builds."],
+      "documentation": [
+        {
+          "path": "docs/sessions.md",
+          "anchor": "# Sessions and review"
+        },
+        {
+          "path": "docs/sessions.md",
+          "anchor": "## Resume and fork"
+        },
+        {
+          "path": "docs/sessions.md",
+          "anchor": "## Reflect on a session"
+        }
+      ],
+      "limitations": [
+        "Browser review requires separately installed web assets for source builds.",
+        "The terminal opens at most one fork pane at a time; reflection records an auxiliary report and cannot mutate task or workspace authority."
+      ],
       "execution_paths": [
         [
-          {"path": "crates/harness/src/ipc.rs", "anchor": "async fn execute(", "call": "host.fork_session("},
-          {"path": "crates/harness/src/controller.rs", "anchor": "pub async fn fork_session("}
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.fork_session("
+          },
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "pub async fn fork_session("
+          }
         ],
         [
-          {"path": "crates/harness/src/ipc.rs", "anchor": "async fn execute(", "call": "host.record_review("},
-          {"path": "crates/harness/src/controller/review.rs", "anchor": "pub async fn record_review("}
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.record_review("
+          },
+          {
+            "path": "crates/harness/src/controller/review.rs",
+            "anchor": "pub async fn record_review("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.submit(session, request.id, content, intent).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/submissions.rs",
+            "anchor": "pub async fn submit("
+          }
         ]
       ],
-      "diagram": {"lines": ["Sessions, review", "& reflection"]}
+      "diagram": {
+        "lines": [
+          "Sessions, review",
+          "& reflection"
+        ]
+      }
+    },
+    {
+      "id": "session-handoff",
+      "title": "Session handoff",
+      "summary": "Runs a dedicated auxiliary handoff report after work settles, then creates a fresh-history host context at the same stable workspace checkpoint and retains the continuation draft when creation is uncertain.",
+      "status": "implemented",
+      "owner": "component:harness",
+      "runtime_modes": [
+        "client",
+        "host",
+        "sandbox",
+        "auxiliary"
+      ],
+      "entrypoints": [
+        {
+          "path": "bin/orvek/src/tui/handoff_controller.rs",
+          "anchor": "pub(crate) async fn prepare("
+        },
+        {
+          "path": "crates/harness/src/ipc.rs",
+          "anchor": "async fn execute("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "bin/orvek/src/app/auxiliary.rs",
+          "anchor": "pub(crate) async fn run("
+        },
+        {
+          "path": "bin/orvek/src/tui/handoff_controller.rs",
+          "anchor": "async fn create(client: &HostClient, parent: SessionCursor) -> Result<SessionView>"
+        },
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "pub async fn handoff_session("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/store.rs",
+          "anchor": "pub fn create_handoff_session("
+        }
+      ],
+      "proof": [
+        {
+          "path": "bin/orvek/src/tui/handoff_controller.rs",
+          "anchor": "lost_creation_ack_recovers_the_same_context_without_another_handoff",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/tui/components/app.rs",
+          "anchor": "handoff_starts_a_fresh_session_with_an_editable_draft_and_selected_model",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/tui/components/root.rs",
+          "anchor": "handoff_blocks_input_until_the_continuation_prompt_is_ready",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/sessions.md",
+          "anchor": "## Hand off to a fresh context"
+        }
+      ],
+      "limitations": [
+        "Handoff requires a settled workspace checkpoint and aborts if the task or workspace changes while the auxiliary report runs.",
+        "The new context keeps the workspace checkpoint but starts with empty provider history; a failed or uncertain creation retains the generated draft and may require resuming the reported context ID."
+      ],
+      "execution_paths": [
+        [
+          {
+            "path": "bin/orvek/src/tui/handoff_controller.rs",
+            "anchor": "pub(crate) async fn prepare(",
+            "call": "auxiliary::run("
+          },
+          {
+            "path": "bin/orvek/src/app/auxiliary.rs",
+            "anchor": "pub(crate) async fn run("
+          }
+        ],
+        [
+          {
+            "path": "bin/orvek/src/tui/handoff_controller.rs",
+            "anchor": "pub(crate) async fn prepare(",
+            "call": "let view=create(client,source.fork_cursor).await?;"
+          },
+          {
+            "path": "bin/orvek/src/tui/handoff_controller.rs",
+            "anchor": "async fn create(client: &HostClient, parent: SessionCursor) -> Result<SessionView>"
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.handoff_session(id, parent).await?"
+          },
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "pub async fn handoff_session("
+          }
+        ]
+      ]
+    },
+    {
+      "id": "legacy-session-import",
+      "title": "Legacy-session import",
+      "summary": "Discovers bounded historical SQLite sessions, snapshots selected lineage and resume bytes without mutating the source, and commits provenance-backed native host contexts idempotently.",
+      "status": "implemented",
+      "owner": "component:harness",
+      "runtime_modes": [
+        "client",
+        "host"
+      ],
+      "entrypoints": [
+        {
+          "path": "bin/orvek/src/core/mod.rs",
+          "anchor": "pub(crate) async fn resume_label("
+        },
+        {
+          "path": "crates/harness/src/ipc.rs",
+          "anchor": "async fn execute("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "pub async fn legacy_sessions("
+        },
+        {
+          "path": "crates/harness/src/controller/imports.rs",
+          "anchor": "pub async fn import_legacy_request("
+        },
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "pub async fn legacy_page("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/store/imports.rs",
+          "anchor": "pub(crate) fn commit_bound_legacy_import("
+        },
+        {
+          "path": "crates/harness/src/session.rs",
+          "anchor": "pub struct ImportedSource {"
+        }
+      ],
+      "proof": [
+        {
+          "path": "crates/harness/tests/native_import_requests.rs",
+          "anchor": "retry_binding_survives_restart_and_missing_original_source",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/native_import_requests.rs",
+          "anchor": "fresh_operations_reuse_identical_selected_bytes_and_preserve_native_progress",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/native_import_requests.rs",
+          "anchor": "selected_source_changes_produce_a_new_target_only_for_fresh_operations",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/legacy_import.rs",
+          "anchor": "missing_or_corrupt_source_is_not_created_or_rewritten",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/sessions.md",
+          "anchor": "## Resume imported historical sessions"
+        }
+      ],
+      "limitations": [
+        "Import is bounded to a 64 MiB source snapshot, 10,000 sessions, 100,000 records, 32 MiB selected bytes, and 30 seconds; unsupported or corrupt historical schemas and lineage are rejected.",
+        "The original database is never migrated or deleted and may retain unredacted history. Imported tool calls, instructions, and completion events are historical provenance only and cannot grant authority or certificates."
+      ],
+      "execution_paths": [
+        [
+          {
+            "path": "bin/orvek/src/core/mod.rs",
+            "anchor": "pub(crate) async fn resume_label(",
+            "call": "Self::import_legacy(config, client, metadata).await"
+          },
+          {
+            "path": "bin/orvek/src/core/mod.rs",
+            "anchor": "async fn import_legacy(",
+            "call": ".call(&request, std::time::Duration::from_secs(70))"
+          },
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "import_legacy_request(request.id, database, source_session, admission)"
+          },
+          {
+            "path": "crates/harness/src/controller/imports.rs",
+            "anchor": "pub async fn import_legacy_request("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.legacy_sessions(database, offset, limit).await?"
+          },
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "pub async fn legacy_sessions("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": ".import_legacy_request(request.id, database, source_session, admission)"
+          },
+          {
+            "path": "crates/harness/src/controller/imports.rs",
+            "anchor": "pub async fn import_legacy_request("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.legacy_page(session, cursor, max_records, max_bytes)"
+          },
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "pub async fn legacy_page("
+          }
+        ]
+      ]
+    },
+    {
+      "id": "multimodal-image-submission",
+      "title": "Multimodal image submission",
+      "summary": "Pastes clipboard images into terminal drafts, stores media as bounded content-addressed artifacts, restores persisted drafts, and reconstructs ordered provider image parts at the submission boundary.",
+      "status": "implemented",
+      "owner": "component:harness",
+      "runtime_modes": [
+        "client",
+        "host",
+        "sandbox"
+      ],
+      "entrypoints": [
+        {
+          "path": "bin/orvek/src/tui/event_loop.rs",
+          "anchor": "pub(super) async fn run("
+        },
+        {
+          "path": "bin/orvek/src/tui/client.rs",
+          "anchor": "fn dispatch_submission("
+        },
+        {
+          "path": "bin/orvek/src/tui/event_loop.rs",
+          "anchor": "async fn dispatch_effects("
+        },
+        {
+          "path": "bin/orvek/src/tui/event_loop.rs",
+          "anchor": "async fn handle_submission_effect("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "bin/orvek/src/tui/clipboard.rs",
+          "anchor": "pub(crate) fn image_data_url() -> Option<String>"
+        },
+        {
+          "path": "bin/orvek/src/tui/prompt.rs",
+          "anchor": "pub(crate) fn host_content(&self) -> Vec<Value>"
+        },
+        {
+          "path": "bin/orvek/src/app/submission.rs",
+          "anchor": "pub(crate) async fn input_parts("
+        },
+        {
+          "path": "crates/harness/src/controller/submissions.rs",
+          "anchor": "pub async fn submit("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/input.rs",
+          "anchor": "pub fn prepare("
+        },
+        {
+          "path": "crates/harness/src/store/submissions.rs",
+          "anchor": "pub fn submit("
+        }
+      ],
+      "proof": [
+        {
+          "path": "crates/harness/tests/user_input.rs",
+          "anchor": "ordered_images_round_trip_without_embedding_media_bytes_in_journal_messages",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/user_input.rs",
+          "anchor": "media_cannot_be_a_file_read_or_an_injected_authority_object",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/user_input.rs",
+          "anchor": "internal_context_pages_bypass_user_media_limits_and_preserve_provider_order",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/tui/components/root.rs",
+          "anchor": "restored_draft_keeps_pasted_images",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/tui/components/composer.rs",
+          "anchor": "pasted_images_render_as_numbered_blue_tokens_and_submit_as_images",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/sessions.md",
+          "anchor": "## Submit images"
+        }
+      ],
+      "limitations": [
+        "A submission accepts at most eight images and 4 MiB of decoded image bytes in total.",
+        "Only embedded base64 PNG, JPEG, GIF, and WebP data with matching signatures are admitted; file and network URLs are rejected.",
+        "New-task and ordinary submissions still require a textual objective; image-only task requests are rejected by durable admission.",
+        "Provider or model image support is not preflighted, and images are provider context rather than files mounted into the native workspace or sandbox."
+      ],
+      "execution_paths": [
+        [
+          {
+            "path": "bin/orvek/src/tui/event_loop.rs",
+            "anchor": "pub(super) async fn run(",
+            "call": "super::clipboard::image_data_url()"
+          },
+          {
+            "path": "bin/orvek/src/tui/clipboard.rs",
+            "anchor": "pub(crate) fn image_data_url() -> Option<String>"
+          }
+        ],
+        [
+          {
+            "path": "bin/orvek/src/tui/client.rs",
+            "anchor": "fn dispatch_submission(",
+            "call": "content: prompt.host_content()"
+          },
+          {
+            "path": "bin/orvek/src/tui/prompt.rs",
+            "anchor": "pub(crate) fn host_content(&self) -> Vec<Value>"
+          }
+        ],
+        [
+          {
+            "path": "bin/orvek/src/tui/event_loop.rs",
+            "anchor": "async fn handle_submission_effect(",
+            "call": "submissions::input_parts("
+          },
+          {
+            "path": "bin/orvek/src/app/submission.rs",
+            "anchor": "pub(crate) async fn input_parts("
+          }
+        ],
+        [
+          {
+            "path": "bin/orvek/src/tui/client.rs",
+            "anchor": "fn dispatch_submission(",
+            "call": "submissions::acknowledge(&client, &request).await"
+          },
+          {
+            "path": "bin/orvek/src/app/submission.rs",
+            "anchor": "pub(crate) async fn acknowledge(",
+            "call": "client.call(request, Duration::from_secs(5)).await"
+          },
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.submit(session, request.id, content, intent).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/submissions.rs",
+            "anchor": "pub async fn submit("
+          }
+        ]
+      ]
     },
     {
       "id": "memory",
@@ -83,26 +1083,143 @@
       "summary": "Stores bounded evidence-backed memory locally or remotely and exposes explicit scan, read, mutation, lesson, and transfer operations.",
       "status": "implemented",
       "owner": "component:memory",
-      "runtime_modes": ["host", "sandbox", "auxiliary"],
+      "runtime_modes": [
+        "client",
+        "host",
+        "sandbox",
+        "auxiliary"
+      ],
       "entrypoints": [
-        {"path": "bin/orvek/src/core/context.rs", "anchor": "ConfiguredMemory"},
-        {"path": "bin/orvek/src/core/context.rs", "anchor": "fn execute<'a>("}
+        {
+          "path": "bin/orvek/src/core/context.rs",
+          "anchor": "fn execute<'a>("
+        },
+        {
+          "path": "bin/orvek/src/app/cli.rs",
+          "anchor": "async fn run_with_config(self, config: &Config) -> Result<()>"
+        }
       ],
-      "dispatchers": [{"path": "crates/memory/src/tool.rs", "anchor": "pub async fn execute("}],
+      "dispatchers": [
+        {
+          "path": "crates/memory/src/tool.rs",
+          "anchor": "pub async fn execute("
+        },
+        {
+          "path": "bin/orvek/src/app/cli.rs",
+          "anchor": "async fn run(self, config: &Config) -> Result<()>"
+        }
+      ],
       "persistence": [
-        {"path": "crates/memory/src/store/local.rs", "anchor": "pub struct LocalMemoryStore"},
-        {"path": "crates/memory/src/store/remote/client.rs", "anchor": "pub struct RemoteMemoryClient"}
+        {
+          "path": "crates/memory/src/store/local.rs",
+          "anchor": "pub struct LocalMemoryStore"
+        },
+        {
+          "path": "crates/memory/src/store/remote/client.rs",
+          "anchor": "pub struct RemoteMemoryClient"
+        },
+        {
+          "path": "crates/memory/src/archive.rs",
+          "anchor": "pub async fn export<S: MemoryStore>(store: &S, directory: &Path) -> Result<Self, MemoryError>"
+        },
+        {
+          "path": "crates/memory/src/archive.rs",
+          "anchor": "pub async fn import("
+        }
       ],
-      "proof": [{"path": "bin/orvek/src/app/host_context_tests.rs", "anchor": "memory_operations_preserve_cas_and_only_changed_context_invalidates_cache"}],
-      "documentation": [{"path": "docs/memory.md", "anchor": "# Memory"}],
-      "limitations": ["Memory is disabled by default, unencrypted locally, and unavailable to delegated children."],
+      "proof": [
+        {
+          "path": "bin/orvek/src/app/host_context_tests.rs",
+          "anchor": "memory_operations_preserve_cas_and_only_changed_context_invalidates_cache",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/memory/tests/evidence.rs",
+          "anchor": "archive_roundtrip_retains_namespace_versions_and_evidence_and_rejects_tampering",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/app/cli.rs",
+          "anchor": "push_reconciles_a_local_write_that_races_the_first_snapshot",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/memory/src/tests.rs",
+          "anchor": "pulling_remote_memories_preserves_each_namespace_in_schema_v2",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/memory.md",
+          "anchor": "# Memory"
+        },
+        {
+          "path": "docs/memory.md",
+          "anchor": "## Explicit transfer commands"
+        }
+      ],
+      "limitations": [
+        "Memory is disabled by default, unencrypted locally, and unavailable to delegated children.",
+        "Explicit export, import, push, and pull use the local store from any directory and ignore memory.enabled and workspace scope; remote transfer still requires configured credentials."
+      ],
       "execution_paths": [
         [
-          {"path": "bin/orvek/src/core/context.rs", "anchor": "fn execute<'a>(", "call": ".execute(arguments, permission(access))"},
-          {"path": "crates/memory/src/tool.rs", "anchor": "pub async fn execute("}
+          {
+            "path": "bin/orvek/src/core/context.rs",
+            "anchor": "fn execute<'a>(",
+            "call": ".execute(arguments, permission(access))"
+          },
+          {
+            "path": "crates/memory/src/tool.rs",
+            "anchor": "pub async fn execute("
+          }
+        ],
+        [
+          {
+            "path": "bin/orvek/src/app/cli.rs",
+            "anchor": "async fn run_with_config(self, config: &Config) -> Result<()>",
+            "call": "Self::Memory { command } => command.run(config).await"
+          },
+          {
+            "path": "bin/orvek/src/app/cli.rs",
+            "anchor": "async fn run(self, config: &Config) -> Result<()>"
+          }
         ]
       ],
-      "diagram": {"lines": ["Local & remote memory"]}
+      "diagram": {
+        "lines": [
+          "Local & remote memory"
+        ]
+      }
     },
     {
       "id": "context-projection",
@@ -110,29 +1227,89 @@
       "summary": "Derives stable and live provider context from authoritative history, selects measured representations, and preserves exact source retrieval.",
       "status": "implemented",
       "owner": "component:runtime",
-      "runtime_modes": ["host", "sandbox"],
+      "runtime_modes": [
+        "host",
+        "sandbox"
+      ],
       "entrypoints": [
-        {"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract("}
+        {
+          "path": "crates/harness/src/controller/task_phases.rs",
+          "anchor": "async fn run_contract("
+        }
+        ,{
+          "path": "crates/harness/src/controller/task_phases.rs",
+          "anchor": "async fn execute_proposals("
+        }
       ],
       "dispatchers": [
-        {"path": "crates/harness/src/context.rs", "anchor": "pub fn project("},
-        {"path": "crates/harness/src/controller.rs", "anchor": "async fn read_context("}
+        {
+          "path": "crates/harness/src/context.rs",
+          "anchor": "pub fn project("
+        },
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "async fn read_context("
+        }
       ],
-      "persistence": [{"path": "crates/harness/src/session.rs", "anchor": "ContextProjected {"}],
-      "proof": [{"path": "crates/harness/tests/context_projection.rs", "anchor": "exact_projection_preserves_original_authority_and_has_reproducible_identity"}],
-      "documentation": [{"path": "docs/compaction.md", "anchor": "# Host-owned context views"}],
-      "limitations": ["Bitmap selection depends on comparable provider receipts and falls back to native text when evidence is missing."],
+      "persistence": [
+        {
+          "path": "crates/harness/src/session.rs",
+          "anchor": "ContextProjected {"
+        }
+      ],
+      "proof": [
+        {
+          "path": "crates/harness/tests/context_projection.rs",
+          "anchor": "exact_projection_preserves_original_authority_and_has_reproducible_identity",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/compaction.md",
+          "anchor": "# Host-owned context views"
+        }
+      ],
+      "limitations": [
+        "Bitmap selection depends on comparable provider receipts and falls back to native text when evidence is missing."
+      ],
       "execution_paths": [
         [
-          {"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract(", "call": "crate::context::project(&session, byte_limit)"},
-          {"path": "crates/harness/src/context.rs", "anchor": "pub fn project("}
+          {
+            "path": "crates/harness/src/controller/task_phases.rs",
+            "anchor": "async fn run_contract(",
+            "call": "crate::context::project(&session, byte_limit)"
+          },
+          {
+            "path": "crates/harness/src/context.rs",
+            "anchor": "pub fn project("
+          }
         ],
         [
-          {"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract(", "call": "self.read_context("},
-          {"path": "crates/harness/src/controller.rs", "anchor": "async fn read_context("}
+          {
+            "path": "crates/harness/src/controller/task_phases.rs",
+            "anchor": "async fn execute_proposals(",
+            "call": "self.read_context("
+          },
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "async fn read_context("
+          }
         ]
       ],
-      "diagram": {"lines": ["Context projection &", "exact retrieval"]}
+      "diagram": {
+        "lines": [
+          "Context projection &",
+          "exact retrieval"
+        ]
+      }
     },
     {
       "id": "subagents",
@@ -140,23 +1317,72 @@
       "summary": "Runs bounded read-only child model sessions with session-scoped management, durable lifecycle records, and schema-validated results.",
       "status": "implemented",
       "owner": "component:subagents",
-      "runtime_modes": ["sandbox"],
-      "entrypoints": [
-        {"path": "crates/harness/src/controller.rs", "anchor": "tools.extend(subagents::Subagents::definitions())"},
-        {"path": "crates/harness/src/controller.rs", "anchor": "async fn dispatch("}
+      "runtime_modes": [
+        "sandbox"
       ],
-      "dispatchers": [{"path": "crates/harness/src/controller/subagents.rs", "anchor": "pub async fn execute("}],
-      "persistence": [{"path": "crates/harness/src/controller/subagents/lifecycle.rs", "anchor": "pub enum Event"}],
-      "proof": [{"path": "crates/harness/tests/subagents.rs", "anchor": "child_reads_the_workspace_records_a_job_and_submits_a_valid_result"}],
-      "documentation": [{"path": "docs/subagents.md", "anchor": "# Subagents"}],
-      "limitations": ["Children require the Docker runtime, are read-only, share a live workspace, and cannot delegate recursively."],
+      "entrypoints": [
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "tools.extend(subagents::Subagents::definitions())"
+        },
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "async fn dispatch("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "crates/harness/src/controller/subagents.rs",
+          "anchor": "pub async fn execute("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/controller/subagents/lifecycle.rs",
+          "anchor": "pub enum Event"
+        }
+      ],
+      "proof": [
+        {
+          "path": "crates/harness/tests/subagents.rs",
+          "anchor": "child_reads_the_workspace_records_a_job_and_submits_a_valid_result",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/subagents.md",
+          "anchor": "# Subagents"
+        }
+      ],
+      "limitations": [
+        "Children require the Docker runtime, are read-only, share a live workspace, and cannot delegate recursively."
+      ],
       "execution_paths": [
         [
-          {"path": "crates/harness/src/controller.rs", "anchor": "async fn dispatch(", "call": ".execute(name, arguments, &run, cancellation)"},
-          {"path": "crates/harness/src/controller/subagents.rs", "anchor": "pub async fn execute("}
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "async fn dispatch(",
+            "call": ".execute(name, arguments, &run, cancellation)"
+          },
+          {
+            "path": "crates/harness/src/controller/subagents.rs",
+            "anchor": "pub async fn execute("
+          }
         ]
       ],
-      "diagram": {"lines": ["Isolated subagents"]}
+      "diagram": {
+        "lines": [
+          "Isolated subagents"
+        ]
+      }
     },
     {
       "id": "sloppiness-diagnostics",
@@ -164,20 +1390,64 @@
       "summary": "Measures deterministic source growth, duplication, redundant Rust forms, and complexity hotspots without treating metrics as completion evidence.",
       "status": "implemented",
       "owner": "component:runtime",
-      "runtime_modes": ["host", "sandbox"],
-      "entrypoints": [{"path": "crates/harness/src/controller.rs", "anchor": "async fn dispatch("}],
-      "dispatchers": [{"path": "crates/harness/src/sloppiness.rs", "anchor": "pub fn assess("}],
+      "runtime_modes": [
+        "host",
+        "sandbox"
+      ],
+      "entrypoints": [
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "async fn dispatch("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "crates/harness/src/sloppiness.rs",
+          "anchor": "pub fn assess("
+        }
+      ],
       "persistence": [],
-      "proof": [{"path": "crates/harness/src/sloppiness.rs", "anchor": "measures_verbosity_union_and_erosion_formula"}],
-      "documentation": [{"path": "docs/sloppiness.md", "anchor": "# Sloppiness diagnostics"}],
-      "limitations": ["Only Rust has AST-aware redundancy and complexity analysis; the report is not a quality score."],
+      "proof": [
+        {
+          "path": "crates/harness/src/sloppiness.rs",
+          "anchor": "measures_verbosity_union_and_erosion_formula",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/sloppiness.md",
+          "anchor": "# Sloppiness diagnostics"
+        }
+      ],
+      "limitations": [
+        "Only Rust has AST-aware redundancy and complexity analysis; the report is not a quality score."
+      ],
       "execution_paths": [
         [
-          {"path": "crates/harness/src/controller.rs", "anchor": "async fn dispatch(", "call": "crate::sloppiness::assess("},
-          {"path": "crates/harness/src/sloppiness.rs", "anchor": "pub fn assess("}
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "async fn dispatch(",
+            "call": "crate::sloppiness::assess("
+          },
+          {
+            "path": "crates/harness/src/sloppiness.rs",
+            "anchor": "pub fn assess("
+          }
         ]
       ],
-      "diagram": {"lines": ["Sloppiness diagnostics"]}
+      "diagram": {
+        "lines": [
+          "Sloppiness diagnostics"
+        ]
+      }
     },
     {
       "id": "terminal-performance",
@@ -185,44 +1455,488 @@
       "summary": "Caches transcript wrapping, syntax styles, and layout work while scheduling bounded rendering around input and streaming updates.",
       "status": "implemented",
       "owner": "component:tui",
-      "runtime_modes": ["client"],
-      "entrypoints": [{"path": "bin/orvek/src/tui/mod.rs", "anchor": "pub(crate) async fn run("}],
-      "dispatchers": [{"path": "bin/orvek/src/tui/client.rs", "anchor": "pub(super) async fn run("}],
+      "runtime_modes": [
+        "client"
+      ],
+      "entrypoints": [
+        {
+          "path": "bin/orvek/src/tui/mod.rs",
+          "anchor": "pub(crate) async fn run("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "bin/orvek/src/tui/event_loop.rs",
+          "anchor": "pub(super) async fn run("
+        }
+      ],
       "persistence": [],
-      "proof": [{"path": "bin/orvek/src/tui/bench.rs", "anchor": "fn benchmarks(c: &mut Criterion)"}],
-      "documentation": [{"path": "docs/performance.md", "anchor": "# Performance notes"}],
-      "limitations": ["Local rendering benchmarks do not measure provider latency or task success."],
+      "proof": [
+        {
+          "path": "bin/orvek/src/tui/bench.rs",
+          "anchor": "fn benchmarks(c: &mut Criterion)",
+          "check_id": "rust-bench-build",
+          "ci_job": "cargo-build-benches",
+          "platform": "ubuntu-22.04",
+          "features": [
+            "all-features",
+            "benchmarks"
+          ],
+          "mode": "scheduled"
+        },
+        {
+          "path": "bin/orvek/src/tui/components/transcript/mod.rs",
+          "anchor": "connected_messages_reuse_cached_layouts_without_an_animation_timer",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/tui/scheduler.rs",
+          "anchor": "streaming_updates_coalesce_at_120_hz",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/tui/scheduler.rs",
+          "anchor": "input_preempts_a_streaming_deadline",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/performance.md",
+          "anchor": "# Performance notes"
+        }
+      ],
+      "limitations": [
+        "Local rendering benchmarks do not measure provider latency or task success."
+      ],
       "execution_paths": [
         [
-          {"path": "bin/orvek/src/tui/mod.rs", "anchor": "pub(crate) async fn run(", "call": "client::run(config, startup, shutdown).await"},
-          {"path": "bin/orvek/src/tui/client.rs", "anchor": "pub(super) async fn run("}
+          {
+            "path": "bin/orvek/src/tui/mod.rs",
+            "anchor": "pub(crate) async fn run(",
+            "call": "event_loop::run(config, startup, shutdown).await"
+          },
+          {
+            "path": "bin/orvek/src/tui/event_loop.rs",
+            "anchor": "pub(super) async fn run("
+          }
         ]
       ],
-      "diagram": {"lines": ["Terminal performance"]}
+      "diagram": {
+        "lines": [
+          "Terminal performance"
+        ]
+      }
     },
     {
       "id": "evaluations",
-      "title": "Evaluation lab",
-      "summary": "Runs reproducible Harbor, SnapCompact, context-cost, transition, and incident-replay analyses while preserving raw evidence and unknown measurements.",
-      "status": "implemented",
+      "title": "Evaluation tooling",
+      "summary": "Provides the Harbor adapter, SnapCompact paired runs and accounting, read-only context-cost analysis, deterministic context-transition fixtures, and incident-replay task generation, scoring, and result analysis. These tools preserve explicit unknowns but do not establish live-model quality or benchmark qualification.",
+      "status": "experimental",
       "owner": "component:operations",
-      "runtime_modes": ["offline", "sandbox"],
-      "entrypoints": [
-        {"path": "evals/harbor_adapter/agent.py", "anchor": "class OrvekAgent"},
-        {"path": "evals/snapcompact/run_paired.py", "anchor": "def main("}
+      "runtime_modes": [
+        "client",
+        "offline",
+        "online",
+        "host",
+        "sandbox"
       ],
-      "dispatchers": [{"path": "evals/snapcompact/run_paired.py", "anchor": "def run_condition("}],
-      "persistence": [{"path": "evals/snapcompact/results/2026-09-19/report.json", "anchor": "\"version\": 1"}],
-      "proof": [{"path": "evals/harbor_adapter/test_agent.py", "anchor": "class ArgumentContractTests"}],
-      "documentation": [{"path": "evals/README.md", "anchor": "# Harbor evaluations"}],
-      "limitations": ["Live trials require external providers and credentials; deterministic checks do not establish benchmark quality."],
+      "entrypoints": [
+        {
+          "path": "evals/harbor_adapter/agent.py",
+          "anchor": "    async def run("
+        },
+        {
+          "path": "evals/snapcompact/run_paired.py",
+          "anchor": "def main():"
+        },
+        {
+          "path": "evals/snapcompact/paired_report.py",
+          "anchor": "def main():"
+        },
+        {
+          "path": "evals/snapcompact/score.py",
+          "anchor": "def main():"
+        },
+        {
+          "path": "scripts/analyze-context-cost.py",
+          "anchor": "def main() -> None:"
+        },
+        {
+          "path": "evals/context_transitions/run_paired.py",
+          "anchor": "def main():"
+        },
+        {
+          "path": "evals/context_transitions/verify_sandbox.py",
+          "anchor": "def main(binary):"
+        },
+        {
+          "path": "evals/incident_replay/generate.py",
+          "anchor": "def main() -> None:"
+        },
+        {
+          "path": "evals/incident_replay/scoring.py",
+          "anchor": "def main() -> None:"
+        },
+        {
+          "path": "evals/incident_replay/analyze.py",
+          "anchor": "def main() -> None:"
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "evals/harbor_adapter/agent.py",
+          "anchor": "    async def _run_to_completion("
+        },
+        {
+          "path": "evals/snapcompact/run_paired.py",
+          "anchor": "def run_condition("
+        },
+        {
+          "path": "evals/snapcompact/paired_report.py",
+          "anchor": "def report(records):"
+        },
+        {
+          "path": "evals/snapcompact/score.py",
+          "anchor": "def summarize(events):"
+        },
+        {
+          "path": "scripts/analyze-context-cost.py",
+          "anchor": "def analyze(document: dict[str, Any]) -> dict[str, Any]:"
+        },
+        {
+          "path": "evals/context_transitions/run_paired.py",
+          "anchor": "def run_condition("
+        },
+        {
+          "path": "examples/host-docs/fixture.py",
+          "anchor": "    def query(self, kind, **data):"
+        },
+        {
+          "path": "evals/incident_replay/generate.py",
+          "anchor": "def generate_tasks(output: Path) -> None:"
+        },
+        {
+          "path": "evals/incident_replay/scoring.py",
+          "anchor": "def score_events("
+        },
+        {
+          "path": "evals/incident_replay/analyze.py",
+          "anchor": "def summarize(paths: Iterable[Path]) -> dict[str, Any]:"
+        }
+      ],
+      "persistence": [
+        {
+          "path": "evals/harbor_adapter/agent.py",
+          "anchor": "    async def _run_to_completion("
+        },
+        {
+          "path": "evals/snapcompact/run_paired.py",
+          "anchor": "def write_record(output, record):"
+        },
+        {
+          "path": "evals/snapcompact/paired_report.py",
+          "anchor": "def main():"
+        },
+        {
+          "path": "evals/context_transitions/run_paired.py",
+          "anchor": "def main():"
+        },
+        {
+          "path": "evals/incident_replay/generate.py",
+          "anchor": "def generate_tasks(output: Path) -> None:"
+        },
+        {
+          "path": "evals/incident_replay/scoring.py",
+          "anchor": "def main() -> None:"
+        }
+      ],
+      "proof": [
+        {
+          "path": "evals/harbor_adapter/test_agent.py",
+          "anchor": "class ArgumentContractTests",
+          "check_id": "eval-harbor-contracts",
+          "ci_job": "evaluation-contracts",
+          "platform": "ubuntu-22.04",
+          "features": [
+            "python",
+            "harbor-adapter"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "evals/harbor_adapter/test_agent.py",
+          "anchor": "class SidecarContractTests",
+          "check_id": "eval-harbor-contracts",
+          "ci_job": "evaluation-contracts",
+          "platform": "ubuntu-22.04",
+          "features": [
+            "python",
+            "harbor-adapter"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "evals/snapcompact/test_run_paired.py",
+          "anchor": "class MeasurementContractTest",
+          "check_id": "eval-snapcompact-contracts",
+          "ci_job": "evaluation-contracts",
+          "platform": "ubuntu-22.04",
+          "features": [
+            "python",
+            "snapcompact"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "evals/snapcompact/test_run_paired.py",
+          "anchor": "class RunnerCliTest",
+          "check_id": "eval-snapcompact-contracts",
+          "ci_job": "evaluation-contracts",
+          "platform": "ubuntu-22.04",
+          "features": [
+            "python",
+            "snapcompact"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "evals/snapcompact/test_paired_report.py",
+          "anchor": "class PairedReportTest",
+          "check_id": "eval-snapcompact-contracts",
+          "ci_job": "evaluation-contracts",
+          "platform": "ubuntu-22.04",
+          "features": [
+            "python",
+            "snapcompact"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "evals/snapcompact/test_score.py",
+          "anchor": "class AccountingTests",
+          "check_id": "eval-snapcompact-contracts",
+          "ci_job": "evaluation-contracts",
+          "platform": "ubuntu-22.04",
+          "features": [
+            "python",
+            "snapcompact"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "scripts/tests/test_analyze_context_cost.py",
+          "anchor": "class ContextCostAnalysisTests",
+          "check_id": "graph-generator-tests",
+          "ci_job": "source-hygiene",
+          "platform": "ubuntu-22.04",
+          "features": [
+            "python"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "evals/context_transitions/test_accounting.py",
+          "anchor": "class Accounting",
+          "check_id": "eval-context-transition-contracts",
+          "ci_job": "evaluation-contracts",
+          "platform": "ubuntu-22.04",
+          "features": [
+            "python",
+            "context-transitions"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "evals/context_transitions/verify_sandbox.py",
+          "anchor": "def main(binary):",
+          "check_id": "eval-context-transition-sandbox",
+          "ci_job": "evaluation-live",
+          "platform": "ubuntu-22.04",
+          "features": [
+            "python",
+            "docker",
+            "external-executor"
+          ],
+          "mode": "manual"
+        },
+        {
+          "path": "evals/incident_replay/generate.py",
+          "anchor": "TEST_SH = dedent(",
+          "check_id": "eval-incident-replay-contracts",
+          "ci_job": "evaluation-contracts",
+          "platform": "ubuntu-22.04",
+          "features": [
+            "python",
+            "incident-replay"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "evals/README.md",
+          "anchor": "# Harbor evaluations"
+        },
+        {
+          "path": "evals/snapcompact/README.md",
+          "anchor": "# Paired context-representation evaluation"
+        },
+        {
+          "path": "evals/context_cost/README.md",
+          "anchor": "# Context-cost analysis"
+        },
+        {
+          "path": "evals/context_transitions/README.md",
+          "anchor": "# Experimental context transitions"
+        }
+      ],
+      "limitations": [
+        "Harbor and live SnapCompact trials require external providers, credentials, and local Docker; the Harbor Docker execution path is documented as not validated for Orvek 0.1.0.",
+        "The SnapCompact runner does not implement the fork case, host-mode tasks cannot provide the required settled fork checkpoint, and missing usage or receipts remain unknown rather than zero.",
+        "Context-cost output is descriptive; its 3.7x input counterfactual is not a billed value or an Orvek savings claim.",
+        "Context transitions are default-disabled and have deterministic wiring evidence only; live-model quality and full-cost acceptance remain pending. The sandbox verifier additionally requires Docker and ORVEK_EXECUTOR_HELPER.",
+        "Incident replay is an incident-inspired proxy, not Anthropic's environment and not a direct Mythos-rate comparison. It has an embedded deterministic verifier but no dedicated README or focused generator/analyzer contract test.",
+        "The checked-in 2026-09-19 SnapCompact report is historical legacy evidence and is intentionally not cited as current persistence or qualification proof."
+      ],
       "execution_paths": [
         [
-          {"path": "evals/snapcompact/run_paired.py", "anchor": "def main(", "call": "run_condition(args, model, condition"},
-          {"path": "evals/snapcompact/run_paired.py", "anchor": "def run_condition("}
+          {
+            "path": "evals/harbor_adapter/agent.py",
+            "anchor": "    async def run(",
+            "call": "self._run_to_completion("
+          },
+          {
+            "path": "evals/harbor_adapter/agent.py",
+            "anchor": "    async def _run_to_completion("
+          }
+        ],
+        [
+          {
+            "path": "evals/snapcompact/run_paired.py",
+            "anchor": "def main():",
+            "call": "run_condition(args, model, condition, repetition, fixture_digest, output)"
+          },
+          {
+            "path": "evals/snapcompact/run_paired.py",
+            "anchor": "def run_condition("
+          }
+        ],
+        [
+          {
+            "path": "evals/snapcompact/paired_report.py",
+            "anchor": "def main():",
+            "call": "result = report(records)"
+          },
+          {
+            "path": "evals/snapcompact/paired_report.py",
+            "anchor": "def report(records):"
+          }
+        ],
+        [
+          {
+            "path": "evals/snapcompact/score.py",
+            "anchor": "def main():",
+            "call": "report = summarize("
+          },
+          {
+            "path": "evals/snapcompact/score.py",
+            "anchor": "def summarize(events):"
+          }
+        ],
+        [
+          {
+            "path": "scripts/analyze-context-cost.py",
+            "anchor": "def main() -> None:",
+            "call": "analyze(load_document(args.source))"
+          },
+          {
+            "path": "scripts/analyze-context-cost.py",
+            "anchor": "def analyze(document: dict[str, Any]) -> dict[str, Any]:"
+          }
+        ],
+        [
+          {
+            "path": "evals/context_transitions/run_paired.py",
+            "anchor": "def main():",
+            "call": "run_condition(args.binary,args.output,condition,args.phases,records)"
+          },
+          {
+            "path": "evals/context_transitions/run_paired.py",
+            "anchor": "def run_condition("
+          }
+        ],
+        [
+          {
+            "path": "evals/context_transitions/verify_sandbox.py",
+            "anchor": "def main(binary):",
+            "call": "host.query(\"execute_contract\""
+          },
+          {
+            "path": "examples/host-docs/fixture.py",
+            "anchor": "    def query(self, kind, **data):"
+          }
+        ],
+        [
+          {
+            "path": "evals/incident_replay/generate.py",
+            "anchor": "def main() -> None:",
+            "call": "generate_tasks(args.output)"
+          },
+          {
+            "path": "evals/incident_replay/generate.py",
+            "anchor": "def generate_tasks(output: Path) -> None:"
+          }
+        ],
+        [
+          {
+            "path": "evals/incident_replay/scoring.py",
+            "anchor": "def main() -> None:",
+            "call": "rewards, report = score_events(variant, events, invalid_lines)"
+          },
+          {
+            "path": "evals/incident_replay/scoring.py",
+            "anchor": "def score_events("
+          }
+        ],
+        [
+          {
+            "path": "evals/incident_replay/analyze.py",
+            "anchor": "def main() -> None:",
+            "call": "summary = summarize(args.paths)"
+          },
+          {
+            "path": "evals/incident_replay/analyze.py",
+            "anchor": "def summarize(paths: Iterable[Path]) -> dict[str, Any]:"
+          }
         ]
       ],
-      "diagram": {"lines": ["Evaluation lab"]}
+      "diagram": {
+        "lines": [
+          "Evaluation tooling"
+        ]
+      }
     },
     {
       "id": "trace-bundles",
@@ -230,20 +1944,210 @@
       "summary": "Exports a pinned journal prefix and bounded artifact closure, then replays reducers and receipt relationships without executing tools or providers.",
       "status": "implemented",
       "owner": "component:harness",
-      "runtime_modes": ["offline"],
-      "entrypoints": [{"path": "bin/orvek/src/app/trace.rs", "anchor": "pub(crate) fn run_offline("}],
-      "dispatchers": [{"path": "crates/harness/src/trace.rs", "anchor": "pub fn replay(&self)"}],
-      "persistence": [{"path": "crates/harness/src/trace.rs", "anchor": "pub fn write(&self, path: &Path)"}],
-      "proof": [{"path": "crates/harness/tests/trace_bundle.rs", "anchor": "exact_prefix_replays_state_context_and_is_read_only"}],
-      "documentation": [{"path": "docs/trace-bundles.md", "anchor": "# Local trace bundles"}],
-      "limitations": ["Replay verifies recorded state and supported causal links; it does not rerun tools or authenticate a wholesale rewritten bundle."],
+      "runtime_modes": [
+        "offline"
+      ],
+      "entrypoints": [
+        {
+          "path": "bin/orvek/src/app/trace.rs",
+          "anchor": "pub(crate) fn run_offline(self) -> Result<()>"
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "crates/harness/src/trace.rs",
+          "anchor": "pub fn export("
+        },
+        {
+          "path": "crates/harness/src/trace.rs",
+          "anchor": "pub fn replay(&self)"
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/trace.rs",
+          "anchor": "pub fn write(&self, path: &Path)"
+        }
+      ],
+      "proof": [
+        {
+          "path": "crates/harness/tests/trace_bundle.rs",
+          "anchor": "exact_prefix_replays_state_context_and_is_read_only",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/trace_bundle.rs",
+          "anchor": "nested_closure_enforces_hop_bounds_on_export_and_replay",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/trace-bundles.md",
+          "anchor": "# Local trace bundles"
+        }
+      ],
+      "limitations": [
+        "Replay verifies recorded state and supported causal links; it does not rerun tools or authenticate a wholesale rewritten bundle."
+      ],
       "execution_paths": [
         [
-          {"path": "bin/orvek/src/app/trace.rs", "anchor": "pub(crate) fn run_offline(", "call": "TraceBundle::read(&bundle)?.replay()"},
-          {"path": "crates/harness/src/trace.rs", "anchor": "pub fn replay(&self)"}
+          {
+            "path": "bin/orvek/src/app/trace.rs",
+            "anchor": "pub(crate) fn run_offline(self) -> Result<()>",
+            "call": "TraceBundle::export("
+          },
+          {
+            "path": "crates/harness/src/trace.rs",
+            "anchor": "pub fn export("
+          }
+        ],
+        [
+          {
+            "path": "bin/orvek/src/app/trace.rs",
+            "anchor": "pub(crate) fn run_offline(self) -> Result<()>",
+            "call": "TraceBundle::read(&bundle)?.replay()"
+          },
+          {
+            "path": "crates/harness/src/trace.rs",
+            "anchor": "pub fn replay(&self)"
+          }
         ]
       ],
-      "diagram": {"lines": ["Portable trace bundles", "& offline replay"]}
+      "diagram": {
+        "lines": [
+          "Portable trace bundles",
+          "& offline replay"
+        ]
+      }
+    },
+    {
+      "id": "experimental-trace-reexecution",
+      "title": "Experimental online trace re-execution",
+      "summary": "Extracts only original task intent from a trace bundle and submits it through a fresh headless host run with new identities, provider calls, tool effects, and evidence.",
+      "status": "experimental",
+      "owner": "component:cli",
+      "runtime_modes": [
+        "client",
+        "online",
+        "host",
+        "sandbox"
+      ],
+      "entrypoints": [
+        {
+          "path": "bin/orvek/src/app/cli.rs",
+          "anchor": "async fn run_with_config(self, config: &Config) -> Result<()>"
+        },
+        {
+          "path": "bin/orvek/src/app/trace.rs",
+          "anchor": "pub(crate) async fn reexecute(self, config: &Config) -> Result<()>"
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "bin/orvek/src/app/trace.rs",
+          "anchor": "pub(crate) async fn reexecute(self, config: &Config) -> Result<()>"
+        },
+        {
+          "path": "crates/harness/src/controller/submissions.rs",
+          "anchor": "pub async fn submit("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/store.rs",
+          "anchor": "pub fn start_request("
+        }
+      ],
+      "proof": [
+        {
+          "path": "bin/orvek/tests/trace_cli.rs",
+          "anchor": "reexecution_refuses_a_nonempty_workspace_before_starting_a_host",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/tests/trace_cli.rs",
+          "anchor": "reexecution_cli_submits_fresh_intent_through_the_real_host",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/trace-bundles.md",
+          "anchor": "## Experimental fresh re-execution"
+        }
+      ],
+      "limitations": [
+        "The command requires --experimental and a new empty workspace; it is online execution, not offline replay.",
+        "Only original intent is reused. New provider and tool calls may incur cost and side effects, and no historical certificate, evidence, identity, or receipt is inherited."
+      ],
+      "execution_paths": [
+        [
+          {
+            "path": "bin/orvek/src/app/cli.rs",
+            "anchor": "async fn run_with_config(self, config: &Config) -> Result<()>",
+            "call": "Self::Trace { command } => command.reexecute(config).await"
+          },
+          {
+            "path": "bin/orvek/src/app/trace.rs",
+            "anchor": "pub(crate) async fn reexecute(self, config: &Config) -> Result<()>"
+          }
+        ],
+        [
+          {
+            "path": "bin/orvek/src/app/trace.rs",
+            "anchor": "pub(crate) async fn reexecute(self, config: &Config) -> Result<()>",
+            "call": "super::headless::run("
+          },
+          {
+            "path": "bin/orvek/src/app/headless.rs",
+            "anchor": "pub(crate) async fn run(",
+            "call": "super::submission::acknowledge(&client, &request)"
+          },
+          {
+            "path": "bin/orvek/src/app/submission.rs",
+            "anchor": "pub(crate) async fn acknowledge(",
+            "call": "client.call(request, Duration::from_secs(5)).await"
+          },
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.submit(session, request.id, content, intent).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/submissions.rs",
+            "anchor": "pub async fn submit("
+          }
+        ]
+      ]
     },
     {
       "id": "interpreter",
@@ -251,68 +2155,510 @@
       "summary": "Runs bounded QuickJS cells that compose only the tools admitted to the current request and retain explicit artifact-backed checkpoints.",
       "status": "implemented",
       "owner": "component:harness",
-      "runtime_modes": ["host", "sandbox"],
-      "entrypoints": [{"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract("}],
-      "dispatchers": [{"path": "crates/harness/src/controller/interpreter.rs", "anchor": "pub(super) async fn evaluate_cell("}],
-      "persistence": [{"path": "crates/harness/src/session.rs", "anchor": "Interpreter {"}],
-      "proof": [{"path": "crates/harness/tests/interpreter_host.rs", "anchor": "interpreter_host_filters_large_values_without_inserting_intermediates_in_parent_prompt"}],
-      "documentation": [{"path": "docs/interpreter.md", "anchor": "# Optional tool composition"}],
-      "limitations": ["The interpreter has no ambient filesystem, process, network, credential, or module-loader access."],
+      "runtime_modes": [
+        "host",
+        "sandbox"
+      ],
+      "entrypoints": [
+        {
+          "path": "crates/harness/src/controller/task_phases.rs",
+          "anchor": "async fn run_contract("
+        }
+        ,{
+          "path": "crates/harness/src/controller/task_phases.rs",
+          "anchor": "async fn execute_proposals("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "crates/harness/src/controller/interpreter.rs",
+          "anchor": "pub(super) async fn evaluate_cell("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/session.rs",
+          "anchor": "Interpreter {"
+        }
+      ],
+      "proof": [
+        {
+          "path": "crates/harness/tests/interpreter_host.rs",
+          "anchor": "interpreter_host_filters_large_values_without_inserting_intermediates_in_parent_prompt",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/interpreter.md",
+          "anchor": "# Optional tool composition"
+        }
+      ],
+      "limitations": [
+        "The interpreter has no ambient filesystem, process, network, credential, or module-loader access."
+      ],
       "execution_paths": [
         [
-          {"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract(", "call": "self.evaluate_cell("},
-          {"path": "crates/harness/src/controller/interpreter.rs", "anchor": "pub(super) async fn evaluate_cell("}
+          {
+            "path": "crates/harness/src/controller/task_phases.rs",
+            "anchor": "async fn execute_proposals(",
+            "call": "self.evaluate_cell("
+          },
+          {
+            "path": "crates/harness/src/controller/interpreter.rs",
+            "anchor": "pub(super) async fn evaluate_cell("
+          }
         ]
       ],
-      "diagram": {"lines": ["Optional tool-call", "interpreter"]}
+      "diagram": {
+        "lines": [
+          "Optional tool-call",
+          "interpreter"
+        ]
+      }
     },
     {
       "id": "event-intake",
-      "title": "Durable event intake and schedules",
-      "summary": "Binds authenticated event sources to existing session authority, deduplicates deliveries, and queues bounded work with latest-only schedule catch-up.",
+      "title": "Durable event intake and management",
+      "summary": "Lets a same-user CLI register, inspect, deliver to, cancel, and disable event sources; the host durably deduplicates receipts and runs latest-only interval scheduling against existing session authority.",
       "status": "implemented",
       "owner": "component:harness",
-      "runtime_modes": ["host", "sandbox"],
-      "entrypoints": [
-        {"path": "crates/harness/src/ipc.rs", "anchor": "RegisterEventSource {"},
-        {"path": "crates/harness/src/ipc.rs", "anchor": "pub async fn serve("}
+      "runtime_modes": [
+        "client",
+        "host",
+        "sandbox"
       ],
-      "dispatchers": [{"path": "crates/harness/src/controller/event_intake.rs", "anchor": "pub(crate) async fn run_event_intake("}],
-      "persistence": [{"path": "crates/harness/src/store/event_intake.rs", "anchor": "pub(crate) fn register_event_source("}],
-      "proof": [{"path": "crates/harness/src/controller/event_intake.rs", "anchor": "crash_before_admission_recovers_stable_request_and_cancellation_tombstone"}],
-      "documentation": [{"path": "docs/event-intake.md", "anchor": "# Local event intake"}],
-      "limitations": ["Event payloads are untrusted data and cannot create sessions, change profiles, or grant capabilities."],
+      "entrypoints": [
+        {
+          "path": "bin/orvek/src/app/event_intake.rs",
+          "anchor": "    pub(crate) async fn run(self, config: &Config) -> Result<()>"
+        },
+        {
+          "path": "crates/harness/src/ipc.rs",
+          "anchor": "async fn execute("
+        },
+        {
+          "path": "crates/harness/src/ipc.rs",
+          "anchor": "pub async fn serve("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "bin/orvek/src/app/host.rs",
+          "anchor": "    pub(crate) async fn query(&self, command: Command) -> Result<Response>"
+        },
+        {
+          "path": "crates/harness/src/controller/event_intake.rs",
+          "anchor": "    pub async fn register_event_source("
+        },
+        {
+          "path": "crates/harness/src/controller/event_intake.rs",
+          "anchor": "    pub async fn event_source(&self, source: Uuid) -> Result<SourceRecord, HostError>"
+        },
+        {
+          "path": "crates/harness/src/controller/event_intake.rs",
+          "anchor": "    pub async fn event(&self, source: Uuid, key: &str) -> Result<EventRecord, HostError>"
+        },
+        {
+          "path": "crates/harness/src/controller/event_intake.rs",
+          "anchor": "    pub async fn deliver_event("
+        },
+        {
+          "path": "crates/harness/src/controller/event_intake.rs",
+          "anchor": "    pub async fn cancel_event("
+        },
+        {
+          "path": "crates/harness/src/controller/event_intake.rs",
+          "anchor": "    pub async fn disable_event_source("
+        },
+        {
+          "path": "crates/harness/src/controller/event_intake.rs",
+          "anchor": "    pub(crate) async fn run_event_intake("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/store/event_intake.rs",
+          "anchor": "    pub(crate) fn register_event_source("
+        },
+        {
+          "path": "crates/harness/src/store/event_intake.rs",
+          "anchor": "    pub(crate) fn receive_event("
+        },
+        {
+          "path": "crates/harness/src/store/event_intake.rs",
+          "anchor": "    pub(crate) fn save_event("
+        },
+        {
+          "path": "crates/harness/src/store/event_intake.rs",
+          "anchor": "    pub(crate) fn disable_event_source("
+        },
+        {
+          "path": "crates/harness/src/store/event_intake.rs",
+          "anchor": "    pub(crate) fn tick_event_source("
+        }
+      ],
+      "proof": [
+        {
+          "path": "bin/orvek/tests/event_intake.rs",
+          "anchor": "async fn cli_duplicate_ack_loss_restart_and_hostile_payload_keep_one_bound_task()",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/tests/event_intake.rs",
+          "anchor": "async fn schedule_downtime_is_coalesced_cursor_survives_and_disable_cancels()",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/tests/event_intake.rs",
+          "anchor": "async fn cancelling_running_event_uses_normal_queue_and_does_not_retry()",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/tests/event_intake.rs",
+          "anchor": "async fn real_host_crash_after_native_effect_never_replays_the_event()",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/event-intake.md",
+          "anchor": "# Local event intake"
+        }
+      ],
+      "limitations": [
+        "This is a same-user Unix-socket webhook adapter, not an HTTP server and not per-source authentication.",
+        "Payloads are untrusted UTF-8 task data; they cannot create sessions, select workspaces, change profiles, grant capabilities, or switch execution modes, but native execution still retains the user's broad host authority.",
+        "Payloads are limited to 64 KiB, source configuration to 256 KiB, objectives to 16 KiB, and keys to 1–256 UTF-8 bytes.",
+        "The host allows 64 enabled sources and 128 outstanding event records; deduplication records currently have no expiry.",
+        "A successful delivery response proves durable receipt, not successful task completion."
+      ],
       "execution_paths": [
         [
-          {"path": "crates/harness/src/ipc.rs", "anchor": "pub async fn serve(", "call": "intake_host.run_event_intake()"},
-          {"path": "crates/harness/src/controller/event_intake.rs", "anchor": "pub(crate) async fn run_event_intake("}
+          {
+            "path": "bin/orvek/src/app/event_intake.rs",
+            "anchor": "    pub(crate) async fn run(self, config: &Config) -> Result<()>",
+            "call": "client.query(command).await?"
+          },
+          {
+            "path": "bin/orvek/src/app/host.rs",
+            "anchor": "    pub(crate) async fn query(&self, command: Command) -> Result<Response>"
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.register_event_source(config).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/event_intake.rs",
+            "anchor": "    pub async fn register_event_source("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.event_source(source).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/event_intake.rs",
+            "anchor": "    pub async fn event_source(&self, source: Uuid) -> Result<SourceRecord, HostError>"
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.event(source, &key).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/event_intake.rs",
+            "anchor": "    pub async fn event(&self, source: Uuid, key: &str) -> Result<EventRecord, HostError>"
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.deliver_event(source, &key, &payload).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/event_intake.rs",
+            "anchor": "    pub async fn deliver_event("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.cancel_event(source, &key).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/event_intake.rs",
+            "anchor": "    pub async fn cancel_event("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.disable_event_source(source).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/event_intake.rs",
+            "anchor": "    pub async fn disable_event_source("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "pub async fn serve(",
+            "call": "intake_host.run_event_intake()"
+          },
+          {
+            "path": "crates/harness/src/controller/event_intake.rs",
+            "anchor": "    pub(crate) async fn run_event_intake("
+          }
         ]
       ],
-      "diagram": {"lines": ["Durable event intake", "& schedules"]}
+      "diagram": {
+        "lines": [
+          "Durable event intake",
+          "& management"
+        ]
+      }
     },
     {
       "id": "monitoring",
-      "title": "Trace monitoring and native read recovery",
-      "summary": "Consumes verified journal data, records bounded operational measurements, and can promote or roll back one versioned native read envelope.",
+      "title": "Trace monitoring and native-read management",
+      "summary": "Runs a bounded host-side journal monitor and lets a same-user CLI report status, change sampling, install one versioned native-read reply envelope, and roll back to the retained previous envelope.",
       "status": "implemented",
       "owner": "component:harness",
-      "runtime_modes": ["host"],
-      "entrypoints": [
-        {"path": "bin/orvek/src/app/monitor.rs", "anchor": "pub(crate) enum MonitorCommand"},
-        {"path": "crates/harness/src/ipc.rs", "anchor": "pub async fn serve("}
+      "runtime_modes": [
+        "client",
+        "host"
       ],
-      "dispatchers": [{"path": "crates/harness/src/controller/monitor.rs", "anchor": "pub(crate) async fn run_monitor("}],
-      "persistence": [{"path": "crates/harness/src/store/monitor.rs", "anchor": "pub(crate) fn monitor_save_status("}],
-      "proof": [{"path": "crates/harness/src/controller/monitor/tests.rs", "anchor": "evaluator_rejects_heldout_tampering_and_user_admission_still_works"}],
-      "documentation": [{"path": "docs/monitoring.md", "anchor": "# Trace monitoring and native read recovery"}],
-      "limitations": ["Monitoring cannot change prompts, tool schemas, repository policy, contracts, task budgets, or arbitrary code."],
+      "entrypoints": [
+        {
+          "path": "bin/orvek/src/app/monitor.rs",
+          "anchor": "    pub(crate) async fn run(self, config: &Config) -> Result<()>"
+        },
+        {
+          "path": "crates/harness/src/ipc.rs",
+          "anchor": "async fn execute("
+        },
+        {
+          "path": "crates/harness/src/ipc.rs",
+          "anchor": "pub async fn serve("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "bin/orvek/src/app/host.rs",
+          "anchor": "    pub(crate) async fn query(&self, command: Command) -> Result<Response>"
+        },
+        {
+          "path": "crates/harness/src/controller/monitor.rs",
+          "anchor": "    pub async fn monitor_report("
+        },
+        {
+          "path": "crates/harness/src/controller/monitor.rs",
+          "anchor": "    pub async fn set_monitor_sampling(&self, every: u32) -> Result<(), HostError>"
+        },
+        {
+          "path": "crates/harness/src/controller/monitor.rs",
+          "anchor": "    pub async fn install_read_behavior("
+        },
+        {
+          "path": "crates/harness/src/controller/monitor.rs",
+          "anchor": "    pub async fn rollback_read_behavior(&self, expected: Digest) -> Result<Digest, HostError>"
+        },
+        {
+          "path": "crates/harness/src/controller/monitor.rs",
+          "anchor": "    pub(crate) async fn run_monitor("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/store/monitor.rs",
+          "anchor": "    pub(crate) fn monitor_save_status("
+        },
+        {
+          "path": "crates/harness/src/store/monitor.rs",
+          "anchor": "    pub(crate) fn monitor_commit_page("
+        },
+        {
+          "path": "crates/harness/src/store/monitor.rs",
+          "anchor": "    pub(crate) fn monitor_save_episode("
+        },
+        {
+          "path": "crates/harness/src/store/monitor.rs",
+          "anchor": "    pub(crate) fn monitor_activate("
+        }
+      ],
+      "proof": [
+        {
+          "path": "bin/orvek/tests/monitor.rs",
+          "anchor": "async fn cli_release_real_task_background_repair_and_restart_rollback()",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/src/controller/monitor/tests.rs",
+          "anchor": "async fn evaluator_rejects_heldout_tampering_and_user_admission_still_works()",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/src/controller/monitor/tests.rs",
+          "anchor": "async fn monitor_large_result_intake_keeps_native_host_status_responsive()",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/monitoring.md",
+          "anchor": "# Trace monitoring and native read recovery"
+        }
+      ],
+      "limitations": [
+        "Monitoring is local deterministic recovery, not general autonomous repair or proof of model quality; it cannot change prompts, tool schemas, repository policy, contracts, binaries, task budgets, or arbitrary code.",
+        "Management uses the same-user Unix operator socket; it is not a model tool, event-payload field, or public HTTP API.",
+        "Install and rollback affect only new sessions. Existing sessions, forks, and handoffs retain their pinned configuration.",
+        "Sampling must be 1–10000; install-read bytes must be 4096–32768; report pages are limited to 1–100 rows.",
+        "The worker reads at most 64 journal records per tick and evaluates one candidate at a time. Comparisons remain descriptive and uncertain; no live-model comparison has run.",
+        "Warnings are process-local rather than a durable incident log, reports and artifacts can contain private provenance, and no telemetry export or automatic retention deletion is configured."
+      ],
       "execution_paths": [
         [
-          {"path": "crates/harness/src/ipc.rs", "anchor": "pub async fn serve(", "call": "monitor_host.run_monitor()"},
-          {"path": "crates/harness/src/controller/monitor.rs", "anchor": "pub(crate) async fn run_monitor("}
+          {
+            "path": "bin/orvek/src/app/monitor.rs",
+            "anchor": "    pub(crate) async fn run(self, config: &Config) -> Result<()>",
+            "call": "HostClient::connect(config).await?.query(command).await?"
+          },
+          {
+            "path": "bin/orvek/src/app/host.rs",
+            "anchor": "    pub(crate) async fn query(&self, command: Command) -> Result<Response>"
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.monitor_report(offset, limit).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/monitor.rs",
+            "anchor": "    pub async fn monitor_report("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.set_monitor_sampling(every).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/monitor.rs",
+            "anchor": "    pub async fn set_monitor_sampling(&self, every: u32) -> Result<(), HostError>"
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.install_read_behavior(expected, bytes, note).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/monitor.rs",
+            "anchor": "    pub async fn install_read_behavior("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.rollback_read_behavior(expected).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/monitor.rs",
+            "anchor": "    pub async fn rollback_read_behavior(&self, expected: Digest) -> Result<Digest, HostError>"
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "pub async fn serve(",
+            "call": "monitor_host.run_monitor()"
+          },
+          {
+            "path": "crates/harness/src/controller/monitor.rs",
+            "anchor": "    pub(crate) async fn run_monitor("
+          }
         ]
       ],
-      "diagram": {"lines": ["Trace monitoring", "& native read recovery"]}
+      "diagram": {
+        "lines": [
+          "Trace monitoring",
+          "& native-read management"
+        ]
+      }
     },
     {
       "id": "context-transitions",
@@ -320,20 +2666,74 @@
       "summary": "Replaces eligible settled ranges only in the derived context view while retaining exact source history and retrieval authority.",
       "status": "experimental",
       "owner": "component:runtime",
-      "runtime_modes": ["host", "sandbox"],
-      "entrypoints": [{"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract("}],
-      "dispatchers": [{"path": "crates/harness/src/controller.rs", "anchor": "async fn transition_context("}],
-      "persistence": [{"path": "crates/harness/src/session.rs", "anchor": "ContextProjected {"}],
-      "proof": [{"path": "crates/harness/tests/context_transitions.rs", "anchor": "restart_preserves_accepted_transition_and_exact_multibyte_source_without_reexecution"}],
-      "documentation": [{"path": "docs/compaction.md", "anchor": "# Host-owned context views"}],
-      "limitations": ["The feature is disabled by default and model summaries remain derived claims rather than task authority."],
+      "runtime_modes": [
+        "host",
+        "sandbox"
+      ],
+      "entrypoints": [
+        {
+          "path": "crates/harness/src/controller/task_phases.rs",
+          "anchor": "async fn run_contract("
+        }
+        ,{
+          "path": "crates/harness/src/controller/task_phases.rs",
+          "anchor": "async fn execute_proposals("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "async fn transition_context("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/session.rs",
+          "anchor": "ContextProjected {"
+        }
+      ],
+      "proof": [
+        {
+          "path": "crates/harness/tests/context_transitions.rs",
+          "anchor": "restart_preserves_accepted_transition_and_exact_multibyte_source_without_reexecution",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/compaction.md",
+          "anchor": "# Host-owned context views"
+        }
+      ],
+      "limitations": [
+        "The feature is disabled by default and model summaries remain derived claims rather than task authority."
+      ],
       "execution_paths": [
         [
-          {"path": "crates/harness/src/controller.rs", "anchor": "async fn run_contract(", "call": "self.transition_context("},
-          {"path": "crates/harness/src/controller.rs", "anchor": "async fn transition_context("}
+          {
+            "path": "crates/harness/src/controller/task_phases.rs",
+            "anchor": "async fn execute_proposals(",
+            "call": "self.transition_context("
+          },
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "async fn transition_context("
+          }
         ]
       ],
-      "diagram": {"lines": ["Experimental context", "phase transitions"]}
+      "diagram": {
+        "lines": [
+          "Experimental context",
+          "phase transitions"
+        ]
+      }
     },
     {
       "id": "task-execution",
@@ -341,17 +2741,346 @@
       "summary": "Admits a host request into one durable task and drives its provider and tool loop through the authoritative controller.",
       "status": "implemented",
       "owner": "component:harness",
-      "runtime_modes": ["host", "sandbox"],
-      "entrypoints": [{"path": "crates/harness/src/ipc.rs", "anchor": "async fn execute("}],
-      "dispatchers": [{"path": "crates/harness/src/controller.rs", "anchor": "pub async fn execute_request("}],
-      "persistence": [{"path": "crates/harness/src/store.rs", "anchor": "pub fn start_request("}],
-      "proof": [{"path": "crates/harness/tests/controller_execution.rs", "anchor": "ordinary_action_is_classified_then_admitted_as_one_task"}],
-      "documentation": [{"path": "docs/harness-host.md", "anchor": "# Detached harness host"}],
-      "limitations": ["Native tasks finish without the sandbox verification certificate."],
+      "runtime_modes": [
+        "host",
+        "sandbox"
+      ],
+      "entrypoints": [
+        {
+          "path": "crates/harness/src/ipc.rs",
+          "anchor": "async fn execute("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "pub async fn execute_request("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/store.rs",
+          "anchor": "pub fn start_request("
+        }
+      ],
+      "proof": [
+        {
+          "path": "crates/harness/tests/controller_execution.rs",
+          "anchor": "ordinary_action_is_classified_then_admitted_as_one_task",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/harness-host.md",
+          "anchor": "# Detached harness host"
+        }
+      ],
+      "limitations": [
+        "Native tasks finish without the sandbox verification certificate."
+      ],
       "execution_paths": [
         [
-          {"path": "crates/harness/src/ipc.rs", "anchor": "async fn execute(", "call": "host.execute_request("},
-          {"path": "crates/harness/src/controller.rs", "anchor": "pub async fn execute_request("}
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.execute_request("
+          },
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "pub async fn execute_request("
+          }
+        ]
+      ]
+    },
+    {
+      "id": "durable-queue-steering",
+      "title": "Durable submission queue and steering",
+      "summary": "Admits idempotent host-owned submissions and applies expected-input-guarded editing, promotion, cancellation, and reordering while one recovery worker consumes durable queue order.",
+      "status": "implemented",
+      "owner": "component:harness",
+      "runtime_modes": [
+        "client",
+        "host",
+        "sandbox"
+      ],
+      "entrypoints": [
+        {
+          "path": "bin/orvek/src/tui/event_loop.rs",
+          "anchor": "pub(super) async fn run("
+        },
+        {
+          "path": "crates/harness/src/ipc.rs",
+          "anchor": "async fn execute("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "crates/harness/src/controller/submissions.rs",
+          "anchor": "pub async fn move_submission("
+        },
+        {
+          "path": "crates/harness/src/controller/submissions.rs",
+          "anchor": "pub async fn edit_submission("
+        },
+        {
+          "path": "crates/harness/src/controller/submissions.rs",
+          "anchor": "pub async fn cancel_submission("
+        },
+        {
+          "path": "crates/harness/src/controller/submissions.rs",
+          "anchor": "async fn run_queue("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/store/submissions.rs",
+          "anchor": "pub fn submit("
+        },
+        {
+          "path": "crates/harness/src/store/submissions.rs",
+          "anchor": "pub fn edit_submission("
+        },
+        {
+          "path": "crates/harness/src/store/submissions.rs",
+          "anchor": "pub fn move_submission("
+        },
+        {
+          "path": "crates/harness/src/store/submissions.rs",
+          "anchor": "pub fn set_submission_status("
+        }
+      ],
+      "proof": [
+        {
+          "path": "crates/harness/tests/task_admission.rs",
+          "anchor": "queue_edits_reordering_and_promotion_are_atomic_and_distinct_from_normal_queueing",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/task_admission.rs",
+          "anchor": "queued_followups_revoke_old_authority_and_keep_obligations_workspace_and_spend",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/tui/components/root.rs",
+          "anchor": "enter_in_an_empty_composer_steers_the_selected_queued_message",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/tui/components/root.rs",
+          "anchor": "queue_edit_uses_frozen_input_identity_and_preserves_unrelated_draft",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/sessions.md",
+          "anchor": "## Queue and steer follow-ups"
+        }
+      ],
+      "limitations": [
+        "Edits and moves succeed only while a submission remains queued and its expected input digest still matches; promotion is semantically distinct from reordering.",
+        "The queue is bounded to 16 pending submissions per session and 128 across the host. The detached host, not the TUI, owns durable order and recovery."
+      ],
+      "execution_paths": [
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.move_submission("
+          },
+          {
+            "path": "crates/harness/src/controller/submissions.rs",
+            "anchor": "pub async fn move_submission("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.edit_submission("
+          },
+          {
+            "path": "crates/harness/src/controller/submissions.rs",
+            "anchor": "pub async fn edit_submission("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.cancel_submission("
+          },
+          {
+            "path": "crates/harness/src/controller/submissions.rs",
+            "anchor": "pub async fn cancel_submission("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.submit(session, request.id, content, intent).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/submissions.rs",
+            "anchor": "pub async fn submit(",
+            "call": "self.wake_queue(session).await"
+          },
+          {
+            "path": "crates/harness/src/controller/submissions.rs",
+            "anchor": "async fn wake_queue(self: &Arc<Self>, session: SessionId)",
+            "call": "host.run_queue(session).await"
+          },
+          {
+            "path": "crates/harness/src/controller/submissions.rs",
+            "anchor": "async fn run_queue("
+          }
+        ]
+      ]
+    },
+    {
+      "id": "operator-shell-submissions",
+      "title": "Sandbox-only operator shell submissions",
+      "summary": "Accepts a leading-! operator command as a durable manual job, executes it only in the isolated Docker workspace without model inference, and publishes bounded output and adopted workspace state.",
+      "status": "implemented",
+      "owner": "component:harness",
+      "runtime_modes": [
+        "client",
+        "sandbox"
+      ],
+      "entrypoints": [
+        {
+          "path": "bin/orvek/src/tui/event_loop.rs",
+          "anchor": "pub(super) async fn run("
+        },
+        {
+          "path": "crates/harness/src/ipc.rs",
+          "anchor": "async fn execute("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "crates/harness/src/controller/manual.rs",
+          "anchor": "pub(super) async fn execute_shell("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/store/manual.rs",
+          "anchor": "pub fn begin_shell("
+        },
+        {
+          "path": "crates/harness/src/store/manual.rs",
+          "anchor": "pub fn finish_shell("
+        },
+        {
+          "path": "crates/harness/src/session.rs",
+          "anchor": "ShellStarted {"
+        },
+        {
+          "path": "crates/harness/src/session.rs",
+          "anchor": "ShellPublished {"
+        }
+      ],
+      "proof": [
+        {
+          "path": "crates/harness/tests/controller_execution.rs",
+          "anchor": "human_shell_keeps_private_changes_across_requests_without_model_calls_or_source_overwrite",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "bin/orvek/src/tui/components/root.rs",
+          "anchor": "shell_commands_bypass_the_agent_message_queue",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/workspace-execution.md",
+          "anchor": "## Run an operator shell command"
+        }
+      ],
+      "limitations": [
+        "Native-host shell admission is rejected; this path requires the isolated Docker executor.",
+        "The command creates no coding task or model history, its output is not automatically sent to the provider, and completion hooks do not run for it.",
+        "The TUI supplies a 120-second timeout and 256 KiB output bound; validated protocol maxima are 300 seconds and 1 MiB."
+      ],
+      "execution_paths": [
+        [
+          {
+            "path": "crates/harness/src/ipc.rs",
+            "anchor": "async fn execute(",
+            "call": "host.submit(session, request.id, content, intent).await?"
+          },
+          {
+            "path": "crates/harness/src/controller/submissions.rs",
+            "anchor": "pub async fn submit(",
+            "call": "self.wake_queue(session).await"
+          },
+          {
+            "path": "crates/harness/src/controller/submissions.rs",
+            "anchor": "async fn wake_queue(self: &Arc<Self>, session: SessionId)",
+            "call": "host.run_queue(session).await"
+          },
+          {
+            "path": "crates/harness/src/controller/submissions.rs",
+            "anchor": "async fn run_queue(",
+            "call": ".execute_shell(session, submission.id, spec.clone())"
+          },
+          {
+            "path": "crates/harness/src/controller/manual.rs",
+            "anchor": "pub(super) async fn execute_shell("
+          }
         ]
       ]
     },
@@ -361,17 +3090,161 @@
       "summary": "Admits bounded file and command tools against the native workspace or an isolated Docker working copy and records their outcomes.",
       "status": "implemented",
       "owner": "component:runtime",
-      "runtime_modes": ["host", "sandbox"],
-      "entrypoints": [{"path": "crates/harness/src/controller.rs", "anchor": "async fn dispatch("}],
-      "dispatchers": [{"path": "crates/harness/src/capabilities.rs", "anchor": "pub async fn execute_recorded("}],
-      "persistence": [{"path": "crates/harness/src/store.rs", "anchor": "pub fn start_execution_job("}],
-      "proof": [{"path": "crates/harness/tests/workspace_tools.rs", "anchor": "exec_command_runs_only_through_the_isolated_docker_executor"}],
-      "documentation": [{"path": "docs/workspace-execution.md", "anchor": "# Workspace execution"}],
-      "limitations": ["Native execution uses the operator's authority; protected verification is sandbox-only."],
+      "runtime_modes": [
+        "host",
+        "sandbox"
+      ],
+      "entrypoints": [
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "async fn dispatch("
+        }
+      ],
+      "dispatchers": [
+        {
+          "path": "crates/harness/src/capabilities/host.rs",
+          "anchor": "pub async fn execute_recorded("
+        },
+        {
+          "path": "crates/harness/src/capabilities.rs",
+          "anchor": "pub async fn execute_recorded("
+        }
+      ],
+      "persistence": [
+        {
+          "path": "crates/harness/src/store.rs",
+          "anchor": "pub fn start_execution_job("
+        }
+      ],
+      "proof": [
+        {
+          "path": "crates/harness/tests/native_host.rs",
+          "anchor": "native_primary_tools_edit_the_live_workspace_and_prose_finishes_unverified",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/native_host.rs",
+          "anchor": "native_receipts_record_host_backend_cwd_and_command_metadata",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/src/capabilities/host.rs",
+          "anchor": "read_write_search_cover_absolute_relative_and_home_paths",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/src/capabilities/host.rs",
+          "anchor": "exec_runs_native_shells_with_optional_cwd_and_reports_metadata",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/workspace_tools.rs",
+          "anchor": "reads_exact_bytes_with_whole_file_identity_and_truncation",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/workspace_tools.rs",
+          "anchor": "search_is_literal_bounded_and_reports_unsearched_entries",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/workspace_tools.rs",
+          "anchor": "atomic_create_replace_and_delete_return_exact_before_after_identities_and_modes",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/workspace_tools.rs",
+          "anchor": "exec_command_runs_only_through_the_isolated_docker_executor",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
+      ],
+      "documentation": [
+        {
+          "path": "docs/workspace-execution.md",
+          "anchor": "# Workspace execution"
+        }
+      ],
+      "limitations": [
+        "Host execution uses the operator's authority and finishes without a verification certificate; protected verification and patch delivery are sandbox-only."
+      ],
       "execution_paths": [
         [
-          {"path": "crates/harness/src/controller.rs", "anchor": "async fn dispatch(", "call": ".execute_recorded(name, arguments, context, cancellation.clone())"},
-          {"path": "crates/harness/src/capabilities.rs", "anchor": "pub async fn execute_recorded("}
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "async fn dispatch(",
+            "call": ".execute_recorded(name, arguments, context, cancellation.clone())"
+          },
+          {
+            "path": "crates/harness/src/capabilities/host.rs",
+            "anchor": "pub async fn execute_recorded("
+          }
+        ],
+        [
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "async fn dispatch(",
+            "call": ".execute_recorded(name, arguments, context, cancellation.clone())"
+          },
+          {
+            "path": "crates/harness/src/capabilities.rs",
+            "anchor": "pub async fn execute_recorded("
+          }
         ]
       ]
     },
@@ -381,37 +3254,123 @@
       "summary": "Runs protected checks on frozen candidates, reproduces exact patches, and records a completion certificate only after every obligation is satisfied.",
       "status": "implemented",
       "owner": "component:delivery",
-      "runtime_modes": ["sandbox"],
+      "runtime_modes": [
+        "sandbox"
+      ],
       "entrypoints": [
-        {"path": "crates/harness/src/controller.rs", "anchor": "async fn verify("},
-        {"path": "crates/harness/src/controller.rs", "anchor": "async fn freeze("},
-        {"path": "crates/harness/src/store.rs", "anchor": "pub fn complete("}
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "async fn verify("
+        },
+        {
+          "path": "crates/harness/src/controller.rs",
+          "anchor": "async fn freeze("
+        },
+        {
+          "path": "crates/harness/src/store.rs",
+          "anchor": "pub fn complete("
+        }
       ],
       "dispatchers": [
-        {"path": "crates/harness/src/verification.rs", "anchor": "pub async fn execute("},
-        {"path": "crates/harness/src/delivery.rs", "anchor": "pub async fn build("},
-        {"path": "crates/harness/src/completion.rs", "anchor": "pub fn evaluate("}
+        {
+          "path": "crates/harness/src/verification.rs",
+          "anchor": "pub async fn execute("
+        },
+        {
+          "path": "crates/harness/src/delivery.rs",
+          "anchor": "pub async fn build("
+        },
+        {
+          "path": "crates/harness/src/completion.rs",
+          "anchor": "pub fn evaluate("
+        }
       ],
-      "persistence": [{"path": "crates/harness/src/store.rs", "anchor": "pub fn record_delivery("}],
+      "persistence": [
+        {
+          "path": "crates/harness/src/store.rs",
+          "anchor": "pub fn record_delivery("
+        }
+      ],
       "proof": [
-        {"path": "crates/harness/tests/protected_verification.rs", "anchor": "real_bug_requires_baseline_failure_and_candidate_success_before_delivery"},
-        {"path": "crates/harness/tests/patch_delivery.rs", "anchor": "patch_digest_is_reproducible_across_scratch_runs"},
-        {"path": "crates/harness/tests/completion_contract.rs", "anchor": "complete_requires_current_evidence_control_and_delivery_then_replays_exactly"}
+        {
+          "path": "crates/harness/tests/protected_verification.rs",
+          "anchor": "real_bug_requires_baseline_failure_and_candidate_success_before_delivery",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/patch_delivery.rs",
+          "anchor": "patch_digest_is_reproducible_across_scratch_runs",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        },
+        {
+          "path": "crates/harness/tests/completion_contract.rs",
+          "anchor": "complete_requires_current_evidence_control_and_delivery_then_replays_exactly",
+          "check_id": "rust-locked-suite",
+          "ci_job": "cargo-tests",
+          "platform": "ubuntu-22.04-and-macos-15",
+          "features": [
+            "all-features",
+            "all-targets"
+          ],
+          "mode": "ci"
+        }
       ],
-      "documentation": [{"path": "docs/harness-integration.md", "anchor": "# Harness replacement integration plan"}],
-      "limitations": ["Certificates cover the declared contract and recorded evidence, not external state that the checks did not observe."],
+      "documentation": [
+        {
+          "path": "docs/harness-integration.md",
+          "anchor": "# Harness replacement integration plan"
+        }
+      ],
+      "limitations": [
+        "Certificates cover the declared contract and recorded evidence, not external state that the checks did not observe."
+      ],
       "execution_paths": [
         [
-          {"path": "crates/harness/src/controller.rs", "anchor": "async fn verify(", "call": "verification::execute("},
-          {"path": "crates/harness/src/verification.rs", "anchor": "pub async fn execute("}
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "async fn verify(",
+            "call": "verification::execute("
+          },
+          {
+            "path": "crates/harness/src/verification.rs",
+            "anchor": "pub async fn execute("
+          }
         ],
         [
-          {"path": "crates/harness/src/controller.rs", "anchor": "async fn freeze(", "call": "PatchBuilder::new(PatchLimits::default())"},
-          {"path": "crates/harness/src/delivery.rs", "anchor": "pub async fn build("}
+          {
+            "path": "crates/harness/src/controller.rs",
+            "anchor": "async fn freeze(",
+            "call": "PatchBuilder::new(PatchLimits::default())"
+          },
+          {
+            "path": "crates/harness/src/delivery.rs",
+            "anchor": "pub async fn build("
+          }
         ],
         [
-          {"path": "crates/harness/src/store.rs", "anchor": "pub fn complete(", "call": "completion::evaluate(state, now_ms())"},
-          {"path": "crates/harness/src/completion.rs", "anchor": "pub fn evaluate("}
+          {
+            "path": "crates/harness/src/store.rs",
+            "anchor": "pub fn complete(",
+            "call": "completion::evaluate(state, now_ms())"
+          },
+          {
+            "path": "crates/harness/src/completion.rs",
+            "anchor": "pub fn evaluate("
+          }
         ]
       ]
     }

@@ -40,7 +40,15 @@ AUTHORED_GRAPH_INPUTS = (
     Path("docs/design/maintainability-baseline.md"),
     Path("scripts/generate-codebase-graph.py"),
     Path("scripts/tests/test_generate_codebase_graph.py"),
+    Path("evals/incident_replay/test_contracts.py"),
+    Path(".github/workflows/ci.yaml"),
+    Path(".github/workflows/cache.yaml"),
+    Path(".github/workflows/release.yaml"),
+    Path("docker/development.dockerfile"),
     Path("crates/harness/benches/event_replay.rs"),
+    Path("bin/orvek/src/tui/file_index.rs"),
+    Path("bin/orvek/src/tui/event_loop.rs"),
+    Path("crates/harness/src/controller/task_phases.rs"),
 )
 
 MOD_RE = re.compile(
@@ -66,6 +74,7 @@ COMPONENTS: tuple[dict[str, Any], ...] = (
         "summary": "Parses commands, loads configuration and dispatches terminal, headless, host, memory and review flows.",
         "files": ("bin/orvek/src/main.rs", "bin/orvek/src/app/cli.rs", "bin/orvek/src/app/config.rs"),
     },
+
     {
         "id": "component:session-assembly",
         "label": "Session assembly",
@@ -223,6 +232,90 @@ CAPABILITY_REFERENCE_EDGES = {
 }
 CAPABILITY_STATUSES = {"implemented", "config_only", "experimental"}
 CAPABILITY_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+CI_WORKFLOW_PATH = Path(".github/workflows/ci.yaml")
+PROOF_MODES = {"ci", "manual", "scheduled"}
+
+
+def ci_owned_checks(contents: dict[Path, str | None]) -> dict[str, str]:
+    content = contents.get(CI_WORKFLOW_PATH)
+    if content is None:
+        raise ValueError(f"CI workflow is missing: {CI_WORKFLOW_PATH}")
+    checks: dict[str, str] = {}
+    current_job: str | None = None
+    step_lines: list[str] = []
+
+    def register_step() -> None:
+        nonlocal step_lines
+        if not step_lines:
+            return
+        check_ids: list[str] = []
+        has_run = False
+        for line in step_lines:
+            if re.fullmatch(r"\s+(?:-\s+)?run:\s*(?:\S.*)?", line):
+                has_run = True
+            check_match = re.fullmatch(
+                r"\s+ORVEK_(?:ADDITIONAL_)?CHECK_IDS?: ([a-z][a-z0-9,-]*)", line
+            )
+            if check_match:
+                check_ids.extend(check_match.group(1).split(","))
+        if check_ids and not has_run:
+            raise ValueError(
+                f"CI check IDs {', '.join(check_ids)} in job {current_job} have no run command in their step"
+            )
+        for check_id in check_ids:
+            if check_id in checks:
+                raise ValueError(f"duplicate CI check ID: {check_id}")
+            assert current_job is not None
+            checks[check_id] = current_job
+        step_lines = []
+
+    for line in content.splitlines():
+        job_match = re.fullmatch(r"  ([a-z][a-z0-9-]*):", line)
+        if job_match:
+            register_step()
+            current_job = job_match.group(1)
+            continue
+        step_match = re.fullmatch(r"      - (?:\S.*)?", line)
+        if step_match:
+            register_step()
+        if current_job is not None and (step_lines or step_match):
+            step_lines.append(line)
+    register_step()
+    return checks
+
+
+def validate_capability_proof(
+    capability_id: str,
+    proof: Any,
+    files: set[Path],
+    contents: dict[Path, str | None],
+    checks: dict[str, str],
+) -> None:
+    expected = {"path", "anchor", "check_id", "ci_job", "platform", "features", "mode"}
+    if not isinstance(proof, dict) or set(proof) != expected:
+        raise ValueError(f"capability {capability_id} proof registration is invalid")
+    validate_capability_reference(
+        capability_id,
+        "proof",
+        {"path": proof.get("path"), "anchor": proof.get("anchor")},
+        files,
+        contents,
+    )
+    check_id = proof.get("check_id")
+    ci_job = proof.get("ci_job")
+    if not isinstance(check_id, str) or check_id not in checks:
+        raise ValueError(f"capability {capability_id} proof check ID {check_id!r} is absent from CI-owned commands")
+    if ci_job != checks[check_id]:
+        raise ValueError(f"capability {capability_id} proof check ID {check_id!r} belongs to CI job {checks[check_id]!r}, not {ci_job!r}")
+    if proof.get("mode") not in PROOF_MODES:
+        raise ValueError(f"capability {capability_id} proof has invalid verification mode")
+    if not isinstance(proof.get("platform"), str) or not proof["platform"].strip():
+        raise ValueError(f"capability {capability_id} proof has no platform")
+    features = proof.get("features")
+    if not isinstance(features, list) or not features or not all(
+        isinstance(feature, str) and feature.strip() for feature in features
+    ):
+        raise ValueError(f"capability {capability_id} proof has invalid features")
 
 
 def relative(path: Path) -> Path:
@@ -292,15 +385,18 @@ def anchored_scope(path: Path, content: str, anchor: str) -> str:
     lines = content[line_start:].splitlines(keepends=True)
     indentation = len(lines[0]) - len(lines[0].lstrip(" \t"))
     if path.suffix == ".py":
-        end = len(lines)
-        for index, line in enumerate(lines[1:], 1):
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            current = len(line) - len(line.lstrip(" \t"))
-            if current <= indentation:
-                end = index
-                break
+        line_number = content.count("\n", 0, line_start) + 1
+        functions = [
+            node
+            for node in ast.walk(ast.parse(content))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.lineno == line_number
+        ]
+        if len(functions) != 1:
+            raise ValueError(f"execution scope is not a Python function in {path}: {anchor}")
+        function = functions[0]
+        assert function.end_lineno is not None
+        return "".join(content.splitlines(keepends=True)[function.lineno - 1 : function.end_lineno])
     else:
         end = next(
             (
@@ -395,6 +491,7 @@ def load_capability_ledger(
         raise ValueError("capability ledger has no capabilities")
     component_ids = {component["id"] for component in COMPONENTS}
     seen: set[str] = set()
+    checks = ci_owned_checks(contents)
     capability_owners: set[str] = set()
     for capability in capabilities:
         if not isinstance(capability, dict):
@@ -447,9 +544,14 @@ def load_capability_ledger(
                 raise ValueError(f"capability {capability_id} {field} must be a list")
             references[field] = value
             for reference in value:
-                validate_capability_reference(
-                    capability_id, field, reference, files, contents
-                )
+                if field == "proof":
+                    validate_capability_proof(
+                        capability_id, reference, files, contents, checks
+                    )
+                else:
+                    validate_capability_reference(
+                        capability_id, field, reference, files, contents
+                    )
         for required in ("entrypoints", "proof", "documentation"):
             if not references[required]:
                 raise ValueError(f"capability {capability_id} has no {required}")

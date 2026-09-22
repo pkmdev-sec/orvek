@@ -1,7 +1,7 @@
 //! Portable file adapter. The manifest is written last; partial archives cannot import.
 use crate::{
     LocalMemoryStore, MemoryError, MemoryImportReport, MemoryKey, MemoryLimits, MemoryRecord,
-    MemoryStore, sources::digest,
+    MemoryStore, model::MemoryRecordScope, sources::digest,
 };
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::Path};
@@ -86,7 +86,11 @@ impl MemoryArchive {
                 if record.key != entry.key {
                     return Err(MemoryError::InvalidMetadata);
                 }
-                record.metadata.validate()?;
+                record.validate(MemoryRecordScope::Portable, &MemoryLimits::PRODUCTION)?;
+                if crate::secrets::contains_likely_secret(&record.content) {
+                    return Err(MemoryError::SecretRejected);
+                }
+                record.metadata.reject_likely_secret()?;
                 records.push(record);
             }
             Ok::<_, MemoryError>(records)

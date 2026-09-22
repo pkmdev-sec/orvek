@@ -23,7 +23,7 @@ pub use evidence::{
 #[cfg(feature = "local")]
 pub use sources::WorkspaceSources;
 mod retrieval;
-#[cfg(any(feature = "client", feature = "local"))]
+#[cfg(any(feature = "client", feature = "local", feature = "server"))]
 mod secrets;
 pub mod server;
 mod store;

@@ -7,8 +7,9 @@ use super::{
     },
 };
 use crate::{
-    MemoryCandidate, MemoryError, MemoryKey, MemoryLimits, MemoryRecord, MemoryScan, MemoryStore,
-    RemoteClientError, RemoteMemoryClient, RemoteToken, model::normalize_identity,
+    MemoryCandidate, MemoryError, MemoryKey, MemoryLimits, MemoryMetadata, MemoryRecord,
+    MemoryScan, MemoryStore, RemoteClientError, RemoteMemoryClient, RemoteToken,
+    model::normalize_identity,
 };
 use axum::{
     Json, Router,
@@ -924,6 +925,204 @@ async fn sync_rejects_duplicate_snapshot_ids_without_mutation() {
     assert!(exported.memories.is_empty());
 }
 
+fn structurally_invalid_remote_records() -> Vec<MemoryRecord> {
+    let mut reversed = record(1, 1, "reversed timestamps");
+    reversed.updated_at_ms = reversed.created_at_ms - 1;
+
+    let mut oversized_counter = record(2, 1, "oversized counter");
+    oversized_counter.last_scanned_at_ms = Some(oversized_counter.updated_at_ms);
+    oversized_counter.scan_count = i64::MAX as u64 + 1;
+
+    let mut invalid_metadata = record(3, 1, "invalid metadata");
+    invalid_metadata.metadata.ownership_id = Some("invalid".to_owned());
+
+    let mut incoherent_telemetry = record(4, 1, "incoherent telemetry");
+    incoherent_telemetry.use_count = 1;
+
+    for memory in [
+        &mut reversed,
+        &mut oversized_counter,
+        &mut invalid_metadata,
+        &mut incoherent_telemetry,
+    ] {
+        memory.key.namespace = Some("alice".to_owned());
+    }
+    vec![
+        reversed,
+        oversized_counter,
+        invalid_metadata,
+        incoherent_telemetry,
+    ]
+}
+
+#[tokio::test]
+async fn sync_rejects_structural_and_secret_snapshots_before_store_binding() {
+    let bindings = Arc::new(AtomicUsize::new(0));
+    let factory_bindings = bindings.clone();
+    let app = MemoryServer::new(
+        move |namespace| {
+            factory_bindings.fetch_add(1, Ordering::SeqCst);
+            TestMemoryDatabase::default().bind(namespace)
+        },
+        [credential("alice", RemoteRole::Writer, ALICE_TOKEN)],
+    )
+    .unwrap()
+    .router();
+
+    let mut cases = structurally_invalid_remote_records();
+    let mut secret = record(5, 1, "password=hunter2");
+    secret.key.namespace = Some("alice".to_owned());
+    cases.push(secret);
+    for memory in cases {
+        let response = send(
+            &app,
+            protocol::SYNC_PATH,
+            ALICE_TOKEN,
+            "alice",
+            &SyncRequest {
+                memories: vec![memory],
+            },
+        )
+        .await;
+        assert_error(
+            response,
+            StatusCode::BAD_REQUEST,
+            RemoteErrorCode::BadRequest,
+        )
+        .await;
+    }
+    assert_eq!(bindings.load(Ordering::SeqCst), 0);
+}
+
+type ExportPageRequest = (Option<ExportCursor>, usize);
+
+#[derive(Clone)]
+struct ExportSequenceStore {
+    pages: Arc<Mutex<Vec<ExportPageRequest>>>,
+    records: Arc<Vec<MemoryRecord>>,
+}
+
+impl MemoryStore for ExportSequenceStore {
+    async fn scan(&self, _query: &str, _limit: usize) -> Result<MemoryScan, MemoryError> {
+        Ok(MemoryScan {
+            abstained: true,
+            candidates: Vec::new(),
+        })
+    }
+    async fn read(
+        &self,
+        _ids: &[i64],
+        _keys: &[MemoryKey],
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        Ok(Vec::new())
+    }
+    async fn list(&self) -> Result<Vec<MemoryRecord>, MemoryError> {
+        Ok(Vec::new())
+    }
+    async fn put(
+        &self,
+        _content: &str,
+        _replacement: Option<MemoryKey>,
+    ) -> Result<MemoryRecord, MemoryError> {
+        unreachable!()
+    }
+    async fn delete(&self, _key: MemoryKey) -> Result<(), MemoryError> {
+        Ok(())
+    }
+    async fn sync(&self, _memories: &[MemoryRecord]) -> Result<SyncReport, MemoryError> {
+        Ok(SyncReport::default())
+    }
+    async fn export_page(
+        &self,
+        _namespaces: Option<&[String]>,
+        cursor: Option<&ExportCursor>,
+        limit: usize,
+    ) -> Result<(Vec<MemoryRecord>, Option<ExportCursor>), MemoryError> {
+        self.pages.lock().unwrap().push((cursor.cloned(), limit));
+        let after = cursor.map_or(0, |cursor| cursor.id);
+        let mut records = self
+            .records
+            .iter()
+            .filter(|record| record.key.id > after)
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>();
+        let has_more = self.records.iter().any(|record| {
+            records
+                .last()
+                .is_some_and(|last| record.key.id > last.key.id)
+        });
+        let next = has_more.then(|| ExportCursor {
+            namespace: "alice".to_owned(),
+            id: records.last().unwrap().key.id,
+        });
+        Ok((std::mem::take(&mut records), next))
+    }
+}
+
+#[tokio::test]
+async fn export_advances_past_all_secret_and_trailing_secret_pages() {
+    let pages = Arc::new(Mutex::new(Vec::new()));
+    let mut secret_one = record(1, 1, "password=hunter2");
+    secret_one.key.namespace = Some("alice".to_owned());
+    let mut visible = record(2, 1, "visible export record");
+    visible.key.namespace = Some("alice".to_owned());
+    let mut secret_three = record(3, 1, "token=abcdefghijklmnop");
+    secret_three.key.namespace = Some("alice".to_owned());
+    let records = Arc::new(vec![secret_one, visible, secret_three]);
+    let factory_pages = pages.clone();
+    let factory_records = records.clone();
+    let app = MemoryServer::new(
+        move |_namespace| ExportSequenceStore {
+            pages: factory_pages.clone(),
+            records: factory_records.clone(),
+        },
+        [credential("alice", RemoteRole::Writer, ALICE_TOKEN)],
+    )
+    .unwrap()
+    .router();
+
+    let response = export_page(&app, ALICE_TOKEN, "alice", None, None, 1).await;
+    assert_eq!(
+        response
+            .memories
+            .iter()
+            .map(|record| record.key.id)
+            .collect::<Vec<_>>(),
+        [2]
+    );
+    assert_eq!(
+        response.next_cursor,
+        Some(ExportCursor {
+            namespace: "alice".to_owned(),
+            id: 2,
+        })
+    );
+    let terminal = export_page(&app, ALICE_TOKEN, "alice", None, response.next_cursor, 1).await;
+    assert!(terminal.memories.is_empty());
+    assert_eq!(terminal.next_cursor, None);
+    assert_eq!(
+        *pages.lock().unwrap(),
+        [
+            (None, 1),
+            (
+                Some(ExportCursor {
+                    namespace: "alice".to_owned(),
+                    id: 1
+                }),
+                1
+            ),
+            (
+                Some(ExportCursor {
+                    namespace: "alice".to_owned(),
+                    id: 2
+                }),
+                1
+            ),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn export_paginates_all_or_selected_without_visibility_filtering_or_deduplication() {
     let app = memory_app(vec![
@@ -1484,6 +1683,191 @@ async fn client_suppresses_unsafe_scan_previews() {
     task.abort();
 }
 
+async fn invalid_list(
+    axum::extract::State(memory): axum::extract::State<MemoryRecord>,
+) -> Json<ListResponse> {
+    Json(ListResponse {
+        memories: vec![memory],
+    })
+}
+
+async fn invalid_read(
+    axum::extract::State(memory): axum::extract::State<MemoryRecord>,
+) -> Json<ReadResponse> {
+    Json(ReadResponse {
+        memories: vec![memory],
+    })
+}
+
+async fn invalid_export(
+    axum::extract::State(memory): axum::extract::State<MemoryRecord>,
+) -> Json<ExportResponse> {
+    Json(ExportResponse {
+        memories: vec![memory],
+        next_cursor: None,
+    })
+}
+
+async fn secret_and_malformed_scan() -> Json<ScanResponse> {
+    Json(ScanResponse {
+        candidates: vec![
+            MemoryCandidate {
+                metadata: Default::default(),
+                key: MemoryKey::remote("alice".to_owned(), 1, 1),
+                preview: "password=hunter2".to_owned(),
+                score: 2.0,
+            },
+            MemoryCandidate {
+                metadata: Default::default(),
+                key: MemoryKey::local(2, 1),
+                preview: "malformed candidate".to_owned(),
+                score: 1.0,
+            },
+        ],
+    })
+}
+
+fn assert_invalid_remote_response(error: MemoryError) {
+    let MemoryError::Backend { source } = error else {
+        panic!("expected backend error, got {error:?}");
+    };
+    assert!(matches!(
+        source.downcast_ref::<RemoteClientError>(),
+        Some(RemoteClientError::InvalidResponse)
+    ));
+}
+
+#[tokio::test]
+async fn client_rejects_each_structural_record_class_at_decode_boundaries() {
+    for memory in structurally_invalid_remote_records() {
+        for boundary in [
+            protocol::READ_PATH,
+            protocol::LIST_PATH,
+            protocol::EXPORT_PATH,
+        ] {
+            let app = match boundary {
+                protocol::READ_PATH => {
+                    Router::new().route(&format!("/{boundary}"), post(invalid_read))
+                }
+                protocol::LIST_PATH => {
+                    Router::new().route(&format!("/{boundary}"), post(invalid_list))
+                }
+                protocol::EXPORT_PATH => {
+                    Router::new().route(&format!("/{boundary}"), post(invalid_export))
+                }
+                _ => unreachable!(),
+            }
+            .with_state(memory.clone());
+            let (endpoint, task) = live_server(app).await;
+            let client = RemoteMemoryClient::new(
+                &endpoint,
+                "alice".to_owned(),
+                RemoteToken::new(ALICE_TOKEN.to_owned()).unwrap(),
+            )
+            .unwrap();
+
+            let error = match boundary {
+                protocol::READ_PATH => client.read(&[memory.key.id], &[]).await.unwrap_err(),
+                protocol::LIST_PATH => client.list().await.unwrap_err(),
+                protocol::EXPORT_PATH => client.export_page(None, None, 1).await.unwrap_err(),
+                _ => unreachable!(),
+            };
+            assert_invalid_remote_response(error);
+            task.abort();
+        }
+    }
+}
+
+#[tokio::test]
+async fn client_rejects_malformed_candidates_even_when_secret_candidates_are_suppressed() {
+    let app = Router::new().route(
+        &format!("/{}", protocol::SCAN_PATH),
+        post(secret_and_malformed_scan),
+    );
+    let (endpoint, task) = live_server(app).await;
+    let client = RemoteMemoryClient::new(
+        &endpoint,
+        "alice".to_owned(),
+        RemoteToken::new(ALICE_TOKEN.to_owned()).unwrap(),
+    )
+    .unwrap();
+
+    assert_invalid_remote_response(client.scan("candidate", 2).await.unwrap_err());
+    task.abort();
+}
+
+#[tokio::test]
+async fn direct_remote_writes_preflight_all_invalid_inputs_without_http_requests() {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let observed = requests.clone();
+    let app = Router::new().fallback(move || {
+        let observed = observed.clone();
+        async move {
+            observed.fetch_add(1, Ordering::SeqCst);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    });
+    let (endpoint, task) = live_server(app).await;
+    let client = RemoteMemoryClient::new(
+        &endpoint,
+        "alice".to_owned(),
+        RemoteToken::new(ALICE_TOKEN.to_owned()).unwrap(),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        client.put("password=hunter2", None).await,
+        Err(MemoryError::SecretRejected)
+    ));
+    let invalid_metadata = MemoryMetadata {
+        ownership_id: Some("invalid".to_owned()),
+        ..MemoryMetadata::default()
+    };
+    assert!(matches!(
+        client
+            .put_with_metadata("malformed metadata", &invalid_metadata, None)
+            .await,
+        Err(MemoryError::InvalidMetadata)
+    ));
+
+    let mut secret = record(1, 1, "token=abcdefghijklmnop");
+    secret.key = MemoryKey::local(1, 1);
+    assert!(matches!(
+        client.sync(&[secret]).await,
+        Err(MemoryError::SecretRejected)
+    ));
+
+    let mut malformed = record(1, 1, "malformed snapshot record");
+    malformed.key = MemoryKey::local(1, 1);
+    malformed.updated_at_ms = -1;
+    assert!(matches!(
+        client.sync(&[malformed]).await,
+        Err(MemoryError::InvalidMetadata)
+    ));
+
+    let mut first = record(1, 1, "first duplicate id");
+    first.key = MemoryKey::local(1, 1);
+    let mut second = record(1, 1, "second duplicate id");
+    second.key = MemoryKey::local(1, 1);
+    assert!(matches!(
+        client.sync(&[first, second]).await,
+        Err(MemoryError::InvalidMetadata)
+    ));
+    let mut duplicate_identity_one = record(1, 1, "Same normalized identity");
+    duplicate_identity_one.key = MemoryKey::local(1, 1);
+    let mut duplicate_identity_two = record(2, 1, "  same NORMALIZED identity  ");
+    duplicate_identity_two.key = MemoryKey::local(2, 1);
+    assert!(matches!(
+        client
+            .sync(&[duplicate_identity_one, duplicate_identity_two])
+            .await,
+        Err(MemoryError::Duplicate)
+    ));
+
+    assert_eq!(requests.load(Ordering::SeqCst), 0);
+    task.abort();
+}
+
 #[tokio::test]
 async fn client_rejects_oversized_scan_responses() {
     let app = Router::new().route(&format!("/{}", protocol::SCAN_PATH), post(oversized_scan));
@@ -2024,7 +2408,7 @@ async fn remote_metadata_scoped_scan_and_import_keep_original_provenance() {
     ));
     let records = client.export_all(None).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let local = crate::LocalMemoryStore::new(dir.path().join("memory.db"));
+    let local = crate::LocalMemoryStore::new(dir.path().join("memory/v1.sqlite3"));
     local.merge_remote_export(records).await.unwrap();
     let imported = local.list().await.unwrap().remove(0);
     assert_eq!(imported.metadata.evidence, metadata.evidence);

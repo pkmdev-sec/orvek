@@ -921,18 +921,7 @@ impl Store {
         revision: u64,
         reason: String,
     ) -> Result<(SessionState, TaskState, bool), StoreError> {
-        self.resume_task_record(session_id, operation, id, revision, reason, true)
-    }
-
-    pub(crate) fn resume_task_without_budget_limit(
-        &mut self,
-        session_id: SessionId,
-        operation: Uuid,
-        id: TaskId,
-        revision: u64,
-        reason: String,
-    ) -> Result<(SessionState, TaskState, bool), StoreError> {
-        self.resume_task_record(session_id, operation, id, revision, reason, false)
+        self.resume_task_record(session_id, operation, id, revision, reason)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -943,7 +932,6 @@ impl Store {
         id: TaskId,
         revision: u64,
         reason: String,
-        enforce_budget: bool,
     ) -> Result<(SessionState, TaskState, bool), StoreError> {
         if reason.trim().is_empty() {
             return Err(StoreError::Invalid("resuming requires a user basis"));
@@ -1002,9 +990,7 @@ impl Store {
             ));
         }
         task.cancellation_requested = false;
-        if enforce_budget {
-            check_budget(&task)?;
-        }
+        check_budget(&task)?;
         // No in-memory reset is committed independently of the reopening event.
         append_task_event(
             &transaction,
@@ -1796,7 +1782,7 @@ impl Store {
                     "user follow-up awaits contract admission",
                 ));
             }
-            admit_job(state, true)?;
+            admit_job(state)?;
             let candidate =
                 state
                     .candidate
@@ -1906,7 +1892,7 @@ impl Store {
         mutates_candidate: bool,
         timeout_ms: u64,
     ) -> Result<(TaskState, Uuid), StoreError> {
-        self.start_job_record(id, revision, mutates_candidate, timeout_ms, None, true)
+        self.start_job_record(id, revision, mutates_candidate, timeout_ms, None)
     }
 
     pub fn start_execution_job(
@@ -1923,25 +1909,6 @@ impl Store {
             mutates_candidate,
             timeout_ms,
             Some(invocation),
-            true,
-        )
-    }
-
-    pub(crate) fn start_execution_job_without_budget_limit(
-        &mut self,
-        id: TaskId,
-        revision: u64,
-        mutates_candidate: bool,
-        timeout_ms: u64,
-        invocation: JobInvocation,
-    ) -> Result<(TaskState, Uuid), StoreError> {
-        self.start_job_record(
-            id,
-            revision,
-            mutates_candidate,
-            timeout_ms,
-            Some(invocation),
-            false,
         )
     }
 
@@ -1952,7 +1919,6 @@ impl Store {
         mutates_candidate: bool,
         timeout_ms: u64,
         invocation: Option<JobInvocation>,
-        enforce_budget: bool,
     ) -> Result<(TaskState, Uuid), StoreError> {
         let job_id = Uuid::new_v4();
         let state = self.change(
@@ -1960,7 +1926,7 @@ impl Store {
             Some(revision),
             false,
             |state, transaction, artifacts| {
-                admit_job(state, enforce_budget)?;
+                admit_job(state)?;
                 // Request-owned workspace execution does not require contract admission.
                 if invocation.is_none() && mutates_candidate && state.amendment_pending {
                     return Err(StoreError::Invalid(
@@ -2178,7 +2144,7 @@ impl Store {
         operation: Uuid,
         usage: Usage,
     ) -> Result<TaskState, StoreError> {
-        self.account_usage(id, operation, Some(usage), true)
+        self.account_usage(id, operation, Some(usage))
     }
 
     pub fn reserve_model_call(
@@ -2186,15 +2152,7 @@ impl Store {
         id: TaskId,
         operation: Uuid,
     ) -> Result<TaskState, StoreError> {
-        self.account_usage(id, operation, None, true)
-    }
-
-    pub(crate) fn reserve_model_call_without_budget_limit(
-        &mut self,
-        id: TaskId,
-        operation: Uuid,
-    ) -> Result<TaskState, StoreError> {
-        self.account_usage(id, operation, None, false)
+        self.account_usage(id, operation, None)
     }
 
     /// Records every admitted attempt, including failures and unknown billing.
@@ -2285,7 +2243,6 @@ impl Store {
         id: TaskId,
         operation: Uuid,
         usage: Option<Usage>,
-        enforce_budget: bool,
     ) -> Result<TaskState, StoreError> {
         let transaction = self
             .connection
@@ -2315,11 +2272,7 @@ impl Store {
                 if state.outcome.is_some() {
                     return Err(StoreError::Terminal);
                 }
-                if enforce_budget {
-                    check_budget(&state)?;
-                } else if state.cancellation_requested {
-                    return Err(StoreError::Cancelled);
-                }
+                check_budget(&state)?;
                 TaskEvent::ModelCallReserved { operation }
             }
         };
@@ -2970,11 +2923,11 @@ fn check_budget(state: &TaskState) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn admit_job(state: &TaskState, enforce_budget: bool) -> Result<(), StoreError> {
+fn admit_job(state: &TaskState) -> Result<(), StoreError> {
     if state.cancellation_requested {
         return Err(StoreError::Cancelled);
     }
-    if enforce_budget && now_ms().saturating_sub(state.started_ms) >= state.limits().elapsed_ms {
+    if now_ms().saturating_sub(state.started_ms) >= state.limits().elapsed_ms {
         return Err(StoreError::Budget);
     }
     if state

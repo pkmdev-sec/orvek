@@ -9,7 +9,7 @@ use orvek_harness::{
     Digest, context,
     controller::{Host, HostInfo},
     inference::{Limits as ProviderLimits, ResponsesClient, Route, Transport},
-    ipc::{self, Command, Request, Response, WatchFrame},
+    ipc::{self, Command, IpcErrorCode, Request, Response, WatchFrame},
     runtime::DockerExecutor,
 };
 use serde_json::json;
@@ -89,7 +89,9 @@ impl HostClient {
                     error.kind(),
                     io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
                 ) => {}
-            Err(Error::HostRequest(message)) if message == ipc::UNSUPPORTED_PROTOCOL_VERSION => {
+            Err(Error::HostApplication(envelope))
+                if envelope.code == IpcErrorCode::UnsupportedProtocol =>
+            {
                 if !client.shutdown_incompatible_host().await? {
                     return Err(Error::HostRequest(
                         "the previous host protocol is still running active tasks; retry after they finish"
@@ -122,7 +124,9 @@ impl HostClient {
         let mut request = Request::new(Command::ShutdownIfIdle);
         match self.call(&request, CONNECT_TIMEOUT).await {
             Ok(Response::Shutdown { accepted }) => Ok(accepted),
-            Err(Error::HostRequest(message)) if message == ipc::UNSUPPORTED_PROTOCOL_VERSION => {
+            Err(Error::HostApplication(envelope))
+                if envelope.code == IpcErrorCode::UnsupportedProtocol =>
+            {
                 // Protocol 2 required the shutdown request to use its exact version.
                 request.version = 2;
                 match self.call(&request, CONNECT_TIMEOUT).await? {
@@ -161,8 +165,8 @@ impl HostClient {
                     "host response deadline; reconnect to inspect the durable operation",
                 )
             })??;
-        if let Response::Error { message } = response {
-            return Err(Error::HostRequest(message));
+        if let Response::Error(envelope) = response {
+            return Err(Error::HostApplication(envelope));
         }
         Ok(response)
     }
@@ -189,14 +193,32 @@ impl HostClient {
         )
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "host watch deadline"))??;
-        Ok(HostWatch {
+        let mut watch = HostWatch {
             stream,
             after,
+            through: None,
             header: [0; 4],
             header_read: 0,
             body: Vec::new(),
             body_read: 0,
-        })
+        };
+        let frame = watch.next().await?;
+        let WatchFrame::Ready {
+            after: accepted,
+            through,
+        } = frame
+        else {
+            return Err(Error::HostRequest(
+                "host watch did not acknowledge its cursor".into(),
+            ));
+        };
+        if accepted != after || through < after {
+            return Err(Error::HostRequest(
+                "host watch acknowledged an invalid replay range".into(),
+            ));
+        }
+        watch.through = Some(through);
+        Ok(watch)
     }
 
     async fn probe(&self) -> Result<()> {
@@ -311,6 +333,7 @@ impl HostClient {
 pub(crate) struct HostWatch {
     stream: UnixStream,
     after: u64,
+    through: Option<u64>,
     header: [u8; 4],
     header_read: usize,
     body: Vec<u8>,
@@ -320,6 +343,9 @@ pub(crate) struct HostWatch {
 impl HostWatch {
     pub(crate) const fn cursor(&self) -> u64 {
         self.after
+    }
+    pub(crate) const fn through(&self) -> Option<u64> {
+        self.through
     }
 
     pub(crate) async fn next(&mut self) -> Result<WatchFrame> {
@@ -753,9 +779,11 @@ api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
             assert!(matches!(current.command, Command::ShutdownIfIdle));
             ipc::write_frame(
                 &mut stream,
-                &Response::Error {
-                    message: ipc::UNSUPPORTED_PROTOCOL_VERSION.into(),
-                },
+                &Response::Error(ipc::IpcErrorEnvelope::new(
+                    IpcErrorCode::UnsupportedProtocol,
+                    ipc::IpcErrorDisposition::Reject,
+                    "arbitrary diagnostic text",
+                )),
             )
             .await
             .unwrap();
@@ -806,6 +834,7 @@ api_key_env = "ORVEK_TEST_DEFINITELY_MISSING_ROUTE_KEY"
         let mut watch = HostWatch {
             stream,
             after: 0,
+            through: None,
             header: [0; 4],
             header_read: 0,
             body: Vec::new(),

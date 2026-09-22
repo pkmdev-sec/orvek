@@ -150,10 +150,12 @@ impl HostTools {
                 if args.command.trim().is_empty() || args.command.len() > MAX_COMMAND_BYTES { return Err(HostToolError::InvalidArguments); }
                 let actual_cwd = fs::canonicalize(resolve(&cwd, args.cwd.as_deref().unwrap_or("."))?)?;
                 let native = run_command(args.command, actual_cwd, &context, cancellation).await?;
-                let unknown = matches!(native.status, NativeExecutionStatus::Unknown(_));
+                let outcome_unknown = matches!(native.status, NativeExecutionStatus::Unknown(_));
                 let value = json!({"status":native.status,"stdout":encoded(&native.stdout),"stderr":encoded(&native.stderr),"output_truncated":native.output_truncated,"elapsed_ms":native.elapsed_ms,"metadata":native.metadata});
                 execution = Some(native);
-                if unknown { return Err(HostToolError::OutcomeUnknown); }
+                if outcome_unknown {
+                    return Err(HostToolError::OutcomeUnknown);
+                }
                 value
             } else {
                 let name = name.to_owned();
@@ -482,6 +484,14 @@ async fn run_command(
         NativeExecutionStatus::Unknown(
             "native process group termination or wait was not confirmed".into(),
         )
+    } else if matches!(
+        status,
+        NativeExecutionStatus::Cancelled | NativeExecutionStatus::TimedOut
+    ) {
+        NativeExecutionStatus::Unknown(
+            "native command was interrupted, but escaped descendants cannot be proven absent"
+                .into(),
+        )
     } else {
         status
     };
@@ -652,25 +662,96 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    fn daemon_command(pid_file: &Path, ready_file: Option<&Path>) -> String {
+        let ready = ready_file.map_or_else(String::new, |_| {
+            "pathlib.Path(sys.argv[2]).write_text(\"ready\"); ".to_owned()
+        });
+        let ready_arg =
+            ready_file.map_or_else(String::new, |path| format!(" '{}'", path.display()));
+        format!(
+            "python3 -c 'import os, pathlib, sys, time; os.setsid(); pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); {ready}time.sleep(30)' '{}'{} </dev/null >/dev/null 2>&1 & wait",
+            pid_file.display(),
+            ready_arg
+        )
+    }
+
+    #[cfg(unix)]
+    fn cleanup_daemon(pid_file: &Path) {
+        if let Ok(pid) = fs::read_to_string(pid_file)
+            && let Ok(pid) = pid.trim().parse::<i32>()
+            && let Some(pid) = rustix::process::Pid::from_raw(pid)
+        {
+            let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+        }
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
-    async fn exec_timeout_kills_the_command_process_group() {
+    async fn daemonized_timeout_is_unknown_and_the_escaped_process_is_cleaned_up() {
         let directory = tempfile::tempdir().unwrap();
+        let pid_file = directory.path().join("daemon.pid");
         let context = HostToolContext {
             timeout_ms: Some(500),
             ..context(directory.path())
         };
-        let result = run(
-            "exec_command",
-            json!({"command":"printf ready; (sleep 1; printf escaped > escaped) & wait"}),
-            context,
-        )
-        .await
-        .unwrap();
+        let run = HostTools::new()
+            .execute_recorded(
+                "exec_command",
+                json!({"command":daemon_command(&pid_file, None)}),
+                context,
+                CancellationToken::new(),
+            )
+            .await;
 
-        assert_eq!(result["result"]["status"]["kind"], "timed_out");
-        assert_eq!(result["result"]["stdout"]["data"], "ready");
-        tokio::time::sleep(Duration::from_millis(1_200)).await;
-        assert!(!directory.path().join("escaped").exists());
+        cleanup_daemon(&pid_file);
+        assert!(matches!(run.result, Err(HostToolError::OutcomeUnknown)));
+        assert!(matches!(
+            run.execution.map(|execution| execution.status),
+            Some(NativeExecutionStatus::Unknown(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn daemonized_cancel_is_unknown_and_the_escaped_process_is_cleaned_up() {
+        let directory = tempfile::tempdir().unwrap();
+        let pid_file = directory.path().join("daemon.pid");
+        let ready_file = directory.path().join("daemon.ready");
+        let command = daemon_command(&pid_file, Some(&ready_file));
+        let cancel = CancellationToken::new();
+        let cancellation = cancel.clone();
+        let context = context(directory.path());
+        let execution = tokio::spawn(async move {
+            HostTools::new()
+                .execute_recorded(
+                    "exec_command",
+                    json!({"command":command}),
+                    context,
+                    cancellation,
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if tokio::fs::try_exists(&ready_file).await.unwrap() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("daemon did not signal readiness");
+        assert!(pid_file.exists());
+        cancel.cancel();
+        let run = execution.await.unwrap();
+
+        cleanup_daemon(&pid_file);
+        assert!(matches!(run.result, Err(HostToolError::OutcomeUnknown)));
+        assert!(matches!(
+            run.execution.map(|execution| execution.status),
+            Some(NativeExecutionStatus::Unknown(_))
+        ));
     }
 
     #[tokio::test]

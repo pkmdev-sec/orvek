@@ -20,8 +20,6 @@ orvek (terminal binary)
 ├── orvek-harness (authoritative task runtime)
 │   └── orvek-executor (sandbox transport / Linux helper protocol)
 └── orvek-memory (local and optional remote memory)
-
-orvek-memory-cloudflare (example Worker) ──> orvek-memory
 ```
 
 The arrows above are direct first-party Cargo dependency edges. Child-agent behavior has one authoritative implementation in

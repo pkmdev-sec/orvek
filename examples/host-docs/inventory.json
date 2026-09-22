@@ -23,13 +23,20 @@
   {
     "guide": "README.md",
     "block": 4,
-    "sha256": "df71e2e62ee0b3d89a824139098062343f8e2ece576d69273f352ddf83c94eba",
+    "sha256": "9d522edb8781fbb7e7cfe779269baa1364667ee8fe361062d78f9a69e1b4c9cf",
+    "kind": "external-service",
+    "reason": "Reads the user's real configuration and routes installation updates."
+  },
+  {
+    "guide": "README.md",
+    "block": 5,
+    "sha256": "bbc1e8ac6adbad4f20453fb5a41d06f83c6c049b5a96686312d638fbbef52159",
     "kind": "external-service",
     "reason": "Downloads and installs a binary into the user environment."
   },
   {
     "guide": "README.md",
-    "block": 5,
+    "block": 6,
     "sha256": "4939f6ea3d5fea43d4ca93f5d78018c5404e9fa3cdc80931164160d826fc0d9b",
     "kind": "illustrative",
     "reason": "Contributor checks; not an isolated capability scenario."
@@ -275,15 +282,29 @@
   {
     "guide": "docs/workspace-execution.md",
     "block": 1,
+    "sha256": "6713cbebfe5ea7161d7a3cb1fbafaba94d9bc1829123d86acc1390e8dc38968d",
+    "kind": "external-service",
+    "reason": "Requires real authentication and an interactive terminal."
+  },
+  {
+    "guide": "docs/workspace-execution.md",
+    "block": 2,
     "sha256": "510dd0a549e94d70c7d900642f09eccc4fff8e771b9b65e05aa22e81dbd4ca67",
     "kind": "illustrative",
     "reason": "Workspace placeholder and interactive session; native coverage is below."
   },
   {
     "guide": "docs/workspace-execution.md",
-    "block": 2,
-    "sha256": "f52cb23aa6b953a22a5b72cefcc524dc133f1e55575c241676f2584601f58b28",
+    "block": 3,
+    "sha256": "983143b835f49bb10863ee272920484c02a88d8b99149e55ba740e783b834f85",
     "kind": "illustrative",
-    "reason": "Platform-specific manual sandbox setup; executable sandbox coverage is below."
+    "reason": "Configuration fragment only; it does not start the sandbox runtime."
+  },
+  {
+    "guide": "docs/workspace-execution.md",
+    "block": 4,
+    "sha256": "62af86e9502d207ea91d2f43a2ba5c1057018583c8407388d40af9f7a887cf9f",
+    "kind": "external-service",
+    "reason": "Builds binaries and requires a local Docker service for the sandbox session."
   }
 ]

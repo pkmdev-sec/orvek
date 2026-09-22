@@ -161,9 +161,11 @@ pub trait MemoryStore: Clone + Send + Sync + 'static {
                     .ok_or(MemoryError::InvalidPagination)?;
                 if next_record_count > MemoryLimits::PRODUCTION.records
                     || content_bytes > MemoryLimits::PRODUCTION.total_content_bytes
-                    || next_cursor
-                        .as_ref()
-                        .is_some_and(|next| cursor.as_ref() == Some(next))
+                    || next_cursor.as_ref().is_some_and(|next| {
+                        cursor.as_ref().is_some_and(|cursor| {
+                            (&next.namespace, next.id) <= (&cursor.namespace, cursor.id)
+                        })
+                    })
                     || (page.is_empty() && next_cursor.is_some())
                 {
                     return Err(MemoryError::InvalidPagination);
@@ -372,6 +374,74 @@ impl MemoryStore for SelectedMemoryStore {
 fn reject_unsafe(content: &str) -> Result<(), MemoryError> {
     if contains_likely_secret(content) {
         return Err(MemoryError::SecretRejected);
+    }
+    Ok(())
+}
+#[cfg(any(feature = "client", feature = "local"))]
+pub(crate) fn validate_content(content: &str, limits: &MemoryLimits) -> Result<(), MemoryError> {
+    if content.trim().is_empty() {
+        return Err(MemoryError::EmptyContent);
+    }
+    if content.len() > limits.content_bytes {
+        return Err(MemoryError::ContentTooLarge {
+            maximum_bytes: limits.content_bytes,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(any(feature = "client", feature = "local"))]
+pub(crate) fn validate_authored_content(
+    content: &str,
+    metadata: &crate::MemoryMetadata,
+    limits: &MemoryLimits,
+) -> Result<(), MemoryError> {
+    validate_content(content, limits)?;
+    metadata.validate()?;
+    metadata.reject_likely_secret()?;
+    if crate::secrets::contains_likely_secret(content) {
+        return Err(MemoryError::SecretRejected);
+    }
+    Ok(())
+}
+
+#[cfg(any(feature = "client", feature = "local"))]
+pub(crate) fn validate_authored_snapshot(
+    memories: &[MemoryRecord],
+    limits: &MemoryLimits,
+) -> Result<(), MemoryError> {
+    use crate::model::MemoryRecordScope;
+    use std::collections::HashSet;
+
+    if memories.len() > limits.records {
+        return Err(MemoryError::RecordCapacity {
+            maximum: limits.records,
+        });
+    }
+    let mut ids = HashSet::with_capacity(memories.len());
+    let mut identities = HashSet::with_capacity(memories.len());
+    let content_bytes = memories.iter().try_fold(0usize, |total, memory| {
+        memory.validate(MemoryRecordScope::Local, limits)?;
+        if !ids.insert(memory.key.id) {
+            return Err(MemoryError::InvalidMetadata);
+        }
+        if !identities.insert(memory.metadata.identity(&memory.content)) {
+            return Err(MemoryError::Duplicate);
+        }
+        memory.metadata.reject_likely_secret()?;
+        if crate::secrets::contains_likely_secret(&memory.content) {
+            return Err(MemoryError::SecretRejected);
+        }
+        total
+            .checked_add(memory.content.len())
+            .ok_or(MemoryError::ContentCapacity {
+                maximum_bytes: limits.total_content_bytes,
+            })
+    })?;
+    if content_bytes > limits.total_content_bytes {
+        return Err(MemoryError::ContentCapacity {
+            maximum_bytes: limits.total_content_bytes,
+        });
     }
     Ok(())
 }
