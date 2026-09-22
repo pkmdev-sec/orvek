@@ -28,7 +28,10 @@ def main(binary, *, export=None):
         expected = [record for record in records if record["sequence"] > cursor]
         with host.connect() as reconnected:
             send_frame(reconnected, request("watch", after=cursor, session=session))
-            assert read_frame(reconnected) == {"type": "ready", "data": {"after": cursor}}
+            assert read_frame(reconnected) == {
+                "type": "ready",
+                "data": {"after": cursor, "through": records[-1]["sequence"]},
+            }
             replay = []
             while len(replay) < len(expected):
                 frame = read_frame(reconnected)
