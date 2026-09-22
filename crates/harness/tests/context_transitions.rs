@@ -326,7 +326,7 @@ fn fork_starts_with_native_source_and_pinned_ancestor_lineage() {
 }
 
 #[test]
-fn legacy_default_serialization_and_renderer_are_unchanged() {
+fn default_serialization_stays_compatible_and_renderer_tracks_bounded_cache_policy() {
     let root = tempfile::tempdir().unwrap();
     let (_, state) = fixture(root.path());
     let value = serde_json::to_value(&state).unwrap();
@@ -336,7 +336,10 @@ fn legacy_default_serialization_and_renderer_are_unchanged() {
         Digest::of_value(&state).unwrap(),
         Digest::of_value(&decoded).unwrap()
     );
-    assert_eq!(context::project(&state,65536).unwrap().manifest.renderer, Digest::of(b"orvek-context-v2:stable-prefix:live-tail:explicit-archive:interrupted-output-is-unknown"));
+    assert_eq!(
+        context::project(&state, 65536).unwrap().manifest.renderer,
+        Digest::of(b"orvek-context-v4:cache-epochs:recent-overlap:append-only-tail:explicit-archive:interrupted-output-is-unknown"),
+    );
 }
 
 #[test]

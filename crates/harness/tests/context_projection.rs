@@ -412,6 +412,144 @@ fn appending_live_items_preserves_the_settled_wire_prefix_across_resume() {
     assert_eq!(resumed_lineage, cache_lineage);
 }
 
+#[test]
+fn cache_epoch_appends_without_rewriting_and_keeps_recent_overlap() {
+    let mut state = session();
+    state.history = (0..96)
+        .map(|turn| json!({"role":"user","content":format!("settled-{turn}-{}", "x".repeat(768))}))
+        .collect();
+    state.settled_history_items = state.history.len();
+    state
+        .history
+        .push(json!({"role":"user","content":"active request"}));
+
+    let limit = 64 * 1024;
+    let before = context::project(&state, limit).unwrap();
+    assert!(before.manifest.omitted_items > 0);
+    assert!(before.input.iter().any(|item| {
+        item["content"]
+            .as_str()
+            .is_some_and(|content| content.starts_with("settled-95-"))
+    }));
+    assert!(!before.input.iter().any(|item| {
+        item["content"]
+            .as_str()
+            .is_some_and(|content| content.starts_with("settled-0-"))
+    }));
+
+    state.history.push(json!({
+        "role":"assistant",
+        "content":format!("live response {}", "y".repeat(8 * 1024)),
+    }));
+    let after = context::project(&state, limit).unwrap();
+
+    assert_eq!(after.stable_input(), before.stable_input());
+    assert!(
+        after.input.starts_with(&before.input),
+        "a request within one cache epoch must append to the complete prior input",
+    );
+    assert!(serde_json::to_vec(&after.input).unwrap().len() <= limit);
+}
+
+#[test]
+fn cache_epoch_rollover_keeps_recent_context_and_whole_tool_pairs() {
+    let mut state = session();
+    state.history = (0..80)
+        .map(|turn| json!({"role":"user","content":format!("settled-{turn}-{}", "x".repeat(512))}))
+        .collect();
+    state.settled_history_items = state.history.len();
+    state
+        .history
+        .push(json!({"role":"user","content":"active request"}));
+    state.history.extend([
+        json!({"type":"function_call","call_id":"live-call","name":"read_file","arguments":"{}"}),
+        json!({"type":"function_call_output","call_id":"live-call","output":"z".repeat(20 * 1024)}),
+    ]);
+
+    let limit = 64 * 1024;
+    let before_rollover = context::project(&state, limit).unwrap();
+    state.history.push(json!({
+        "role":"assistant",
+        "content":format!("new epoch response {}", "y".repeat(20 * 1024)),
+    }));
+    let after_rollover = context::project(&state, limit).unwrap();
+
+    assert_ne!(
+        after_rollover.stable_input(),
+        before_rollover.stable_input(),
+        "the fixture must cross a cache epoch boundary",
+    );
+    assert!(after_rollover.input.iter().any(|item| {
+        item["content"]
+            .as_str()
+            .is_some_and(|content| content.starts_with("settled-79-"))
+    }));
+    assert!(!after_rollover.input.iter().any(|item| {
+        item["content"]
+            .as_str()
+            .is_some_and(|content| content.starts_with("settled-0-"))
+    }));
+    let has_call = after_rollover
+        .input
+        .iter()
+        .any(|item| item["type"] == "function_call" && item["call_id"] == "live-call");
+    let has_output = after_rollover
+        .input
+        .iter()
+        .any(|item| item["type"] == "function_call_output" && item["call_id"] == "live-call");
+    assert!(has_call, "recent active work must survive rollover");
+    assert_eq!(has_call, has_output);
+
+    state
+        .history
+        .push(json!({"role":"assistant","content":"next epoch append"}));
+    let appended = context::project(&state, limit).unwrap();
+    assert!(
+        appended.input.starts_with(&after_rollover.input),
+        "the new epoch must become append-only after its first request",
+    );
+    assert!(serde_json::to_vec(&appended.input).unwrap().len() <= limit);
+}
+
+#[test]
+fn long_running_context_amortizes_cache_rebases_across_many_model_calls() {
+    let mut state = session();
+    state.history = (0..96)
+        .map(|turn| json!({"role":"user","content":format!("settled-{turn}-{}", "x".repeat(768))}))
+        .collect();
+    state.settled_history_items = state.history.len();
+    state
+        .history
+        .push(json!({"role":"user","content":"active request"}));
+
+    let limit = 64 * 1024;
+    let mut previous = context::project(&state, limit).unwrap();
+    let mut rebases = 0;
+    for turn in 0..40 {
+        state.history.push(json!({
+            "role":"assistant",
+            "content":format!("live-{turn}-{}", "y".repeat(2 * 1024)),
+        }));
+        let current = context::project(&state, limit).unwrap();
+        if !current.input.starts_with(&previous.input) {
+            rebases += 1;
+        }
+        assert!(current.input.iter().any(|item| {
+            item["content"]
+                .as_str()
+                .is_some_and(|content| content.starts_with(&format!("live-{turn}-")))
+        }));
+        assert!(serde_json::to_vec(&current.input).unwrap().len() <= limit);
+        previous = current;
+    }
+
+    assert!(rebases > 0, "the fixture must cross a cache epoch boundary");
+    assert!(
+        rebases <= 3,
+        "cache misses must be amortized across epochs, got {rebases} rebases for 40 calls",
+    );
+}
+
 /// A projection that fits the context window must always fit one journal event.
 /// The cache records the manifest, so a large conversation cannot make the
 /// session unwritable.

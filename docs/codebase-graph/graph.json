@@ -11997,7 +11997,7 @@
       "id": "file:bin/orvek/src/tui/components/composer.rs",
       "kind": "file",
       "label": "composer.rs",
-      "lines": 3021,
+      "lines": 3025,
       "path": "bin/orvek/src/tui/components/composer.rs"
     },
     {
@@ -12685,7 +12685,7 @@
       "id": "file:crates/harness/src/context.rs",
       "kind": "file",
       "label": "context.rs",
-      "lines": 779,
+      "lines": 910,
       "path": "crates/harness/src/context.rs"
     },
     {
@@ -13276,7 +13276,7 @@
       "id": "file:crates/harness/tests/context_projection.rs",
       "kind": "file",
       "label": "context_projection.rs",
-      "lines": 489,
+      "lines": 627,
       "path": "crates/harness/tests/context_projection.rs"
     },
     {
@@ -13300,7 +13300,7 @@
       "id": "file:crates/harness/tests/context_transitions.rs",
       "kind": "file",
       "label": "context_transitions.rs",
-      "lines": 479,
+      "lines": 482,
       "path": "crates/harness/tests/context_transitions.rs"
     },
     {
@@ -13836,7 +13836,7 @@
       "id": "file:docs/compaction.md",
       "kind": "file",
       "label": "compaction.md",
-      "lines": 50,
+      "lines": 52,
       "path": "docs/compaction.md"
     },
     {
@@ -17355,7 +17355,7 @@
       "target": 48,
       "workspace": 1
     },
-    "source_fingerprint": "f97d4b3cbf5ea95a5c55a016b11eb45124a151497c1d542b05c597ab519af2c4",
+    "source_fingerprint": "b82eeb349d832eb8294f7c5652806aa4176093b31ba72fd9866c5f88e991f977",
     "static_reference_coverage": {
       "rust_compile_time_includes": {
         "detected": 23,

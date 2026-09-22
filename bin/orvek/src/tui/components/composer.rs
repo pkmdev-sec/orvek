@@ -49,7 +49,7 @@ use uuid::Uuid;
 const MIN_CONTENT_ROWS: usize = 3;
 const MAX_CONTENT_ROWS: usize = 6;
 const DEVELOPMENT_BADGE: &str = " ◉ dev ";
-const MAX_COST_WIDTH: usize = 23;
+const MAX_COST_WIDTH: usize = 29;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ComposerEffect {
@@ -1746,9 +1746,13 @@ fn render_reference_tokens(
 
 fn format_session_cost(cost: SessionCost) -> String {
     if cost.uncertain && cost.total == UsdCost::ZERO {
-        "cost unknown ".to_owned()
+        "total unknown ".to_owned()
     } else {
-        format!("{}{} ", cost.total, if cost.uncertain { "+" } else { "" })
+        format!(
+            "total {}{} ",
+            cost.total,
+            if cost.uncertain { "+" } else { "" }
+        )
     }
 }
 
@@ -2059,7 +2063,7 @@ mod tests {
 
         let terminal = render(&mut composer, 80, 5);
 
-        assert!(rows(&terminal)[0].contains("context unknown $0 Waiting for review"));
+        assert!(rows(&terminal)[0].contains("context unknown total $0 Waiting for review"));
         assert_eq!(
             terminal.backend().buffer()[(0, 0)].fg,
             Theme::default().success()
@@ -2291,7 +2295,7 @@ mod tests {
 
         let terminal = render(&mut composer, 90, 5);
 
-        assert!(rows(&terminal)[0].contains("context unknown $0 Running exec command…"));
+        assert!(rows(&terminal)[0].contains("context unknown total $0 Running exec command…"));
         assert!(
             terminal
                 .backend()
@@ -2943,13 +2947,13 @@ mod tests {
     }
 
     #[test]
-    fn exact_session_cost_stays_beside_context_without_moving_footer_metadata() {
+    fn exact_session_total_stays_beside_context_without_moving_footer_metadata() {
         let mut composer = Composer::new(Path::new("/work"), ReasoningEffort::Medium);
         let initial = render(&mut composer, 80, 5);
         let initial_rows = rows(&initial);
         let initial_directory = initial_rows[4].find("/work").unwrap();
         let initial_model = initial_rows[0][..initial_rows[0].find("gpt-5.6-sol").unwrap()].width();
-        assert!(initial_rows[0].contains("context unknown $0"));
+        assert!(initial_rows[0].contains("context unknown total $0"));
         assert!(!initial_rows[4].contains('$'));
 
         composer.update(ComposerEvent::SessionCost(SessionCost {
@@ -2957,7 +2961,7 @@ mod tests {
             uncertain: true,
         }));
         let unknown = render(&mut composer, 80, 5);
-        assert!(rows(&unknown)[0].contains("context unknown cost unknown"));
+        assert!(rows(&unknown)[0].contains("context unknown total unknown"));
         assert!(!rows(&unknown)[0].contains("$0+"));
 
         composer.update(ComposerEvent::SessionCost(SessionCost {
@@ -2969,7 +2973,7 @@ mod tests {
         assert_eq!(exact_rows[4].find("/work").unwrap(), initial_directory);
         let exact_model = exact_rows[0][..exact_rows[0].find("gpt-5.6-sol").unwrap()].width();
         assert_eq!(exact_model, initial_model);
-        assert!(exact_rows[0].contains("context unknown $0.000000250000000001"));
+        assert!(exact_rows[0].contains("context unknown total $0.000000250000000001"));
         assert!(!exact_rows[4].contains('$'));
 
         composer.update(ComposerEvent::SessionCost(SessionCost {
@@ -2977,7 +2981,7 @@ mod tests {
             uncertain: true,
         }));
         let uncertain = render(&mut composer, 80, 5);
-        assert!(rows(&uncertain)[0].contains("context unknown $0.25+"));
+        assert!(rows(&uncertain)[0].contains("context unknown total $0.25+"));
     }
 
     #[test]
